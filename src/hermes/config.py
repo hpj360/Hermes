@@ -177,6 +177,10 @@ class Settings(BaseSettings):
         default=Path(__file__).resolve().parents[2] / ".cache",
         alias="HERMES_CACHE_DIR",
     )
+    hermes_profile_path: Path = Field(
+        default=Path(__file__).resolve().parents[2] / "data" / "profile.json",
+        alias="HERMES_PROFILE_PATH",
+    )
 
     # Search paths that are consulted for inherited .env files.
     inherit_env_paths: ClassVar[list[Path]] = [

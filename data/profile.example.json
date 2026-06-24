@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "updated_at": null,
+  "basic_info": {
+    "name": null,
+    "nickname": null,
+    "gender": null,
+    "age_range": null,
+    "location": null,
+    "timezone": "Asia/Shanghai",
+    "occupation": null,
+    "industry": null,
+    "education": null
+  },
+  "contact": {
+    "email": null,
+    "github": "hpj360",
+    "blog": null,
+    "website": null
+  },
+  "skills": {
+    "programming_languages": [],
+    "frameworks": [],
+    "tools": [],
+    "domains": [],
+    "languages_spoken": [],
+    "skill_level": {}
+  },
+  "interests": {
+    "tech_interests": [],
+    "hobbies": [],
+    "reading": [],
+    "music": [],
+    "sports": [],
+    "other_interests": []
+  },
+  "work_style": {
+    "preferred_language": "中文",
+    "code_style": [],
+    "work_habits": [],
+    "communication_style": [],
+    "tools_preferred": []
+  },
+  "projects": [],
+  "goals": {
+    "short_term": [],
+    "long_term": [],
+    "learning": []
+  },
+  "notes": ""
+}

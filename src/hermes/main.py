@@ -9,6 +9,7 @@ from pathlib import Path
 
 from hermes.config import get_settings
 from hermes.logging import setup_logging
+from hermes.profile import get_profile_markdown, load_profile
 from hermes.skills import discover_skills, list_knowledge_docs, skills_dir, knowledge_dir
 
 
@@ -98,6 +99,16 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_profile_show(args: argparse.Namespace) -> int:
+    profile = load_profile()
+    if args.json:
+        import json
+        print(json.dumps(profile, ensure_ascii=False, indent=2))
+    else:
+        print(get_profile_markdown())
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Run health checks on the Hermes environment (degraded-friendly)."""
     settings = get_settings()
@@ -180,6 +191,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_cfg_sub.add_parser("show", help="Print current configuration").set_defaults(func=cmd_config_show)
 
     sub.add_parser("doctor", help="Run environment health checks").set_defaults(func=cmd_doctor)
+
+    p_profile = sub.add_parser("profile", help="View user profile")
+    p_profile_sub = p_profile.add_subparsers(dest="profile_cmd", required=True)
+    p_profile_show = p_profile_sub.add_parser("show", help="Show user profile")
+    p_profile_show.add_argument("--json", action="store_true", help="Output raw JSON")
+    p_profile_show.set_defaults(func=cmd_profile_show)
 
     return parser
 
