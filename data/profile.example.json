@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "updated_at": null,
   "basic_info": {
     "name": null,
@@ -13,7 +13,10 @@
     "education": null,
     "phone": null,
     "expected_salary": null,
-    "work_experience_years": null
+    "current_base_salary": null,
+    "work_experience_years": null,
+    "mbti": null,
+    "employment_status": null
   },
   "contact": {
     "email": null,
@@ -50,6 +53,12 @@
     "sports": [],
     "alcohol": [],
     "film_directors": [],
+    "film_genres": [],
+    "food": {"preference": null, "signature_dishes": null, "style": null},
+    "photography": {"subjects": [], "equipment": []},
+    "script_kill": {"preferred_types": []},
+    "theater": null,
+    "investing": [],
     "other_interests": []
   },
   "work_style": {
@@ -58,6 +67,12 @@
     "work_habits": [],
     "communication_style": [],
     "tools_preferred": []
+  },
+  "content_plans": {
+    "status": null,
+    "directions": [],
+    "platforms": [],
+    "hermes_roles": []
   },
   "personal_projects": [],
   "goals": {

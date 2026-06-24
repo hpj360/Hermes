@@ -74,6 +74,7 @@ def get_profile_markdown() -> str:
     _render_contact(lines, p)
     _render_skills(lines, p)
     _render_interests(lines, p)
+    _render_content_plans(lines, p)
     _render_work_style(lines, p)
     _render_projects(lines, p)
     _render_goals(lines, p)
@@ -100,12 +101,16 @@ def _render_basic(lines: list[str], p: dict[str, Any]) -> None:
     lines.append(f"- **称呼/昵称**: {basic.get('nickname') or '未设置'}")
     lines.append(f"- **性别**: {basic.get('gender') or '未设置'}")
     lines.append(f"- **年龄段**: {basic.get('age_range') or '未设置'}")
+    lines.append(f"- **MBTI**: {basic.get('mbti') or '未设置'}")
     lines.append(f"- **所在地**: {basic.get('location') or '未设置'}")
+    lines.append(f"- **就业状态**: {basic.get('employment_status') or '未设置'}")
     lines.append(f"- **时区**: {basic.get('timezone') or 'Asia/Shanghai'}")
     lines.append(f"- **职业**: {basic.get('occupation') or '未设置'}")
     lines.append(f"- **行业**: {basic.get('industry') or '未设置'}")
     if basic.get("work_experience_years"):
         lines.append(f"- **工作年限**: {basic['work_experience_years']}年")
+    if basic.get("current_base_salary"):
+        lines.append(f"- **当前base**: {basic['current_base_salary']}")
     if basic.get("expected_salary"):
         lines.append(f"- **期望薪资**: {basic['expected_salary']}")
     lines.append(f"- **教育背景**: {basic.get('education') or '未设置'}")
@@ -116,10 +121,25 @@ def _render_pets(lines: list[str], p: dict[str, Any]) -> None:
     pets = p.get("pets", [])
     if not pets:
         return
-    lines.append("## 萌宠")
+    lines.append("## 萌宠 🐱")
     lines.append("")
     for pet in pets:
-        lines.append(f"- {pet}")
+        if isinstance(pet, dict):
+            name = pet.get("name", "?")
+            gender = pet.get("gender", "")
+            age = pet.get("age", "")
+            note = pet.get("note", "")
+            parts = [f"**{name}**"]
+            if gender:
+                parts.append(gender)
+            if age:
+                parts.append(f"{age}岁")
+            line = "- " + " · ".join(parts)
+            if note:
+                line += f"  — {note}"
+            lines.append(line)
+        else:
+            lines.append(f"- {pet}")
     lines.append("")
 
 
@@ -202,16 +222,72 @@ def _render_interests(lines: list[str], p: dict[str, Any]) -> None:
     lines.append("")
     lines.append(f"- **技术兴趣**: {_join(interests.get('tech_interests', []))}")
     lines.append(f"- **日常爱好**: {_join(interests.get('hobbies', []))}")
+
     if interests.get("alcohol"):
         lines.append(f"- **酒类偏好**: {_join(interests['alcohol'])}（酒类爱好者）")
+
+    food = interests.get("food")
+    if food and isinstance(food, dict):
+        pref = food.get("preference")
+        sig = food.get("signature_dishes")
+        parts = []
+        if pref:
+            parts.append(pref)
+        if sig:
+            parts.append(f"拿手：{sig}")
+        lines.append(f"- **美食**: {'；'.join(parts)}")
+    elif interests.get("food"):
+        lines.append(f"- **美食**: {interests['food']}")
+
+    photo = interests.get("photography")
+    if photo and isinstance(photo, dict):
+        subj = _join(photo.get("subjects", []))
+        equip = _join(photo.get("equipment", []))
+        lines.append(f"- **摄影**: 拍{subj}（设备：{equip}）")
+
     lines.append(f"- **运动**: {_join(interests.get('sports', []))}")
-    if interests.get("film_directors"):
-        lines.append(f"- **喜欢的导演**: {_join(interests['film_directors'])}")
+
+    sk = interests.get("script_kill")
+    if sk and isinstance(sk, dict):
+        lines.append(f"- **剧本杀**: 偏好{_join(sk.get('preferred_types', []))}")
+    elif interests.get("script_kill"):
+        lines.append(f"- **剧本杀**: {interests['script_kill']}")
+
+    if interests.get("theater"):
+        lines.append(f"- **话剧**: {interests['theater']}")
+
+    if interests.get("film_directors") or interests.get("film_genres"):
+        film_parts = []
+        if interests.get("film_directors"):
+            film_parts.append(f"喜欢导演：{_join(interests['film_directors'])}")
+        if interests.get("film_genres"):
+            film_parts.append(f"偏好类型：{_join(interests['film_genres'])}")
+        lines.append(f"- **电影**: {'；'.join(film_parts)}")
+
     lines.append(f"- **音乐**: {_join(interests.get('music', []))}")
     lines.append(f"- **阅读**: {_join(interests.get('reading', []))}")
+
+    if interests.get("investing"):
+        lines.append(f"- **投资理财**: {_join(interests['investing'])}")
+
     other = interests.get("other_interests", [])
     if other:
         lines.append(f"- **其他**: {_join(other)}")
+    lines.append("")
+
+
+def _render_content_plans(lines: list[str], p: dict[str, Any]) -> None:
+    cp = p.get("content_plans")
+    if not cp:
+        return
+    lines.append("## 内容创业计划 🚀")
+    lines.append("")
+    lines.append(f"- **状态**: {cp.get('status') or '未设置'}")
+    lines.append(f"- **方向**: {_join(cp.get('directions', []))}")
+    lines.append(f"- **平台**: {_join(cp.get('platforms', []))}")
+    roles = cp.get("hermes_roles", [])
+    if roles:
+        lines.append(f"- **Hermes 协作角色**: {_join(roles)}")
     lines.append("")
 
 
@@ -260,7 +336,7 @@ def _render_notes(lines: list[str], p: dict[str, Any]) -> None:
 
 def _default_profile() -> dict[str, Any]:
     return {
-        "version": 2,
+        "version": 3,
         "updated_at": None,
         "basic_info": {
             "name": None,
@@ -274,7 +350,10 @@ def _default_profile() -> dict[str, Any]:
             "education": None,
             "phone": None,
             "expected_salary": None,
+            "current_base_salary": None,
             "work_experience_years": None,
+            "mbti": None,
+            "employment_status": None,
         },
         "contact": {
             "email": None,
@@ -311,6 +390,12 @@ def _default_profile() -> dict[str, Any]:
             "sports": [],
             "alcohol": [],
             "film_directors": [],
+            "film_genres": [],
+            "food": {"preference": None, "signature_dishes": None, "style": None},
+            "photography": {"subjects": [], "equipment": []},
+            "script_kill": {"preferred_types": []},
+            "theater": None,
+            "investing": [],
             "other_interests": [],
         },
         "work_style": {
@@ -319,6 +404,12 @@ def _default_profile() -> dict[str, Any]:
             "work_habits": [],
             "communication_style": [],
             "tools_preferred": [],
+        },
+        "content_plans": {
+            "status": None,
+            "directions": [],
+            "platforms": [],
+            "hermes_roles": [],
         },
         "personal_projects": [],
         "goals": {
