@@ -68,60 +68,167 @@ def get_profile_markdown() -> str:
     p = load_profile()
     lines: list[str] = ["# 用户画像 / User Profile", ""]
 
+    _render_basic(lines, p)
+    _render_pets(lines, p)
+    _render_career(lines, p)
+    _render_contact(lines, p)
+    _render_skills(lines, p)
+    _render_interests(lines, p)
+    _render_work_style(lines, p)
+    _render_projects(lines, p)
+    _render_goals(lines, p)
+    _render_notes(lines, p)
+
+    updated = p.get("updated_at", "")
+    if updated:
+        lines.append(f"---\n*最后更新: {updated}*")
+
+    return "\n".join(lines)
+
+
+def _join(items: list[str] | None) -> str:
+    if not items:
+        return "未设置"
+    return ", ".join(str(i) for i in items if i)
+
+
+def _render_basic(lines: list[str], p: dict[str, Any]) -> None:
     basic = p.get("basic_info", {})
     lines.append("## 基本信息")
     lines.append("")
-    lines.append(f"- **称呼/昵称**: {basic.get('nickname') or '未设置'}")
     lines.append(f"- **姓名**: {basic.get('name') or '未设置'}")
+    lines.append(f"- **称呼/昵称**: {basic.get('nickname') or '未设置'}")
     lines.append(f"- **性别**: {basic.get('gender') or '未设置'}")
     lines.append(f"- **年龄段**: {basic.get('age_range') or '未设置'}")
     lines.append(f"- **所在地**: {basic.get('location') or '未设置'}")
     lines.append(f"- **时区**: {basic.get('timezone') or 'Asia/Shanghai'}")
     lines.append(f"- **职业**: {basic.get('occupation') or '未设置'}")
     lines.append(f"- **行业**: {basic.get('industry') or '未设置'}")
+    if basic.get("work_experience_years"):
+        lines.append(f"- **工作年限**: {basic['work_experience_years']}年")
+    if basic.get("expected_salary"):
+        lines.append(f"- **期望薪资**: {basic['expected_salary']}")
     lines.append(f"- **教育背景**: {basic.get('education') or '未设置'}")
     lines.append("")
 
-    contact = p.get("contact", {})
-    lines.append("## 联系方式")
+
+def _render_pets(lines: list[str], p: dict[str, Any]) -> None:
+    pets = p.get("pets", [])
+    if not pets:
+        return
+    lines.append("## 萌宠")
     lines.append("")
-    lines.append(f"- **GitHub**: {contact.get('github') or '未设置'}")
-    lines.append(f"- **Email**: {contact.get('email') or '未设置'}")
-    lines.append(f"- **博客/网站**: {contact.get('blog') or contact.get('website') or '未设置'}")
+    for pet in pets:
+        lines.append(f"- {pet}")
     lines.append("")
 
+
+def _render_contact(lines: list[str], p: dict[str, Any]) -> None:
+    contact = p.get("contact", {})
+    basic = p.get("basic_info", {})
+    lines.append("## 联系方式")
+    lines.append("")
+    if basic.get("phone"):
+        lines.append(f"- **电话**: {basic['phone']}")
+    lines.append(f"- **Email**: {contact.get('email') or '未设置'}")
+    lines.append(f"- **GitHub**: {contact.get('github') or '未设置'}")
+    blog_or_site = contact.get("blog") or contact.get("website")
+    lines.append(f"- **博客/网站**: {blog_or_site or '未设置'}")
+    lines.append("")
+
+
+def _render_skills(lines: list[str], p: dict[str, Any]) -> None:
     skills = p.get("skills", {})
     lines.append("## 技能栈")
     lines.append("")
-    lines.append(f"- **编程语言**: {', '.join(skills.get('programming_languages', [])) or '未设置'}")
-    lines.append(f"- **框架/库**: {', '.join(skills.get('frameworks', [])) or '未设置'}")
-    lines.append(f"- **工具**: {', '.join(skills.get('tools', [])) or '未设置'}")
-    lines.append(f"- **领域专长**: {', '.join(skills.get('domains', [])) or '未设置'}")
-    lines.append(f"- **自然语言**: {', '.join(skills.get('languages_spoken', [])) or '未设置'}")
+    lines.append(f"- **编程语言**: {_join(skills.get('programming_languages', []))}")
+    lines.append(f"- **框架/库**: {_join(skills.get('frameworks', []))}")
+    lines.append(f"- **工具**: {_join(skills.get('tools', []))}")
+    lines.append(f"- **领域专长**: {_join(skills.get('domains', []))}")
+    lines.append(f"- **自然语言**: {_join(skills.get('languages_spoken', []))}")
     lines.append("")
 
+
+def _render_career(lines: list[str], p: dict[str, Any]) -> None:
+    career = p.get("career")
+    if not career:
+        return
+    lines.append("## 职业履历")
+    lines.append("")
+    if career.get("summary"):
+        lines.append(f"> {career['summary']}")
+        lines.append("")
+    if career.get("tags"):
+        lines.append(f"- **标签**: {_join(career['tags'])}")
+    sd = career.get("skills_detail", {})
+    if sd:
+        lines.append(f"- **SQL与数据能力**: {_join(sd.get('sql_and_data', []))}")
+        lines.append(f"- **大数据生态**: {_join(sd.get('big_data_ecosystem', []))}")
+        lines.append(f"- **常用平台/工具**: {_join(sd.get('platforms_and_tools', []))}")
+    lines.append("")
+
+    work = career.get("work_experience", [])
+    if work:
+        lines.append("### 工作经历")
+        lines.append("")
+        for w in work:
+            lines.append(f"**{w.get('company', '')}** · {w.get('title', '')}  ({w.get('period', '')})")
+            for h in w.get("highlights", []):
+                lines.append(f"  - {h}")
+            lines.append("")
+
+    proj = career.get("projects", [])
+    if proj:
+        lines.append("### 项目经历")
+        lines.append("")
+        for pr in proj:
+            lines.append(f"**{pr.get('name', '')}** · {pr.get('role', '')}  ({pr.get('period', '')})")
+            if pr.get("description"):
+                lines.append(f"  - {pr['description']}")
+            lines.append("")
+
+    campus = career.get("campus_experience", [])
+    if campus:
+        lines.append("### 校园经历")
+        lines.append("")
+        for c in campus:
+            lines.append(f"- {c}")
+        lines.append("")
+
+
+def _render_interests(lines: list[str], p: dict[str, Any]) -> None:
     interests = p.get("interests", {})
     lines.append("## 兴趣爱好")
     lines.append("")
-    lines.append(f"- **技术兴趣**: {', '.join(interests.get('tech_interests', [])) or '未设置'}")
-    lines.append(f"- **日常爱好**: {', '.join(interests.get('hobbies', [])) or '未设置'}")
-    lines.append(f"- **阅读**: {', '.join(interests.get('reading', [])) or '未设置'}")
-    lines.append(f"- **音乐**: {', '.join(interests.get('music', [])) or '未设置'}")
-    lines.append(f"- **运动**: {', '.join(interests.get('sports', [])) or '未设置'}")
-    lines.append(f"- **其他兴趣**: {', '.join(interests.get('other_interests', [])) or '未设置'}")
+    lines.append(f"- **技术兴趣**: {_join(interests.get('tech_interests', []))}")
+    lines.append(f"- **日常爱好**: {_join(interests.get('hobbies', []))}")
+    if interests.get("alcohol"):
+        lines.append(f"- **酒类偏好**: {_join(interests['alcohol'])}（酒类爱好者）")
+    lines.append(f"- **运动**: {_join(interests.get('sports', []))}")
+    if interests.get("film_directors"):
+        lines.append(f"- **喜欢的导演**: {_join(interests['film_directors'])}")
+    lines.append(f"- **音乐**: {_join(interests.get('music', []))}")
+    lines.append(f"- **阅读**: {_join(interests.get('reading', []))}")
+    other = interests.get("other_interests", [])
+    if other:
+        lines.append(f"- **其他**: {_join(other)}")
     lines.append("")
 
+
+def _render_work_style(lines: list[str], p: dict[str, Any]) -> None:
     work = p.get("work_style", {})
     lines.append("## 工作风格与偏好")
     lines.append("")
     lines.append(f"- **偏好语言**: {work.get('preferred_language') or '中文'}")
-    lines.append(f"- **代码风格**: {', '.join(work.get('code_style', [])) or '未设置'}")
-    lines.append(f"- **工作习惯**: {', '.join(work.get('work_habits', [])) or '未设置'}")
-    lines.append(f"- **沟通风格**: {', '.join(work.get('communication_style', [])) or '未设置'}")
-    lines.append(f"- **偏好工具**: {', '.join(work.get('tools_preferred', [])) or '未设置'}")
+    lines.append(f"- **代码风格**: {_join(work.get('code_style', []))}")
+    lines.append(f"- **工作习惯**: {_join(work.get('work_habits', []))}")
+    lines.append(f"- **沟通风格**: {_join(work.get('communication_style', []))}")
+    lines.append(f"- **偏好工具**: {_join(work.get('tools_preferred', []))}")
     lines.append("")
 
-    projects = p.get("projects", [])
+
+def _render_projects(lines: list[str], p: dict[str, Any]) -> None:
+    projects = p.get("personal_projects") or p.get("projects", [])
     lines.append("## 参与/关注的项目")
     lines.append("")
     if projects:
@@ -131,14 +238,18 @@ def get_profile_markdown() -> str:
         lines.append("- 未设置")
     lines.append("")
 
+
+def _render_goals(lines: list[str], p: dict[str, Any]) -> None:
     goals = p.get("goals", {})
     lines.append("## 目标")
     lines.append("")
-    lines.append(f"- **短期目标**: {', '.join(goals.get('short_term', [])) or '未设置'}")
-    lines.append(f"- **长期目标**: {', '.join(goals.get('long_term', [])) or '未设置'}")
-    lines.append(f"- **学习计划**: {', '.join(goals.get('learning', [])) or '未设置'}")
+    lines.append(f"- **短期目标**: {_join(goals.get('short_term', []))}")
+    lines.append(f"- **长期目标**: {_join(goals.get('long_term', []))}")
+    lines.append(f"- **学习计划**: {_join(goals.get('learning', []))}")
     lines.append("")
 
+
+def _render_notes(lines: list[str], p: dict[str, Any]) -> None:
     notes = p.get("notes", "")
     if notes:
         lines.append("## 备注")
@@ -146,16 +257,10 @@ def get_profile_markdown() -> str:
         lines.append(notes)
         lines.append("")
 
-    updated = p.get("updated_at", "")
-    if updated:
-        lines.append(f"---\n*最后更新: {updated}*")
-
-    return "\n".join(lines)
-
 
 def _default_profile() -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "updated_at": None,
         "basic_info": {
             "name": None,
@@ -167,12 +272,28 @@ def _default_profile() -> dict[str, Any]:
             "occupation": None,
             "industry": None,
             "education": None,
+            "phone": None,
+            "expected_salary": None,
+            "work_experience_years": None,
         },
         "contact": {
             "email": None,
             "github": "hpj360",
             "blog": None,
             "website": None,
+        },
+        "pets": [],
+        "career": {
+            "tags": [],
+            "summary": None,
+            "skills_detail": {
+                "sql_and_data": [],
+                "big_data_ecosystem": [],
+                "platforms_and_tools": [],
+            },
+            "work_experience": [],
+            "projects": [],
+            "campus_experience": [],
         },
         "skills": {
             "programming_languages": [],
@@ -188,6 +309,8 @@ def _default_profile() -> dict[str, Any]:
             "reading": [],
             "music": [],
             "sports": [],
+            "alcohol": [],
+            "film_directors": [],
             "other_interests": [],
         },
         "work_style": {
@@ -197,7 +320,7 @@ def _default_profile() -> dict[str, Any]:
             "communication_style": [],
             "tools_preferred": [],
         },
-        "projects": [],
+        "personal_projects": [],
         "goals": {
             "short_term": [],
             "long_term": [],

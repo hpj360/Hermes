@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "updated_at": null,
   "basic_info": {
     "name": null,
@@ -10,13 +10,29 @@
     "timezone": "Asia/Shanghai",
     "occupation": null,
     "industry": null,
-    "education": null
+    "education": null,
+    "phone": null,
+    "expected_salary": null,
+    "work_experience_years": null
   },
   "contact": {
     "email": null,
     "github": "hpj360",
     "blog": null,
     "website": null
+  },
+  "pets": [],
+  "career": {
+    "tags": [],
+    "summary": null,
+    "skills_detail": {
+      "sql_and_data": [],
+      "big_data_ecosystem": [],
+      "platforms_and_tools": []
+    },
+    "work_experience": [],
+    "projects": [],
+    "campus_experience": []
   },
   "skills": {
     "programming_languages": [],
@@ -32,6 +48,8 @@
     "reading": [],
     "music": [],
     "sports": [],
+    "alcohol": [],
+    "film_directors": [],
     "other_interests": []
   },
   "work_style": {
@@ -41,7 +59,7 @@
     "communication_style": [],
     "tools_preferred": []
   },
-  "projects": [],
+  "personal_projects": [],
   "goals": {
     "short_term": [],
     "long_term": [],
