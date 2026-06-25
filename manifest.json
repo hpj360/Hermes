@@ -42,7 +42,8 @@
     "evaluator-subagent-template.md",
     "harness-engineering.md",
     "memory-model.md",
-    "skill-and-loop.md"
+    "skill-and-loop.md",
+    "skill-sync-management.md"
   ],
-  "notes": "Skills and knowledge documents are copied from the main repository. Each skill may have its own runtime dependencies; check the individual SKILL.md files."
+  "notes": "Skills and knowledge documents are copied from the main repository. Each skill may have its own runtime dependencies; check the individual SKILL.md files. Skill Sync (Local mode) is built-in: use `hermes skill-sync --help` for multi-agent skill distribution."
 }
