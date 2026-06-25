@@ -1,12 +1,14 @@
 """Loop Engineering support for Hermes.
 
 Implements the Loop Engineering pattern from cobusgreyling/loop-engineering:
-- Loop scaffolding (STATE.md, loop-budget.md, LOOP.md)
+- Loop scaffolding (STATE.md, loop-budget.md, LOOP.md, builder.md, checker.md, stop-rules.md)
 - Loop state tracking across runs
 - L1/L2/L3 staged autonomy
 - Loop readiness audit
-- Maker/Checker separation guidance
-- Built-in patterns (daily-triage, knowledge-hygiene)
+- Maker/Checker separation with tool-level hard isolation
+- Six stop rules (ALL GREEN, rounds exhausted, same failure twice, regression, no progress, beyond capability)
+- "Don't interpret or filter" principle for failure report forwarding
+- Built-in patterns (builder-checker, daily-triage, knowledge-hygiene, ci-sweeper, pr-babysitter)
 """
 
 from __future__ import annotations
@@ -75,7 +77,109 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
         "denylist": [],
         "max_rounds": 5,
     },
+    "builder-checker": {
+        "name": "Builder/Checker Loop",
+        "description": "写代码和查代码拆成两个Agent，编排器循环调度，查到全绿为止。三文件模式：builder.md + checker.md + loop编排器",
+        "default_stage": LoopStage.L2_ASSIST,
+        "l1_capability": "builder只读分析，checker只报告（不修改）",
+        "l2_capability": "builder写代码，checker跑检查，循环到ALL GREEN或停止条件触发",
+        "l3_capability": "无人值守循环+自动提PR（需denylist和严格停止规则）",
+        "denylist": ["auth/", "payment/", "security/", ".env", "*.key"],
+        "max_rounds": 5,
+        "generates_agents": True,
+    },
 }
+
+# ── Stop rules (六条停止条件) ─────────────────────────────────────────
+
+STOP_RULES: list[dict[str, str]] = [
+    {
+        "id": "all_green",
+        "name": "ALL GREEN",
+        "description": "所有检查通过。停止，附上每项检查的通过证明。",
+        "action": "stop_success",
+    },
+    {
+        "id": "rounds_exhausted",
+        "name": "轮次用尽",
+        "description": "达到轮次上限。停止，报告仍失败的项、每轮尝试了什么、为什么没成功。",
+        "action": "stop_escalate",
+    },
+    {
+        "id": "same_failure_twice",
+        "name": "同一失败连续两轮",
+        "description": "builder在猜，不是在修。停止，升级给人。",
+        "action": "stop_escalate",
+    },
+    {
+        "id": "regression",
+        "name": "回归",
+        "description": "修复导致之前通过的检查失败。停止，说明改了什么导致了回归。",
+        "action": "stop_escalate",
+    },
+    {
+        "id": "no_progress",
+        "name": "无实质进展",
+        "description": "连续2轮失败项数量没有减少。停止，可能任务范围过大，需要拆分成更小的子任务。",
+        "action": "stop_escalate",
+    },
+    {
+        "id": "beyond_capability",
+        "name": "疑似超出能力边界",
+        "description": "builder反复尝试但失败原因涉及它无法访问的外部依赖或环境问题。停止，报告阻塞点。",
+        "action": "stop_escalate",
+    },
+]
+
+# ── Report format standards (报告格式标准) ─────────────────────────────
+
+BUILDER_REPORT_FORMAT = """## Builder 汇报格式
+修改完成后，先本地跑一遍 checker 会执行的命令，确认通过再汇报。
+
+汇报格式：
+  改了什么：<一句话>
+  修改文件：<file1>, <file2>, ...
+  本地检查结果：<通过/失败>
+"""
+
+CHECKER_REPORT_FORMAT = """## Checker 报告格式
+
+全部通过时：
+  ALL GREEN
+  然后逐项列出每项检查的名称和通过证明（如 "test: 848 passed, 0 failed"）。
+  不要只说全过了。
+
+任何失败时：
+  FAILED
+  然后逐条列出：
+    file:line - 什么坏了 - 哪个检查抓到的
+
+  如果同一文件有多个失败，合并列出。如果多个失败可能是同一根因，标注疑似同源。
+"""
+
+# ── Red lines (红线) ───────────────────────────────────────────────────
+
+BUILDER_RED_LINES = [
+    "绝不弱化测试来让它通过。修代码，不是修测试。",
+    "绝不通过删除、注释、跳过失败的检查来达到通过。",
+    "绝不在没有跑过检查的情况下声称已修复。",
+    "不要顺手重构不相关的代码。每一行多余改动都可能引入新问题。",
+]
+
+CHECKER_RED_LINES = [
+    "绝不意译失败信息。复制真实错误输出的关键行。",
+    "绝不因为看起来是小问题而省略失败项。",
+    "绝不自己尝试修复。你只负责报告，修复是builder的事。",
+    "绝不修改自己的工具白名单来获得Write/Edit权限。",
+]
+
+ORCHESTRATOR_RULES = [
+    "把checker的完整失败报告原样转发给builder，不要自己解读或过滤。",
+    "builder需要原始错误信息（行号、堆栈轨迹、中间输出）来定位根因。",
+    "每轮开始时公开声明 'Cycle N/最大轮次'。",
+    "如果同一失败连续出现两次，停止循环。",
+    "如果修复导致之前通过的检查失败，停止循环。",
+]
 
 
 @dataclass
@@ -86,7 +190,9 @@ class LoopRound:
     result_summary: str
     verifier_result: str
     passed: bool
-    next_action: str
+    next_action: str = ""
+    failure_count: int = 0
+    failure_items: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -249,11 +355,30 @@ def init_loop(name: str, pattern: str = "custom") -> dict[str, Any]:
 
 ## Maker/Checker 分离
 - **Planner**: 分析状态，生成本轮执行计划
-- **Generator**: 执行具体任务
-- **Evaluator（独立）**: 验证结果，检查是否违反边界条件，给出"通过/未通过"
+- **Generator (builder)**: 执行具体任务（有Write/Edit工具）
+- **Evaluator (checker)（独立）**: 验证结果（无Write/Edit工具，工具级硬隔离）
+
+### 关键原则：不过滤
+编排器必须把checker的完整失败报告**原样转发**给builder，不要自己解读或过滤。
+builder需要原始错误信息（行号、堆栈轨迹、中间输出）来定位根因。
+总结会丢失关键细节，浪费整整一轮循环。
+
+### 报告格式
+- builder汇报: 改了什么 / 修改文件 / 本地检查结果
+- checker报告: ALL GREEN + 逐项通过证明 / FAILED + file:line - 什么坏了 - 哪个检查抓到的
 
 ## Denylist（高风险路径，L3也不能碰）
 {chr(10).join('- ' + d for d in pattern_info.get('denylist', [])) or '- （暂无）'}
+
+## 停止规则（六条刹车条件）
+1. ALL GREEN：所有检查通过 → 停止
+2. 轮次用尽：达到{max_rounds}轮上限 → 停止，升级
+3. 同一失败连续两轮：builder在猜 → 停止，升级
+4. 回归：修复导致新失败 → 停止，升级
+5. 无实质进展：连续2轮失败数未减 → 停止，拆分任务
+6. 超出能力边界：外部依赖问题 → 停止，报告阻塞点
+
+详见 stop-rules.md
 """
 
     state_md = f"""# Loop State: {name}
@@ -301,6 +426,18 @@ Last updated: {now}
     (loop_dir / "STATE.md").write_text(state_md, encoding="utf-8")
     (loop_dir / "loop-budget.md").write_text(budget_md, encoding="utf-8")
 
+    files_created = ["LOOP.md", "STATE.md", "loop-budget.md"]
+
+    # Generate builder/checker agent definitions for builder-checker pattern
+    if pattern_info.get("generates_agents"):
+        builder_md = _generate_builder_md(name, pattern_info)
+        checker_md = _generate_checker_md(name)
+        stop_rules_md = _generate_stop_rules_md(name, max_rounds)
+        (loop_dir / "builder.md").write_text(builder_md, encoding="utf-8")
+        (loop_dir / "checker.md").write_text(checker_md, encoding="utf-8")
+        (loop_dir / "stop-rules.md").write_text(stop_rules_md, encoding="utf-8")
+        files_created.extend(["builder.md", "checker.md", "stop-rules.md"])
+
     state = LoopState(
         name=name,
         pattern=pattern,
@@ -321,7 +458,7 @@ Last updated: {now}
         "pattern": pattern,
         "stage": default_stage.value,
         "path": str(loop_dir),
-        "files": ["LOOP.md", "STATE.md", "loop-budget.md"],
+        "files": files_created,
     }
 
 
@@ -353,24 +490,24 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
         checks.append({
             "name": "STATE.md exists",
             "passed": loop.state_path.exists(),
-            "weight": 10,
+            "weight": 8,
         })
         if loop.state_path.exists():
-            score += 10
+            score += 8
         else:
             suggestions.append("Create STATE.md for cross-session state tracking")
 
         checks.append({
             "name": "LOOP.md has completion criteria",
             "passed": False,
-            "weight": 20,
+            "weight": 15,
         })
         if loop.config_path.exists():
             content = loop.config_path.read_text(encoding="utf-8")
             has_criteria = "TODO" not in content.split("完成标准")[1].split("##")[0] if "完成标准" in content else False
             checks[-1]["passed"] = has_criteria
             if has_criteria:
-                score += 20
+                score += 15
             else:
                 suggestions.append("Define machine-verifiable completion criteria in LOOP.md (avoid TODO)")
         else:
@@ -379,63 +516,123 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
         checks.append({
             "name": "Has Harness boundaries",
             "passed": loop.config_path.exists() and "边界条件" in loop.config_path.read_text(encoding="utf-8"),
-            "weight": 15,
+            "weight": 10,
         })
         if checks[-1]["passed"]:
-            score += 15
+            score += 10
         else:
             suggestions.append("Add boundary conditions (Harness constraints) to prevent Goodhart's Law")
 
         checks.append({
             "name": "Uses L1 stage (start conservative)",
             "passed": loop.stage == LoopStage.L1_REPORT,
-            "weight": 10,
+            "weight": 8,
         })
         if checks[-1]["passed"]:
-            score += 10
+            score += 8
         elif loop.stage == LoopStage.L2_ASSIST:
-            score += 5
+            score += 4
             suggestions.append("Consider running in L1 (report-only) first before enabling auto-fix")
 
         checks.append({
             "name": "Has fallback plan",
             "passed": loop.config_path.exists() and "降级" in loop.config_path.read_text(encoding="utf-8"),
-            "weight": 10,
+            "weight": 8,
         })
         if checks[-1]["passed"]:
-            score += 10
+            score += 8
         else:
             suggestions.append("Add a fallback plan (what to do when max rounds reached)")
 
         checks.append({
             "name": "Budget configured",
             "passed": loop.budget_path.exists(),
-            "weight": 10,
+            "weight": 8,
         })
         if checks[-1]["passed"]:
-            score += 10
+            score += 8
         else:
             suggestions.append("Configure token budget in loop-budget.md to prevent runaway costs")
 
         checks.append({
             "name": "Maker/Checker separation documented",
             "passed": loop.config_path.exists() and "Evaluator" in loop.config_path.read_text(encoding="utf-8"),
-            "weight": 15,
+            "weight": 10,
         })
         if checks[-1]["passed"]:
-            score += 15
+            score += 10
         else:
             suggestions.append("Document Planner/Generator/Evaluator separation (no self-evaluation!)")
 
         checks.append({
             "name": "Max rounds set",
             "passed": loop.max_rounds > 0 and loop.max_rounds <= 10,
-            "weight": 10,
+            "weight": 8,
         })
         if checks[-1]["passed"]:
-            score += 10
+            score += 8
         else:
             suggestions.append("Set reasonable max rounds (3-10) to prevent infinite loops")
+
+        # New checks from "three files" article
+        checks.append({
+            "name": "Stop rules defined (6 conditions)",
+            "passed": False,
+            "weight": 12,
+        })
+        loop_dir = loops_dir() / loop.name
+        stop_rules_path = loop_dir / "stop-rules.md"
+        if stop_rules_path.exists():
+            content = stop_rules_path.read_text(encoding="utf-8")
+            has_all_six = all(
+                rule["name"] in content
+                for rule in STOP_RULES
+            )
+            checks[-1]["passed"] = has_all_six
+            if has_all_six:
+                score += 12
+            else:
+                suggestions.append("Define all 6 stop rules in stop-rules.md (same failure twice, regression, no progress, etc.)")
+        else:
+            # Check if stop rules are in LOOP.md
+            if loop.config_path.exists():
+                content = loop.config_path.read_text(encoding="utf-8")
+                if "停止规则" in content and "同一失败" in content:
+                    checks[-1]["passed"] = True
+                    score += 12
+                else:
+                    suggestions.append("Define stop rules: same failure twice, regression, no progress detection")
+            else:
+                suggestions.append("Create stop-rules.md with 6 stop conditions")
+
+        checks.append({
+            "name": "Tool-level isolation (checker has no Write/Edit)",
+            "passed": False,
+            "weight": 13,
+        })
+        checker_path = loop_dir / "checker.md"
+        if checker_path.exists():
+            content = checker_path.read_text(encoding="utf-8")
+            # Verify checker.md explicitly excludes Write and Edit from tools
+            has_tools_line = "tools:" in content
+            no_write = "Write" not in content.split("tools:")[1].split("\n")[0] if has_tools_line else False
+            no_edit = "Edit" not in content.split("tools:")[1].split("\n")[0] if has_tools_line else False
+            checks[-1]["passed"] = has_tools_line and no_write and no_edit
+            if checks[-1]["passed"]:
+                score += 13
+            else:
+                suggestions.append("Ensure checker.md tools field excludes Write and Edit (tool-level hard isolation)")
+        else:
+            # For non-builder-checker patterns, check if LOOP.md mentions tool isolation
+            if loop.config_path.exists():
+                content = loop.config_path.read_text(encoding="utf-8")
+                if "工具级硬隔离" in content or "tool-level" in content.lower():
+                    checks[-1]["passed"] = True
+                    score += 13
+                else:
+                    suggestions.append("Document tool-level isolation: checker must not have Write/Edit tools")
+            else:
+                suggestions.append("Document tool-level isolation: checker must not have Write/Edit tools")
 
         total_score += score
         results.append({
@@ -532,6 +729,260 @@ def advance_stage(name: str) -> dict[str, Any]:
         "previous_stage": stage_order[current_idx].value,
         "new_stage": new_stage.value,
     }
+
+
+def check_stop_rules(
+    name: str,
+    current_round: int,
+    max_rounds: int,
+    rounds: list[LoopRound],
+) -> dict[str, Any]:
+    """Check if any of the six stop rules are triggered.
+
+    Returns a dict with 'should_stop', 'rule_id', 'rule_name', 'description', and 'escalation_info'.
+    """
+    # Rule 1: ALL GREEN — handled by caller (passed=True on latest round)
+    if rounds and rounds[-1].passed:
+        return {
+            "should_stop": True,
+            "rule_id": "all_green",
+            "rule_name": "ALL GREEN",
+            "description": "所有检查通过。",
+            "action": "stop_success",
+            "escalation_info": None,
+        }
+
+    # Rule 2: Rounds exhausted
+    if current_round >= max_rounds:
+        return {
+            "should_stop": True,
+            "rule_id": "rounds_exhausted",
+            "rule_name": "轮次用尽",
+            "description": f"达到轮次上限 ({max_rounds})。",
+            "action": "stop_escalate",
+            "escalation_info": {
+                "current_round": current_round,
+                "max_rounds": max_rounds,
+                "failed_items": rounds[-1].failure_items if rounds else [],
+                "attempts": [
+                    {"round": r.round_num, "action": r.action, "result": r.result_summary}
+                    for r in rounds
+                ],
+            },
+        }
+
+    # Rule 3: Regression — some failures fixed but new ones appeared
+    # Only triggers when there IS overlap (some failures persist) to distinguish
+    # from no_progress (completely different failure set)
+    if len(rounds) >= 2:
+        prev_failures = set(rounds[-2].failure_items)
+        curr_failures = set(rounds[-1].failure_items)
+        new_failures = curr_failures - prev_failures
+        previously_fixed = prev_failures - curr_failures
+        persistent = prev_failures & curr_failures
+        if new_failures and previously_fixed and persistent:
+            # Some items fixed, some new appeared, some persist — regression
+            return {
+                "should_stop": True,
+                "rule_id": "regression",
+                "rule_name": "回归",
+                "description": f"修复导致新失败: {', '.join(sorted(new_failures))}。之前修好的: {', '.join(sorted(previously_fixed))}",
+                "action": "stop_escalate",
+                "escalation_info": {
+                    "current_round": current_round,
+                    "new_failures": sorted(new_failures),
+                    "previously_fixed": sorted(previously_fixed),
+                },
+            }
+
+    # Rule 4: Same failure twice consecutively
+    if len(rounds) >= 2:
+        last_two = rounds[-2:]
+        if (
+            not last_two[0].passed
+            and not last_two[1].passed
+            and set(last_two[0].failure_items) & set(last_two[1].failure_items)
+        ):
+            common = set(last_two[0].failure_items) & set(last_two[1].failure_items)
+            return {
+                "should_stop": True,
+                "rule_id": "same_failure_twice",
+                "rule_name": "同一失败连续两轮",
+                "description": f"builder在猜，不是在修。共同失败项: {', '.join(sorted(common))}",
+                "action": "stop_escalate",
+                "escalation_info": {
+                    "current_round": current_round,
+                    "repeated_failures": sorted(common),
+                    "last_two_rounds": [
+                        {"round": r.round_num, "failures": r.failure_items}
+                        for r in last_two
+                    ],
+                },
+            }
+
+    # Rule 5: No progress — failure count not decreasing for 2 consecutive rounds
+    if len(rounds) >= 2:
+        last_two_counts = [rounds[-2].failure_count, rounds[-1].failure_count]
+        if (
+            last_two_counts[0] > 0
+            and last_two_counts[1] > 0
+            and last_two_counts[1] >= last_two_counts[0]
+        ):
+            return {
+                "should_stop": True,
+                "rule_id": "no_progress",
+                "rule_name": "无实质进展",
+                "description": f"连续2轮失败项数量未减少 ({last_two_counts[0]} → {last_two_counts[1]})。可能任务范围过大。",
+                "action": "stop_escalate",
+                "escalation_info": {
+                    "current_round": current_round,
+                    "failure_counts": last_two_counts,
+                    "suggestion": "拆分成更小的子任务",
+                },
+            }
+
+    return {
+        "should_stop": False,
+        "rule_id": None,
+        "rule_name": None,
+        "description": None,
+        "action": "continue",
+        "escalation_info": None,
+    }
+
+
+def _generate_builder_md(name: str, pattern_info: dict[str, Any]) -> str:
+    """Generate builder.md agent definition template."""
+    denylist = pattern_info.get("denylist", [])
+    denylist_str = "\n".join(f"  - {d}" for d in denylist) if denylist else "  - （暂无）"
+    return f"""---
+name: builder-{name}
+description: 负责编写和修复代码。用于实现任务或修复 checker 发现的失败。
+tools: Read, Write, Edit, Glob, Grep, Bash
+---
+
+你只负责构建和修复，不做其他任何事情。
+
+## 接到任务时
+
+1. 先读项目的 AGENTS.md、README、package.json（或等效配置文件），
+   理解架构分层和编码约定。不了解项目约定就动手，白跑的循环比读文档
+   花的时间多得多。
+2. 确认任务涉及的文件范围。如果需要跨层修改，先想清楚依赖方向是否允许。
+3. 写一行任务简报：目标、涉及文件、完成标准。然后开始实现。
+
+## 接到修复请求时
+
+1. 逐条阅读 checker 报告的失败项，每条失败都要读到 file:line。
+2. 定位根因。区分症状和病因：测试失败是症状，代码逻辑错误是病因。
+   修病因，不要修症状。
+3. 一次只修一个根因。如果 checker 报了 3 个失败，但它们可能是同一个
+   标根因引起的，先修最可能的那个，跑一遍检查看是否连带解决其他的。
+4. 不要顺手重构不相关的代码。循环验证的场景下，每一行多余改动都可能
+   引入新问题，让下一轮 checker 报出意料之外的失败。
+
+## 红线
+""" + "\n".join(f"- {line}" for line in BUILDER_RED_LINES) + f"""
+
+## 汇报格式
+
+修改完成后，先本地跑一遍 checker 会执行的命令，确认通过再汇报。
+
+    改了什么：<一句话>
+    修改文件：<file1>, <file2>, ...
+    本地检查结果：<通过/失败>
+
+## Denylist（禁止修改的路径）
+{denylist_str}
+"""
+
+
+def _generate_checker_md(name: str) -> str:
+    """Generate checker.md agent definition template."""
+    return f"""---
+name: checker-{name}
+description: 运行所有检查并报告失败项。在 builder 之后调用。绝不修改代码。
+tools: Read, Grep, Glob, Bash
+---
+
+你只检查，绝不修复。
+
+## 发现检查命令
+
+不要假设检查命令。先读 package.json 的 scripts 字段（或等效配置），
+找出项目实际使用的检查命令。常见模式：
+
+- test: `npm test` / `pnpm test` / `vitest run` / `pytest`
+- lint: `eslint .` / `oxlint .` / `ruff check` / `biome check`
+- 类型: `tsc --noEmit` / `vue-tsc --noEmit` / `mypy`
+- 格式: `prettier --check` / `ruff format --check` / `format:check`
+
+如果项目有聚合检查命令（如 `pnpm check` = test + lint + tsc + format），
+优先跑聚合命令，它能一次性覆盖所有检查项。
+
+如果项目有额外检查（依赖守卫、deadcode 检测、安全扫描等），也要跑。
+这些检查往往能抓到测试和 lint 抓不到的问题。
+
+## 执行
+
+按顺序运行所有检查命令。每项检查的完整输出都要保留，不要只保留最后
+一行的 pass/fail。失败的检查往往需要看中间输出才能定位根因。
+
+## 报告格式
+
+- 全部通过：输出 "ALL GREEN"，然后逐项列出每项检查的名称和通过证明
+  （如 "test: 848 passed, 0 failed"）。不要只说全过了。
+
+- 任何失败：输出 "FAILED"，然后逐条列出：
+  `file:line - 什么坏了 - 哪个检查抓到的`
+
+  如果同一文件有多个失败，合并列出。如果多个失败可能是同一根因，
+  标注疑似同源。
+
+## 红线
+""" + "\n".join(f"- {line}" for line in CHECKER_RED_LINES) + """
+
+## 关键：工具级硬隔离
+
+你的 tools 字段没有 Write 和 Edit。这不是提示词约束，是工具可见性的硬隔离。
+即使你"想"修复某个问题，你物理上无法修改任何文件。这是设计意图：
+**写代码的不验代码，验代码的不写代码。**
+"""
+
+
+def _generate_stop_rules_md(name: str, max_rounds: int) -> str:
+    """Generate stop-rules.md with the six stop conditions."""
+    rules_text = "\n".join(
+        f"{i+1}. **{r['name']}**：{r['description']}"
+        for i, r in enumerate(STOP_RULES)
+    )
+    return f"""# Loop Stop Rules: {name}
+
+循环能替你推进流程，但不能替你担责任。一个没人盯着的loop，也会没人盯着地犯错。
+所以循环必须有刹车。
+
+## 停止条件
+
+循环在以下任一条件成立时停止：
+
+{rules_text}
+
+## 红线
+
+- 永远不在没有 checker 输出的情况下报告成功。
+- 永远不弱化、删除、跳过检查来达到 ALL GREEN。
+- 永远不修改 checker 的工具白名单。
+
+## 升级协议
+
+停止并升级给人时，必须携带以下信息：
+- 当前轮次（Cycle N/{max_rounds}）
+- 仍失败的项列表
+- 每项已尝试过的修复方法
+- 你的判断：为什么继续循环不会解决问题
+
+## 编排器规则
+""" + "\n".join(f"- {rule}" for rule in ORCHESTRATOR_RULES)
 
 
 def knowledge_hygiene_scan() -> dict[str, Any]:

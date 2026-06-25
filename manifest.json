@@ -32,6 +32,7 @@
     "youtube-watcher"
   ],
   "knowledge": [
+    "builder-checker-loop.md",
     "evaluator-subagent-template.md",
     "harness-engineering.md",
     "loop-engineering.md",
@@ -39,5 +40,5 @@
     "skill-and-loop.md",
     "skill-sync-management.md"
   ],
-  "notes": "Skills and knowledge documents are copied from the main repository. Each skill may have its own runtime dependencies; check the individual SKILL.md files. Built-in capabilities: Skill Sync (Local mode) via `hermes skill-sync --help`; Loop Engineering with L1/L2/L3 staged autonomy via `hermes loop --help`."
+  "notes": "Skills and knowledge documents are copied from the main repository. Each skill may have its own runtime dependencies; check the individual SKILL.md files. Built-in capabilities: Skill Sync (Local mode) via `hermes skill-sync --help`; Loop Engineering with builder-checker pattern, 6 stop rules, tool-level isolation, and L1/L2/L3 staged autonomy via `hermes loop --help`."
 }

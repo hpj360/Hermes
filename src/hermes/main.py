@@ -11,6 +11,7 @@ from hermes.config import get_settings
 from hermes.logging import setup_logging
 from hermes.loop import (
     LOOP_PATTERNS,
+    STOP_RULES,
     LoopStage,
     advance_stage,
     audit_loop,
@@ -486,24 +487,54 @@ def cmd_loop_run(args: argparse.Namespace) -> int:
         hp = result["high_priority"]
         wl = result["watch_list"]
         ni = result["noise"]
-        print(f"🔴 High Priority ({len(hp)}):")
+        print(f"High Priority ({len(hp)}):")
         for item in hp:
             print(f"  - {item}")
         print()
-        print(f"🟡 Watch List ({len(wl)}):")
+        print(f"Watch List ({len(wl)}):")
         for item in wl:
             print(f"  - {item}")
         print()
-        print(f"⚪ Recent Noise ({len(ni)}):")
+        print(f"Recent Noise ({len(ni)}):")
         for item in ni:
             print(f"  - {item}")
         print()
         print(f"Summary: {len(hp)} high priority, {len(wl)} watch, {len(ni)} noise")
         if not hp and not wl:
-            print("✓ Knowledge base looks clean!")
+            print("Knowledge base looks clean!")
         else:
             print("Next: advance to L2 with `hermes loop advance " + args.name + "` to auto-fix watch-list items,")
             print("or manually address high priority items.")
+        return 0
+    elif loop.pattern == "builder-checker":
+        loop_dir = loops_dir() / args.name
+        print(f"=== Builder/Checker Loop: {args.name} ===")
+        print(f"Stage: {loop.stage.value}  Round: {loop.current_round}/{loop.max_rounds}")
+        print()
+        print("Agent definitions:")
+        builder_path = loop_dir / "builder.md"
+        checker_path = loop_dir / "checker.md"
+        stop_rules_path = loop_dir / "stop-rules.md"
+        print(f"  Builder:     {builder_path}  (has Write, Edit)")
+        print(f"  Checker:     {checker_path}  (NO Write/Edit - tool-level isolation)")
+        print(f"  Stop rules:  {stop_rules_path}  (6 conditions)")
+        print()
+        print("To execute a loop round:")
+        print("  1. Send task to builder agent (builder.md defines its behavior)")
+        print("  2. Send checker agent to run all checks (checker.md defines its behavior)")
+        print("  3. If ALL GREEN -> stop")
+        print("  4. If FAILED -> forward checker's RAW report to builder (do NOT interpret)")
+        print("  5. Repeat until ALL GREEN or stop rule triggers (max {0} rounds)".format(loop.max_rounds))
+        print()
+        print("Key principles:")
+        print("  - Tool-level hard isolation: checker physically cannot modify files")
+        print("  - Don't filter: pass checker's raw failure report to builder verbatim")
+        print("  - 6 stop rules: ALL GREEN / rounds exhausted / same failure twice /")
+        print("    regression / no progress / beyond capability")
+        print()
+        print(f"LOOP config:  {loop.config_path}")
+        print(f"STATE file:   {loop.state_path}")
+        print(f"Budget file:  {loop.budget_path}")
         return 0
     else:
         print(f"Loop run for pattern '{loop.pattern}' is currently guidance-only.")
@@ -518,6 +549,28 @@ def cmd_loop_run(args: argparse.Namespace) -> int:
         print(f"STATE file:  {loop.state_path}")
         print(f"Budget file: {loop.budget_path}")
         return 0
+
+
+def cmd_loop_stop_rules(args: argparse.Namespace) -> int:
+    print("=== Loop Stop Rules (Six Conditions) ===")
+    print()
+    for i, rule in enumerate(STOP_RULES, 1):
+        action_marker = "✓" if rule["action"] == "stop_success" else "⚠"
+        print(f"  {action_marker} {i}. {rule['name']}")
+        print(f"     {rule['description']}")
+        print(f"     Action: {rule['action']}")
+        print()
+    print("Red lines:")
+    print("  - Never report success without checker output")
+    print("  - Never weaken/delete/skip checks to achieve ALL GREEN")
+    print("  - Never modify checker's tool whitelist")
+    print()
+    print("Escalation protocol (when stopping with failures):")
+    print("  - Current round (Cycle N/max)")
+    print("  - Still-failing items list")
+    print("  - Each attempted fix method")
+    print("  - Judgment: why continuing won't solve the problem")
+    return 0
 
 
 def cmd_loop_patterns(args: argparse.Namespace) -> int:
@@ -655,6 +708,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_loop_run = p_loop_sub.add_parser("run", help="Execute one round of a loop")
     p_loop_run.add_argument("name", help="Loop name")
     p_loop_run.set_defaults(func=cmd_loop_run)
+
+    p_loop_stop = p_loop_sub.add_parser("stop-rules", help="Show the six stop rules")
+    p_loop_stop.set_defaults(func=cmd_loop_stop_rules)
 
     return parser
 
