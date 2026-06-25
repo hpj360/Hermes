@@ -1,6 +1,6 @@
 {
   "name": "hermes",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "main_repo_path": "/workspace/OpenClaw/openclaw-main",
   "inherited_from": [
     "/workspace/.trae/skills",
@@ -9,22 +9,16 @@
   "skills": [
     "agent-browser",
     "aipm-news-digest",
-    "awesome-openclaw-skills",
     "brave-search",
-    "claude-skills",
-    "darwin-skill",
     "douyin-reader",
     "find-skills",
     "frontend-design",
     "github",
-    "khazix-skills",
     "loop-engineering",
     "notion",
-    "nuwa-skill",
     "obsidian",
     "product-manager",
     "product-manager-skills",
-    "pskoett",
     "self-improving-agent",
     "skill-creator",
     "skill-manager",
@@ -35,15 +29,15 @@
     "trello",
     "weather",
     "wechat-reader",
-    "x-research-skill",
     "youtube-watcher"
   ],
   "knowledge": [
     "evaluator-subagent-template.md",
     "harness-engineering.md",
+    "loop-engineering.md",
     "memory-model.md",
     "skill-and-loop.md",
     "skill-sync-management.md"
   ],
-  "notes": "Skills and knowledge documents are copied from the main repository. Each skill may have its own runtime dependencies; check the individual SKILL.md files. Skill Sync (Local mode) is built-in: use `hermes skill-sync --help` for multi-agent skill distribution."
+  "notes": "Skills and knowledge documents are copied from the main repository. Each skill may have its own runtime dependencies; check the individual SKILL.md files. Built-in capabilities: Skill Sync (Local mode) via `hermes skill-sync --help`; Loop Engineering with L1/L2/L3 staged autonomy via `hermes loop --help`."
 }

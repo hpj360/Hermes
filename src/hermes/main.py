@@ -9,6 +9,18 @@ from pathlib import Path
 
 from hermes.config import get_settings
 from hermes.logging import setup_logging
+from hermes.loop import (
+    LOOP_PATTERNS,
+    LoopStage,
+    advance_stage,
+    audit_loop,
+    estimate_cost,
+    get_loop,
+    init_loop,
+    knowledge_hygiene_scan,
+    list_loops,
+    loops_dir,
+)
 from hermes.profile import get_profile_markdown, load_profile
 from hermes.skills import (
     SkillStatus,
@@ -55,7 +67,6 @@ def cmd_skills_list(args: argparse.Namespace) -> int:
         flags.append("meta" if s.has_meta else "    ")
         status_marker = {
             SkillStatus.LINKED: "🔗",
-            SkillStatus.SYNCED: "✓",
             SkillStatus.SYNCED: "✓",
             SkillStatus.LOCAL_CHANGES: "✏️",
             SkillStatus.EXTERNAL_CHANGES: "📥",
@@ -157,6 +168,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     docs_count = len(list_knowledge_docs())
     refresh = refresh_status()
     managed_count = refresh.get("total", 0)
+    loops_count = len(list_loops())
 
     print("=== Hermes Doctor ===")
     print(f"Python:          {sys.version.split()[0]}")
@@ -165,6 +177,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"Skills total:    {skills_count}")
     print(f"Skills managed:  {managed_count} (Skill Sync)")
     print(f"Knowledge docs:  {docs_count}")
+    print(f"Active loops:    {loops_count} (Loop Engineering)")
     print(f"Providers ready: {', '.join(providers) or '(none)'}")
     print()
 
@@ -340,6 +353,188 @@ def cmd_sync_add_agent(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── Loop Engineering commands ────────────────────────────────────────
+
+def cmd_loop_list(args: argparse.Namespace) -> int:
+    loops = list_loops()
+    if not loops:
+        print(f"No loops found in {loops_dir()}")
+        print("Use `hermes loop init <name>` to create your first loop.")
+        print(f"Built-in patterns: {', '.join(LOOP_PATTERNS.keys())}")
+        return 0
+    print(f"Loops ({len(loops)}):")
+    print()
+    for loop in loops:
+        stage_marker = {
+            LoopStage.L1_REPORT: "📋",
+            LoopStage.L2_ASSIST: "🔧",
+            LoopStage.L3_AUTONOMOUS: "🚀",
+        }.get(loop.stage, "?")
+        status_marker = {
+            "idle": "○",
+            "running": "▶",
+            "needs_human": "👤",
+            "completed": "✓",
+            "budget_exceeded": "💰",
+            "error": "✗",
+        }.get(loop.status.value, "?")
+        print(f"  {stage_marker} {status_marker} {loop.name:25s} [{loop.pattern}]  stage={loop.stage.value}  round={loop.current_round}/{loop.max_rounds}")
+    return 0
+
+
+def cmd_loop_init(args: argparse.Namespace) -> int:
+    pattern = args.pattern or "custom"
+    if pattern != "custom" and pattern not in LOOP_PATTERNS:
+        print(f"Unknown pattern: {pattern}")
+        print(f"Available patterns: {', '.join(LOOP_PATTERNS.keys())}, custom")
+        return 1
+    result = init_loop(args.name, pattern=pattern)
+    if not result.get("success"):
+        print(f"Error: {result.get('error')}")
+        return 1
+    print(f"✓ Loop '{result['name']}' initialized (pattern: {result['pattern']}, stage: {result['stage']})")
+    print(f"  Location: {result['path']}")
+    print(f"  Files created: {', '.join(result['files'])}")
+    print()
+    print("Next steps:")
+    print(f"  1. Edit {result['path']}/LOOP.md to define completion criteria and boundaries")
+    print(f"  2. Run `hermes loop audit {result['name']}` to check readiness")
+    print(f"  3. Run `hermes loop run {result['name']}` to execute (L1 report-only first!)")
+    return 0
+
+
+def cmd_loop_audit(args: argparse.Namespace) -> int:
+    result = audit_loop(args.name)
+    if not result.get("success"):
+        print(f"Error: {result.get('error')}")
+        return 1
+    if result["total"] == 0:
+        print(result.get("suggestions", ["No loops yet."])[0])
+        return 0
+
+    print("=== Loop Readiness Audit ===")
+    print(f"Total loops: {result['total']}")
+    print(f"Average score: {result['average_score']}/100")
+    print(f"Readiness: {result['readiness']}")
+    print()
+
+    for lr in result["loops"]:
+        print(f"── {lr['loop']} ({lr['pattern']}) ── score: {lr['score']}/100  stage: {lr['stage']}")
+        for check in lr["checks"]:
+            marker = "✓" if check["passed"] else "✗"
+            print(f"  {marker} {check['name']}")
+        if lr["suggestions"]:
+            print("  Suggestions:")
+            for s in lr["suggestions"]:
+                print(f"    → {s}")
+        print()
+    return 0
+
+
+def cmd_loop_budget(args: argparse.Namespace) -> int:
+    result = estimate_cost(args.name)
+    if not result.get("success"):
+        print(f"Error: {result.get('error')}")
+        return 1
+    print(f"=== Loop Budget: {result['loop']} ===")
+    print(f"  Per-round estimate:  {result['per_round_estimate_tokens']:,} tokens")
+    print(f"  Max rounds:          {result['max_rounds']}")
+    print(f"  Total estimate:      {result['total_estimate_tokens']:,} tokens")
+    print()
+    print(f"  Budget limit:        {result['budget_limit_tokens']:,} tokens")
+    print(f"  Budget used:         {result['budget_used_tokens']:,} tokens")
+    print(f"  Budget remaining:    {result['budget_remaining_tokens']:,} tokens")
+    print(f"  Est. rounds left:    {result['estimated_rounds_remaining']}")
+    print()
+    if result["within_budget"]:
+        print("  ✓ Within budget")
+    else:
+        print("  ✗ WARNING: Estimated cost exceeds budget! Consider reducing max_rounds or increasing limit.")
+    return 0
+
+
+def cmd_loop_advance(args: argparse.Namespace) -> int:
+    result = advance_stage(args.name)
+    if not result.get("success"):
+        print(f"Error: {result.get('error')}")
+        if "suggestions" in result:
+            print("Fix these issues first:")
+            for s in result["suggestions"]:
+                print(f"  → {s}")
+        return 1
+    print(f"✓ Loop '{result['loop']}' advanced: {result['previous_stage']} → {result['new_stage']}")
+    if result["new_stage"] == LoopStage.L2_ASSIST.value:
+        print("  L2 mode: Generator will make small fixes; Evaluator MUST verify independently.")
+    elif result["new_stage"] == LoopStage.L3_AUTONOMOUS.value:
+        print("  ⚠ L3 mode: Autonomous execution enabled. Ensure denylist is complete!")
+    return 0
+
+
+def cmd_loop_run(args: argparse.Namespace) -> int:
+    loop = get_loop(args.name)
+    if not loop:
+        print(f"Error: Loop '{args.name}' not found")
+        return 1
+
+    if loop.pattern == "knowledge-hygiene":
+        print(f"Running L1 scan for knowledge-hygiene loop: {args.name}")
+        print()
+        result = knowledge_hygiene_scan()
+        print("=== Knowledge Hygiene Scan (L1: report only) ===")
+        print(f"Timestamp: {result['timestamp']}")
+        print()
+        hp = result["high_priority"]
+        wl = result["watch_list"]
+        ni = result["noise"]
+        print(f"🔴 High Priority ({len(hp)}):")
+        for item in hp:
+            print(f"  - {item}")
+        print()
+        print(f"🟡 Watch List ({len(wl)}):")
+        for item in wl:
+            print(f"  - {item}")
+        print()
+        print(f"⚪ Recent Noise ({len(ni)}):")
+        for item in ni:
+            print(f"  - {item}")
+        print()
+        print(f"Summary: {len(hp)} high priority, {len(wl)} watch, {len(ni)} noise")
+        if not hp and not wl:
+            print("✓ Knowledge base looks clean!")
+        else:
+            print("Next: advance to L2 with `hermes loop advance " + args.name + "` to auto-fix watch-list items,")
+            print("or manually address high priority items.")
+        return 0
+    else:
+        print(f"Loop run for pattern '{loop.pattern}' is currently guidance-only.")
+        print()
+        print("To execute a loop round manually, follow the Maker/Checker pattern:")
+        print("  1. Planner: read STATE.md + LOOP.md, generate plan for this round")
+        print("  2. Generator: execute the plan (one small step at a time)")
+        print("  3. Evaluator (SEPARATE): verify result against completion criteria")
+        print("  4. Update STATE.md with results")
+        print()
+        print(f"LOOP config: {loop.config_path}")
+        print(f"STATE file:  {loop.state_path}")
+        print(f"Budget file: {loop.budget_path}")
+        return 0
+
+
+def cmd_loop_patterns(args: argparse.Namespace) -> int:
+    print("Built-in loop patterns:")
+    print()
+    for key, p in LOOP_PATTERNS.items():
+        print(f"  {key:25s}  default stage: {p['default_stage'].value}")
+        print(f"    {p['description']}")
+        print(f"    L1: {p['l1_capability']}")
+        print(f"    L2: {p['l2_capability']}")
+        print(f"    L3: {p['l3_capability']}")
+        if p.get("denylist"):
+            print(f"    Denylist: {', '.join(p['denylist'])}")
+        print()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hermes",
@@ -421,6 +616,45 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync_add_agent.add_argument("name", help="Agent name (e.g., 'my-custom-agent')")
     p_sync_add_agent.add_argument("path", help="Path to the skills directory")
     p_sync_add_agent.set_defaults(func=cmd_sync_add_agent)
+
+    # ── loop subcommand ────────────────────────────────────────────
+    p_loop = sub.add_parser(
+        "loop",
+        help="Loop Engineering: create, audit, and run agent loops",
+        description="Loop Engineering commands for structured, repeatable agent automation with L1/L2/L3 staged autonomy, Maker/Checker separation, and budget controls.",
+    )
+    p_loop_sub = p_loop.add_subparsers(dest="loop_cmd", required=True)
+
+    p_loop_list = p_loop_sub.add_parser("list", help="List all configured loops")
+    p_loop_list.set_defaults(func=cmd_loop_list)
+
+    p_loop_patterns = p_loop_sub.add_parser("patterns", help="Show built-in loop patterns")
+    p_loop_patterns.set_defaults(func=cmd_loop_patterns)
+
+    p_loop_init = p_loop_sub.add_parser("init", help="Initialize a new loop with scaffolding")
+    p_loop_init.add_argument("name", help="Loop name (e.g., 'daily-checks')")
+    p_loop_init.add_argument(
+        "--pattern", "-p",
+        choices=list(LOOP_PATTERNS.keys()) + ["custom"],
+        help="Built-in pattern to use (default: custom)",
+    )
+    p_loop_init.set_defaults(func=cmd_loop_init)
+
+    p_loop_audit = p_loop_sub.add_parser("audit", help="Audit loop readiness and quality")
+    p_loop_audit.add_argument("name", nargs="?", help="Specific loop to audit (default: all)")
+    p_loop_audit.set_defaults(func=cmd_loop_audit)
+
+    p_loop_budget = p_loop_sub.add_parser("budget", help="Estimate token cost for a loop")
+    p_loop_budget.add_argument("name", help="Loop name")
+    p_loop_budget.set_defaults(func=cmd_loop_budget)
+
+    p_loop_advance = p_loop_sub.add_parser("advance", help="Advance loop to next autonomy stage (L1→L2→L3)")
+    p_loop_advance.add_argument("name", help="Loop name")
+    p_loop_advance.set_defaults(func=cmd_loop_advance)
+
+    p_loop_run = p_loop_sub.add_parser("run", help="Execute one round of a loop")
+    p_loop_run.add_argument("name", help="Loop name")
+    p_loop_run.set_defaults(func=cmd_loop_run)
 
     return parser
 
