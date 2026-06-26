@@ -46,6 +46,9 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
         "l3_capability": "无人值守修复+PR（需要denylist）",
         "denylist": ["auth/", "payment/", "security/"],
         "max_rounds": 3,
+        "sub_agents": [
+            {"role": "scanner", "agent_file": None, "parallel": False},
+        ],
     },
     "knowledge-hygiene": {
         "name": "Knowledge Hygiene",
@@ -56,6 +59,11 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
         "l3_capability": "（不建议自动删除）提示用户确认后清理",
         "denylist": [],
         "max_rounds": 2,
+        "sub_agents": [
+            {"role": "manifest_scanner", "agent_file": None, "parallel": True},
+            {"role": "skill_scanner", "agent_file": None, "parallel": True},
+            {"role": "knowledge_scanner", "agent_file": None, "parallel": True},
+        ],
     },
     "ci-sweeper": {
         "name": "CI Sweeper",
@@ -66,6 +74,11 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
         "l3_capability": "自动提交修复PR",
         "denylist": ["auth/", "payment/"],
         "max_rounds": 3,
+        "sub_agents": [
+            {"role": "ci_monitor", "agent_file": None, "parallel": False},
+            {"role": "builder", "agent_file": "builder.md", "parallel": False},
+            {"role": "checker", "agent_file": "checker.md", "parallel": False},
+        ],
     },
     "pr-babysitter": {
         "name": "PR Babysitter",
@@ -76,6 +89,9 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
         "l3_capability": "自动merge（需严格条件）",
         "denylist": [],
         "max_rounds": 5,
+        "sub_agents": [
+            {"role": "pr_monitor", "agent_file": None, "parallel": False},
+        ],
     },
     "builder-checker": {
         "name": "Builder/Checker Loop",
@@ -87,6 +103,12 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
         "denylist": ["auth/", "payment/", "security/", ".env", "*.key"],
         "max_rounds": 5,
         "generates_agents": True,
+        "sub_agents": [
+            {"role": "builder", "agent_file": "builder.md", "parallel": False},
+            {"role": "checker_lint", "agent_file": "checker.md", "parallel": True, "check_type": "lint"},
+            {"role": "checker_type", "agent_file": "checker.md", "parallel": True, "check_type": "typecheck"},
+            {"role": "checker_test", "agent_file": "checker.md", "parallel": True, "check_type": "test"},
+        ],
     },
 }
 
@@ -193,6 +215,39 @@ class LoopRound:
     next_action: str = ""
     failure_count: int = 0
     failure_items: list[str] = field(default_factory=list)
+    tokens_used: int = 0
+    agent_reports: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "round_num": self.round_num,
+            "timestamp": self.timestamp,
+            "action": self.action,
+            "result_summary": self.result_summary,
+            "verifier_result": self.verifier_result,
+            "passed": self.passed,
+            "next_action": self.next_action,
+            "failure_count": self.failure_count,
+            "failure_items": self.failure_items,
+            "tokens_used": self.tokens_used,
+            "agent_reports": self.agent_reports,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> LoopRound:
+        return cls(
+            round_num=data.get("round_num", 0),
+            timestamp=data.get("timestamp", ""),
+            action=data.get("action", ""),
+            result_summary=data.get("result_summary", ""),
+            verifier_result=data.get("verifier_result", ""),
+            passed=data.get("passed", False),
+            next_action=data.get("next_action", ""),
+            failure_count=data.get("failure_count", 0),
+            failure_items=data.get("failure_items", []),
+            tokens_used=data.get("tokens_used", 0),
+            agent_reports=data.get("agent_reports", {}),
+        )
 
 
 @dataclass
@@ -263,6 +318,8 @@ def list_loops() -> list[LoopState]:
 
 def _load_loop_meta(meta: dict[str, Any], name: str) -> LoopState | None:
     loop_dir = loops_dir() / name
+    rounds_data = meta.get("rounds", [])
+    rounds = [LoopRound.from_dict(r) for r in rounds_data]
     return LoopState(
         name=name,
         pattern=meta.get("pattern", "custom"),
@@ -275,6 +332,7 @@ def _load_loop_meta(meta: dict[str, Any], name: str) -> LoopState | None:
         last_run=meta.get("last_run"),
         current_round=meta.get("current_round", 0),
         max_rounds=meta.get("max_rounds", 5),
+        rounds=rounds,
         budget_used_tokens=meta.get("budget_used_tokens", 0),
         budget_limit_tokens=meta.get("budget_limit_tokens", 500000),
         high_priority_items=meta.get("high_priority_items", []),
@@ -295,6 +353,7 @@ def _save_loop_meta(state: LoopState) -> None:
         "last_run": state.last_run,
         "current_round": state.current_round,
         "max_rounds": state.max_rounds,
+        "rounds": [r.to_dict() for r in state.rounds],
         "budget_used_tokens": state.budget_used_tokens,
         "budget_limit_tokens": state.budget_limit_tokens,
         "high_priority_items": state.high_priority_items,
@@ -796,6 +855,7 @@ def check_stop_rules(
             }
 
     # Rule 4: Same failure twice consecutively
+    # Only triggers when there is overlap AND no progress (failure count didn't decrease)
     if len(rounds) >= 2:
         last_two = rounds[-2:]
         if (
@@ -804,21 +864,23 @@ def check_stop_rules(
             and set(last_two[0].failure_items) & set(last_two[1].failure_items)
         ):
             common = set(last_two[0].failure_items) & set(last_two[1].failure_items)
-            return {
-                "should_stop": True,
-                "rule_id": "same_failure_twice",
-                "rule_name": "同一失败连续两轮",
-                "description": f"builder在猜，不是在修。共同失败项: {', '.join(sorted(common))}",
-                "action": "stop_escalate",
-                "escalation_info": {
-                    "current_round": current_round,
-                    "repeated_failures": sorted(common),
-                    "last_two_rounds": [
-                        {"round": r.round_num, "failures": r.failure_items}
-                        for r in last_two
-                    ],
-                },
-            }
+            # Only trigger if failure count didn't decrease (no real progress)
+            if last_two[1].failure_count >= last_two[0].failure_count:
+                return {
+                    "should_stop": True,
+                    "rule_id": "same_failure_twice",
+                    "rule_name": "同一失败连续两轮",
+                    "description": f"builder在猜，不是在修。共同失败项: {', '.join(sorted(common))}",
+                    "action": "stop_escalate",
+                    "escalation_info": {
+                        "current_round": current_round,
+                        "repeated_failures": sorted(common),
+                        "last_two_rounds": [
+                            {"round": r.round_num, "failures": r.failure_items}
+                            for r in last_two
+                        ],
+                    },
+                }
 
     # Rule 5: No progress — failure count not decreasing for 2 consecutive rounds
     if len(rounds) >= 2:
@@ -838,6 +900,48 @@ def check_stop_rules(
                     "current_round": current_round,
                     "failure_counts": last_two_counts,
                     "suggestion": "拆分成更小的子任务",
+                },
+            }
+
+    # Rule 6: Beyond capability — external dependency / environment issues
+    if rounds and not rounds[-1].passed:
+        last_round = rounds[-1]
+        capability_signals = [
+            "permission denied",
+            "connection refused",
+            "module not found",
+            "modulenotfounderror",
+            "command not found",
+            "no such file or directory",
+            "eacces",
+            "econnrefused",
+            "etimedout",
+            "cannot find module",
+            "unauthorized",
+            "forbidden",
+            "database connection",
+            "external dependency",
+            "environment variable",
+            "not installed",
+        ]
+        combined_text = (
+            last_round.result_summary + " " + last_round.verifier_result
+        ).lower()
+        matched_signals = [
+            sig for sig in capability_signals if sig in combined_text
+        ]
+        if matched_signals:
+            return {
+                "should_stop": True,
+                "rule_id": "beyond_capability",
+                "rule_name": "疑似超出能力边界",
+                "description": f"失败原因涉及外部依赖或环境问题: {', '.join(matched_signals)}。builder无法自行解决。",
+                "action": "stop_escalate",
+                "escalation_info": {
+                    "current_round": current_round,
+                    "matched_signals": matched_signals,
+                    "last_result": last_round.result_summary,
+                    "blocker": "外部依赖或环境问题，需要人工介入",
                 },
             }
 
@@ -1064,4 +1168,143 @@ def knowledge_hygiene_scan() -> dict[str, Any]:
             "watch_list_count": len(issues["watch_list"]),
             "noise_count": len(issues["noise"]),
         },
+    }
+
+
+# ── State management helpers ──────────────────────────────────────────
+
+
+def record_round(
+    name: str,
+    round_data: LoopRound,
+    tokens_used: int = 0,
+) -> dict[str, Any]:
+    """Record a completed round and persist state.
+
+    Updates the loop's rounds list, current_round counter, budget, last_run
+    timestamp, and status. Also writes a human-readable summary to STATE.md.
+    """
+    loop = get_loop(name)
+    if not loop:
+        return {"success": False, "error": f"Loop '{name}' not found"}
+
+    loop.rounds.append(round_data)
+    loop.current_round = round_data.round_num
+    loop.last_run = datetime.now(timezone.utc).isoformat()
+    loop.budget_used_tokens += tokens_used
+
+    if loop.budget_used_tokens >= loop.budget_limit_tokens:
+        loop.status = LoopStatus.BUDGET_EXCEEDED
+    elif round_data.passed:
+        loop.status = LoopStatus.COMPLETED
+    else:
+        stop = check_stop_rules(name, loop.current_round, loop.max_rounds, loop.rounds)
+        if stop["should_stop"]:
+            loop.status = LoopStatus.NEEDS_HUMAN
+        else:
+            loop.status = LoopStatus.RUNNING
+
+    _save_loop_meta(loop)
+    _update_state_md(loop)
+
+    return {
+        "success": True,
+        "loop": name,
+        "round": round_data.round_num,
+        "status": loop.status.value,
+        "tokens_used": tokens_used,
+        "budget_used": loop.budget_used_tokens,
+        "budget_remaining": loop.budget_limit_tokens - loop.budget_used_tokens,
+    }
+
+
+def _update_state_md(loop: LoopState) -> None:
+    """Write human-readable state summary to STATE.md."""
+    lines = [f"# Loop State: {loop.name}", ""]
+    lines.append(f"Last updated: {loop.last_run or 'never'}")
+    lines.append("")
+    lines.append("## Configuration")
+    lines.append(f"- Pattern: {loop.pattern}")
+    lines.append(f"- Stage: {loop.stage.value}")
+    lines.append(f"- Status: {loop.status.value}")
+    lines.append(f"- Current round: {loop.current_round}/{loop.max_rounds}")
+    lines.append(f"- Budget: {loop.budget_used_tokens:,}/{loop.budget_limit_tokens:,} tokens")
+    lines.append("")
+
+    if loop.high_priority_items:
+        lines.append("## High Priority")
+        for item in loop.high_priority_items:
+            lines.append(f"- {item}")
+        lines.append("")
+
+    if loop.watch_list:
+        lines.append("## Watch List")
+        for item in loop.watch_list:
+            lines.append(f"- {item}")
+        lines.append("")
+
+    if loop.rounds:
+        lines.append("## Execution History")
+        for r in loop.rounds:
+            marker = "✓" if r.passed else "✗"
+            lines.append(f"### Round {r.round_num} {marker}")
+            lines.append(f"- Action: {r.action}")
+            lines.append(f"- Result: {r.result_summary}")
+            lines.append(f"- Verifier: {r.verifier_result}")
+            if r.failure_items:
+                lines.append(f"- Failures ({r.failure_count}): {', '.join(r.failure_items[:5])}")
+            if r.tokens_used:
+                lines.append(f"- Tokens: {r.tokens_used:,}")
+            lines.append("")
+
+    loop.state_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def get_loop_history(name: str) -> dict[str, Any]:
+    """Return execution history for a loop."""
+    loop = get_loop(name)
+    if not loop:
+        return {"success": False, "error": f"Loop '{name}' not found"}
+
+    return {
+        "success": True,
+        "loop": name,
+        "status": loop.status.value,
+        "current_round": loop.current_round,
+        "max_rounds": loop.max_rounds,
+        "budget_used": loop.budget_used_tokens,
+        "budget_limit": loop.budget_limit_tokens,
+        "rounds": [r.to_dict() for r in loop.rounds],
+    }
+
+
+def check_budget(name: str) -> dict[str, Any]:
+    """Check budget status and return alert level."""
+    loop = get_loop(name)
+    if not loop:
+        return {"success": False, "error": f"Loop '{name}' not found"}
+
+    used = loop.budget_used_tokens
+    limit = loop.budget_limit_tokens
+    pct = (used / limit * 100) if limit > 0 else 0
+
+    if pct >= 100:
+        level = "exceeded"
+        action = "hard_stop"
+    elif pct >= 80:
+        level = "warning"
+        action = "alert"
+    else:
+        level = "ok"
+        action = "continue"
+
+    return {
+        "success": True,
+        "loop": name,
+        "used": used,
+        "limit": limit,
+        "percentage": round(pct, 1),
+        "level": level,
+        "action": action,
+        "remaining": limit - used,
     }

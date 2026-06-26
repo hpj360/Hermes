@@ -15,13 +15,15 @@ from hermes.loop import (
     LoopStage,
     advance_stage,
     audit_loop,
+    check_budget,
     estimate_cost,
     get_loop,
+    get_loop_history,
     init_loop,
-    knowledge_hygiene_scan,
     list_loops,
     loops_dir,
 )
+from hermes.runner import resume_loop, run_loop, run_loop_continuous
 from hermes.profile import get_profile_markdown, load_profile
 from hermes.skills import (
     SkillStatus,
@@ -472,21 +474,23 @@ def cmd_loop_advance(args: argparse.Namespace) -> int:
 
 
 def cmd_loop_run(args: argparse.Namespace) -> int:
-    loop = get_loop(args.name)
-    if not loop:
-        print(f"Error: Loop '{args.name}' not found")
+    """Execute one round of a loop via the runner."""
+    result = run_loop(args.name)
+    if not result.get("success"):
+        print(f"Error: {result.get('error', 'unknown error')}")
         return 1
 
-    if loop.pattern == "knowledge-hygiene":
-        print(f"Running L1 scan for knowledge-hygiene loop: {args.name}")
-        print()
-        result = knowledge_hygiene_scan()
-        print("=== Knowledge Hygiene Scan (L1: report only) ===")
-        print(f"Timestamp: {result['timestamp']}")
-        print()
-        hp = result["high_priority"]
-        wl = result["watch_list"]
-        ni = result["noise"]
+    mode = result.get("mode", "unknown")
+    print(f"=== Loop Run: {args.name} (mode: {mode}) ===")
+    print(f"Round: {result.get('round', '?')}")
+    print()
+
+    if mode == "local":
+        # Knowledge hygiene scan
+        scan = result.get("scan_result", {})
+        hp = scan.get("high_priority", [])
+        wl = scan.get("watch_list", [])
+        ni = scan.get("noise", [])
         print(f"High Priority ({len(hp)}):")
         for item in hp:
             print(f"  - {item}")
@@ -499,56 +503,162 @@ def cmd_loop_run(args: argparse.Namespace) -> int:
         for item in ni:
             print(f"  - {item}")
         print()
-        print(f"Summary: {len(hp)} high priority, {len(wl)} watch, {len(ni)} noise")
-        if not hp and not wl:
-            print("Knowledge base looks clean!")
+        passed = result.get("passed", False)
+        print(f"Result: {'ALL GREEN' if passed else 'FAILED'}")
+        stop = result.get("stop_check", {})
+        if stop.get("should_stop"):
+            print(f"Stop rule triggered: {stop.get('rule_name', '?')}")
+            print(f"  {stop.get('description', '')}")
         else:
-            print("Next: advance to L2 with `hermes loop advance " + args.name + "` to auto-fix watch-list items,")
-            print("or manually address high priority items.")
+            print("No stop rule triggered. Run again or use `hermes loop advance` to proceed.")
         return 0
-    elif loop.pattern == "builder-checker":
-        loop_dir = loops_dir() / args.name
-        print(f"=== Builder/Checker Loop: {args.name} ===")
-        print(f"Stage: {loop.stage.value}  Round: {loop.current_round}/{loop.max_rounds}")
+
+    elif mode == "orchestrated":
+        round_result = result.get("result", {})
+        print(f"Status: {'ALL GREEN' if result.get('passed') else 'FAILED'}")
+        print(f"Tokens used: {round_result.get('total_tokens', 0):,}")
+        print(f"Summary: {round_result.get('summary', '')}")
+        if round_result.get("failure_items"):
+            print()
+            print(f"Failures ({len(round_result['failure_items'])}):")
+            for item in round_result["failure_items"][:10]:
+                print(f"  - {item}")
+        stop = result.get("stop_check", {})
+        if stop.get("should_stop"):
+            print()
+            print(f"Stop rule triggered: {stop.get('rule_name', '?')}")
+            print(f"  {stop.get('description', '')}")
         print()
-        print("Agent definitions:")
-        builder_path = loop_dir / "builder.md"
-        checker_path = loop_dir / "checker.md"
-        stop_rules_path = loop_dir / "stop-rules.md"
-        print(f"  Builder:     {builder_path}  (has Write, Edit)")
-        print(f"  Checker:     {checker_path}  (NO Write/Edit - tool-level isolation)")
-        print(f"  Stop rules:  {stop_rules_path}  (6 conditions)")
-        print()
-        print("To execute a loop round:")
-        print("  1. Send task to builder agent (builder.md defines its behavior)")
-        print("  2. Send checker agent to run all checks (checker.md defines its behavior)")
-        print("  3. If ALL GREEN -> stop")
-        print("  4. If FAILED -> forward checker's RAW report to builder (do NOT interpret)")
-        print("  5. Repeat until ALL GREEN or stop rule triggers (max {0} rounds)".format(loop.max_rounds))
-        print()
-        print("Key principles:")
-        print("  - Tool-level hard isolation: checker physically cannot modify files")
-        print("  - Don't filter: pass checker's raw failure report to builder verbatim")
-        print("  - 6 stop rules: ALL GREEN / rounds exhausted / same failure twice /")
-        print("    regression / no progress / beyond capability")
-        print()
-        print(f"LOOP config:  {loop.config_path}")
-        print(f"STATE file:   {loop.state_path}")
-        print(f"Budget file:  {loop.budget_path}")
+        record = result.get("record", {})
+        print(f"Budget: {record.get('budget_used', 0):,}/{record.get('budget_remaining', 0):,} tokens remaining")
         return 0
+
+    elif mode == "guidance":
+        # Guidance mode (Gateway unavailable)
+        print(result.get("message", "Guidance mode."))
+        print()
+        if "instructions" in result:
+            print("Execution instructions:")
+            for line in result["instructions"]:
+                print(f"  {line}")
+        if "agent_files" in result:
+            print()
+            print("Agent definition files:")
+            for role, path in result["agent_files"].items():
+                print(f"  {role}: {path}")
+        if "principles" in result:
+            print()
+            print("Key principles:")
+            for line in result["principles"]:
+                print(f"  {line}")
+        print()
+        loop = get_loop(args.name)
+        if loop:
+            print(f"LOOP config:  {loop.config_path}")
+            print(f"STATE file:   {loop.state_path}")
+            print(f"Budget file:  {loop.budget_path}")
+        return 0
+
     else:
-        print(f"Loop run for pattern '{loop.pattern}' is currently guidance-only.")
-        print()
-        print("To execute a loop round manually, follow the Maker/Checker pattern:")
-        print("  1. Planner: read STATE.md + LOOP.md, generate plan for this round")
-        print("  2. Generator: execute the plan (one small step at a time)")
-        print("  3. Evaluator (SEPARATE): verify result against completion criteria")
-        print("  4. Update STATE.md with results")
-        print()
-        print(f"LOOP config: {loop.config_path}")
-        print(f"STATE file:  {loop.state_path}")
-        print(f"Budget file: {loop.budget_path}")
+        print(f"Unknown mode: {mode}")
+        return 1
+
+
+def cmd_loop_continuous(args: argparse.Namespace) -> int:
+    """Execute loop rounds continuously until a stop rule triggers."""
+    print(f"=== Continuous Loop: {args.name} ===")
+    result = run_loop_continuous(args.name)
+    if not result.get("success"):
+        print(f"Error: {result.get('error', 'unknown error')}")
+        return 1
+
+    print(f"Rounds executed: {result['rounds_executed']}")
+    final_stop = result.get("final_stop", {})
+    print(f"Final stop: {final_stop.get('rule_name', 'none')} — {final_stop.get('description', '')}")
+    print()
+    for i, r in enumerate(result.get("rounds", [])):
+        mode = r.get("mode", "?")
+        passed = r.get("passed", False)
+        round_num = r.get("round", i + 1)
+        print(f"  Round {round_num}: mode={mode} {'✓' if passed else '✗'}")
+    return 0
+
+
+def cmd_loop_resume(args: argparse.Namespace) -> int:
+    """Resume a loop from its last recorded state."""
+    print(f"=== Resume Loop: {args.name} ===")
+    result = resume_loop(args.name)
+    if not result.get("success"):
+        print(f"Error: {result.get('error', 'unknown error')}")
+        return 1
+
+    print(f"Rounds executed: {result['rounds_executed']}")
+    final_stop = result.get("final_stop", {})
+    print(f"Final stop: {final_stop.get('rule_name', 'none')} — {final_stop.get('description', '')}")
+    return 0
+
+
+def cmd_loop_logs(args: argparse.Namespace) -> int:
+    """View execution history for a loop."""
+    history = get_loop_history(args.name)
+    if not history.get("success"):
+        print(f"Error: {history.get('error', 'unknown error')}")
+        return 1
+
+    print(f"=== Loop History: {args.name} ===")
+    print(f"Status: {history['status']}")
+    print(f"Round: {history['current_round']}/{history['max_rounds']}")
+    print(f"Budget: {history['budget_used']:,}/{history['budget_limit']:,} tokens")
+    print()
+
+    rounds = history.get("rounds", [])
+    if not rounds:
+        print("No rounds executed yet.")
         return 0
+
+    print(f"Execution history ({len(rounds)} rounds):")
+    print()
+    for r in rounds:
+        marker = "✓" if r.get("passed") else "✗"
+        print(f"  Round {r['round_num']} {marker} — {r.get('result_summary', '')}")
+        if r.get("failure_items"):
+            print(f"    Failures ({r.get('failure_count', 0)}): {', '.join(r['failure_items'][:3])}")
+        if r.get("tokens_used"):
+            print(f"    Tokens: {r['tokens_used']:,}")
+        if r.get("agent_reports"):
+            for role, report in r["agent_reports"].items():
+                # Show first 200 chars of each agent report
+                preview = report[:200] + ("..." if len(report) > 200 else "")
+                print(f"    [{role}]: {preview}")
+        print()
+    return 0
+
+
+def cmd_loop_status(args: argparse.Namespace) -> int:
+    """Show current loop status and budget."""
+    loop = get_loop(args.name)
+    if not loop:
+        print(f"Error: Loop '{args.name}' not found")
+        return 1
+
+    budget = check_budget(args.name)
+    print(f"=== Loop Status: {args.name} ===")
+    print(f"  Pattern:    {loop.pattern}")
+    print(f"  Stage:      {loop.stage.value}")
+    print(f"  Status:     {loop.status.value}")
+    print(f"  Round:      {loop.current_round}/{loop.max_rounds}")
+    print()
+    print(f"  Budget:     {budget['used']:,}/{budget['limit']:,} tokens ({budget['percentage']}%)")
+    print(f"  Remaining:  {budget['remaining']:,} tokens")
+    print(f"  Budget level: {budget['level']} ({budget['action']})")
+    print()
+
+    if loop.rounds:
+        print(f"  Last round: {loop.rounds[-1].action}")
+        print(f"  Last result: {'✓ PASSED' if loop.rounds[-1].passed else '✗ FAILED'}")
+    else:
+        print("  No rounds executed yet.")
+    return 0
 
 
 def cmd_loop_stop_rules(args: argparse.Namespace) -> int:
@@ -708,6 +818,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_loop_run = p_loop_sub.add_parser("run", help="Execute one round of a loop")
     p_loop_run.add_argument("name", help="Loop name")
     p_loop_run.set_defaults(func=cmd_loop_run)
+
+    p_loop_continuous = p_loop_sub.add_parser("continuous", help="Run loop continuously until stop rule triggers")
+    p_loop_continuous.add_argument("name", help="Loop name")
+    p_loop_continuous.set_defaults(func=cmd_loop_continuous)
+
+    p_loop_resume = p_loop_sub.add_parser("resume", help="Resume a loop from last recorded state")
+    p_loop_resume.add_argument("name", help="Loop name")
+    p_loop_resume.set_defaults(func=cmd_loop_resume)
+
+    p_loop_logs = p_loop_sub.add_parser("logs", help="View execution history for a loop")
+    p_loop_logs.add_argument("name", help="Loop name")
+    p_loop_logs.set_defaults(func=cmd_loop_logs)
+
+    p_loop_status = p_loop_sub.add_parser("status", help="Show current loop status and budget")
+    p_loop_status.add_argument("name", help="Loop name")
+    p_loop_status.set_defaults(func=cmd_loop_status)
 
     p_loop_stop = p_loop_sub.add_parser("stop-rules", help="Show the six stop rules")
     p_loop_stop.set_defaults(func=cmd_loop_stop_rules)
