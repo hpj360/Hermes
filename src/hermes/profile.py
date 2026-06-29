@@ -7,6 +7,7 @@ in a structured JSON file under the project data/ directory.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,10 +25,19 @@ def _working_principles_doc_path() -> Path:
     return Path(__file__).resolve().parents[2] / "knowledge" / "working-principles.md"
 
 
+# Strict pattern: only `## 规则N：` / `## 规则N:` (N = 中文数字 or arabic) is a rule
+# heading. This avoids matching `## 规则补充` / `## 规则附录` (Bug 5).
+_RULE_HEADING_RE = re.compile(r"^##\s*规则[一二三四五六七八九十百\d]+\s*[:：]")
+
+
 def _load_working_principles_from_doc() -> list[str]:
     """Parse principle entries from knowledge/working-principles.md.
 
-    Reads top-level `## 规则N：...` headings (and their content) as entries.
+    Each entry is `## 规则N：标题` followed by a body. The body runs until the
+    next rule heading or end of document — `---` separators inside a rule body
+    are preserved (fixes the truncation/data-loss bug where `---` ended a rule
+    early and silently dropped its remainder).
+
     Returns an empty list if the document is missing or unreadable.
     """
     path = _working_principles_doc_path()
@@ -41,33 +51,38 @@ def _load_working_principles_from_doc() -> list[str]:
     current_title: str | None = None
     current_body: list[str] = []
     for line in text.splitlines():
-        if line.startswith("## 规则"):
+        if _RULE_HEADING_RE.match(line):
+            # Flush previous rule.
             if current_title is not None:
                 body = "\n".join(current_body).strip()
-                entries.append(current_title if not body else f"{current_title}：{body}")
+                entries.append(current_title if not body else f"{current_title}\n{body}")
             current_title = line.lstrip("# ").strip()
             current_body = []
         elif current_title is not None:
-            # stop at the next section delimiter or top-level heading
-            if line.startswith("---") or (line.startswith("# ") and not line.startswith("## ")):
-                body = "\n".join(current_body).strip()
-                entries.append(current_title if not body else f"{current_title}：{body}")
-                current_title = None
-                current_body = []
-            elif line.strip():
-                current_body.append(line.strip())
+            # Body accumulates until the next rule heading (NOT `---`).
+            current_body.append(line)
     if current_title is not None:
         body = "\n".join(current_body).strip()
-        entries.append(current_title if not body else f"{current_title}：{body}")
+        entries.append(current_title if not body else f"{current_title}\n{body}")
     return entries
+
+
+def _has_meaningful_principles(values: list[Any] | None) -> bool:
+    """True if `values` contains at least one non-empty, non-null string."""
+    if not values:
+        return False
+    return any(isinstance(p, str) and p.strip() for p in values)
 
 
 def load_profile() -> dict[str, Any]:
     """Load the user profile from disk. Returns an empty skeleton if missing.
 
-    If `work_style.working_principles` is empty, backfill from the persisted
-    project-level document `knowledge/working-principles.md` so that any cloned
-    environment inherits the rules. A non-empty local value always wins.
+    If `work_style.working_principles` is empty/meaningless, backfill from the
+    persisted project-level document `knowledge/working-principles.md` so that
+    any cloned environment inherits the rules. A non-empty local value always
+    wins. Backfilled values are NOT persisted by save_profile — the original
+    local value (empty) is preserved so future document updates keep flowing
+    in (fixes Bug 3 where backfill was written back and broke inheritance).
     """
     path = _profile_path()
     if not path.exists():
@@ -76,21 +91,35 @@ def load_profile() -> dict[str, Any]:
         with path.open("r", encoding="utf-8") as f:
             data: dict[str, Any] = json.load(f)
             profile = data
-    # Backfill persisted working principles if local profile has none.
+    # Backfill persisted working principles only if local has no meaningful value.
     work_style = profile.setdefault("work_style", {})
-    local_principles = work_style.get("working_principles") or []
-    if not local_principles:
+    local_principles = work_style.get("working_principles")
+    if not _has_meaningful_principles(local_principles):
         doc_principles = _load_working_principles_from_doc()
         if doc_principles:
+            # Store backfilled values under a separate key so save_profile can
+            # avoid persisting them (keeps local "empty" state for future doc updates).
             work_style["working_principles"] = doc_principles
+            work_style["_working_principles_from_doc"] = True
     return profile
 
 
 def save_profile(profile: dict[str, Any]) -> None:
-    """Persist the user profile to disk and update the timestamp."""
+    """Persist the user profile to disk and update the timestamp.
+
+    Backfilled working_principles (marked with `_working_principles_from_doc`)
+    are stripped before writing so the local profile stays "empty" and future
+    document updates keep flowing in. This preserves the inheritance mechanism
+    (fixes Bug 3 where the first save_profile call poisoned local state).
+    """
     path = _profile_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     profile["updated_at"] = datetime.now(timezone.utc).isoformat()
+    work_style = profile.get("work_style")
+    if isinstance(work_style, dict) and work_style.get("_working_principles_from_doc"):
+        # Restore local to empty so doc updates remain visible on next load.
+        work_style["working_principles"] = []
+        work_style.pop("_working_principles_from_doc", None)
     with path.open("w", encoding="utf-8") as f:
         json.dump(profile, f, ensure_ascii=False, indent=2)
 
@@ -459,7 +488,10 @@ def _render_work_style(lines: list[str], p: dict[str, Any]) -> None:
     if principles:
         lines.append("- **工作原则/规则**:")
         for principle in principles:
-            lines.append(f"  - {principle}")
+            # Indent embedded newlines so multi-line principle bodies stay
+            # nested under the list item instead of breaking list structure.
+            indented = str(principle).replace("\n", "\n    ")
+            lines.append(f"  - {indented}")
     lines.append("")
 
 

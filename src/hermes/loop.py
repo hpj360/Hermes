@@ -235,6 +235,11 @@ class LoopRound:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> LoopRound:
+        # Normalize explicit None to field defaults. `.get(key, default)` returns
+        # None (not the default) when the key exists with a None value, which
+        # would crash downstream `set(failure_items)` / `dict(agent_reports)`.
+        failure_items = data.get("failure_items") or []
+        agent_reports = data.get("agent_reports") or {}
         return cls(
             round_num=data.get("round_num", 0),
             timestamp=data.get("timestamp", ""),
@@ -244,9 +249,9 @@ class LoopRound:
             passed=data.get("passed", False),
             next_action=data.get("next_action", ""),
             failure_count=data.get("failure_count", 0),
-            failure_items=data.get("failure_items", []),
+            failure_items=failure_items if isinstance(failure_items, list) else [],
             tokens_used=data.get("tokens_used", 0),
-            agent_reports=data.get("agent_reports", {}),
+            agent_reports=agent_reports if isinstance(agent_reports, dict) else {},
         )
 
 

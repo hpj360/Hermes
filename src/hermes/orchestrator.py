@@ -314,17 +314,27 @@ class Orchestrator:
 
         for task in tasks:
             if task.role.startswith("checker") or task.role == "checker":
-                if task.result:
-                    checker_reports.append(f"### {task.role}\n{task.result}")
-                    if "ALL GREEN" not in task.result and "FAILED" in task.result:
-                        all_passed = False
-                        # Extract failure lines (file:line pattern)
-                        for line in task.result.split("\n"):
-                            line = line.strip()
-                            if line and ("file:" in line.lower() or ".py:" in line or ".ts:" in line):
-                                failure_items.append(line)
-                    elif "ALL GREEN" not in task.result:
-                        all_passed = False
+                # Red line: never report success without checker output.
+                # Empty/None result must be treated as failure (not skipped),
+                # otherwise the loop can be marked COMPLETED with zero verification.
+                if not task.result:
+                    all_passed = False
+                    checker_reports.append(
+                        f"### {task.role}\n[CHECKER PRODUCED NO OUTPUT]"
+                    )
+                    continue
+                checker_reports.append(f"### {task.role}\n{task.result}")
+                result_upper = task.result.upper()
+                if "ALL GREEN" in result_upper:
+                    # Explicit success signal from this checker.
+                    continue
+                # Any non-empty, non-ALL-GREEN checker output is a failure.
+                all_passed = False
+                # Extract failure lines (file:line pattern) — verbatim, not interpreted.
+                for line in task.result.split("\n"):
+                    line = line.strip()
+                    if line and ("file:" in line.lower() or ".py:" in line or ".ts:" in line):
+                        failure_items.append(line)
             elif task.role == "builder":
                 if task.status == "failed":
                     all_passed = False

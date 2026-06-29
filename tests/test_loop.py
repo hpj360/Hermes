@@ -384,3 +384,97 @@ def test_round_result_serialization() -> None:
     assert d["all_passed"] is True
     assert d["total_tokens"] == 5000
     assert len(d["tasks"]) == 1
+
+
+# ── Adversarial review regression tests ──────────────────────────────
+
+
+def test_aggregate_results_empty_checker_output_is_failure() -> None:
+    """Bug 1 (CRITICAL): empty/None checker result must NOT be treated as success.
+
+    The loop's own red line says 'never report success without checker output'.
+    Previously `if task.result:` skipped the checker when result was empty,
+    leaving all_passed=True and marking the loop COMPLETED with zero verification.
+    """
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+    tasks = [
+        AgentTask(role="builder", status="completed", result="done", session_id="b", tokens_used=5000),
+        AgentTask(role="checker_lint", status="completed", result="", session_id="c", tokens_used=1000),
+    ]
+    result = orch.aggregate_results(tasks, round_num=1)
+    assert result.all_passed is False, "empty checker output was misjudged as ALL GREEN"
+
+
+def test_aggregate_results_none_checker_output_is_failure() -> None:
+    """Bug 1 variant: None checker result must also be treated as failure."""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+    tasks = [
+        AgentTask(role="builder", status="completed", result="done", session_id="b"),
+        AgentTask(role="checker_lint", status="completed", result=None, session_id="c"),
+    ]
+    result = orch.aggregate_results(tasks, round_num=1)
+    assert result.all_passed is False
+
+
+def test_aggregate_results_all_green_case_insensitive() -> None:
+    """Bug 1.4: 'All Green' (non-uppercase) must still be recognized as success."""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+    tasks = [
+        AgentTask(role="checker_lint", status="completed", result="All Green. lint: 0 errors", session_id="c"),
+    ]
+    result = orch.aggregate_results(tasks, round_num=1)
+    assert result.all_passed is True
+
+
+def test_loop_round_from_dict_explicit_none_normalized() -> None:
+    """Bug 2 (HIGH): explicit None in failure_items/agent_reports must be
+    normalized to defaults, not crash downstream set()/dict() operations."""
+    data = {
+        "round_num": 1,
+        "passed": False,
+        "failure_items": None,
+        "failure_count": 1,
+        "result_summary": "x",
+        "verifier_result": "x",
+        "agent_reports": None,
+    }
+    r = LoopRound.from_dict(data)
+    assert r.failure_items == []
+    assert r.agent_reports == {}
+    # Downstream stop-rule evaluation must not crash.
+    r2 = LoopRound.from_dict({**data, "round_num": 2})
+    result = check_stop_rules("t", 2, 5, [r, r2])
+    assert result["should_stop"] is True
+
+
+def test_loop_round_json_roundtrip_with_agent_reports() -> None:
+    """Bug 1.4 (test): full JSON disk roundtrip must preserve agent_reports
+    (including non-ASCII content), not just in-memory dict roundtrip."""
+    original = LoopRound(
+        round_num=1,
+        timestamp="2026-01-01T00:00:00Z",
+        action="build",
+        result_summary="summary",
+        verifier_result="verifier",
+        passed=False,
+        failure_count=2,
+        failure_items=["src/文件.py:42 - ImportError", "src/other.py:10 - 错误"],
+        tokens_used=12345,
+        agent_reports={
+            "checker_lint": "FAILED\nsrc/文件.py:42 - ImportError",
+            "checker_test": "ALL GREEN",
+        },
+    )
+    import json
+
+    serialized = json.dumps(original.to_dict(), ensure_ascii=False)
+    restored = LoopRound.from_dict(json.loads(serialized))
+    assert restored.failure_items == original.failure_items
+    assert restored.agent_reports == original.agent_reports
+    assert restored.tokens_used == 12345
