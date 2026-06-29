@@ -19,14 +19,71 @@ def _profile_path() -> Path:
     return settings.hermes_profile_path
 
 
+def _working_principles_doc_path() -> Path:
+    """Path to the project-level persisted working principles document."""
+    return Path(__file__).resolve().parents[2] / "knowledge" / "working-principles.md"
+
+
+def _load_working_principles_from_doc() -> list[str]:
+    """Parse principle entries from knowledge/working-principles.md.
+
+    Reads top-level `## 规则N：...` headings (and their content) as entries.
+    Returns an empty list if the document is missing or unreadable.
+    """
+    path = _working_principles_doc_path()
+    if not path.exists():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    entries: list[str] = []
+    current_title: str | None = None
+    current_body: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("## 规则"):
+            if current_title is not None:
+                body = "\n".join(current_body).strip()
+                entries.append(current_title if not body else f"{current_title}：{body}")
+            current_title = line.lstrip("# ").strip()
+            current_body = []
+        elif current_title is not None:
+            # stop at the next section delimiter or top-level heading
+            if line.startswith("---") or (line.startswith("# ") and not line.startswith("## ")):
+                body = "\n".join(current_body).strip()
+                entries.append(current_title if not body else f"{current_title}：{body}")
+                current_title = None
+                current_body = []
+            elif line.strip():
+                current_body.append(line.strip())
+    if current_title is not None:
+        body = "\n".join(current_body).strip()
+        entries.append(current_title if not body else f"{current_title}：{body}")
+    return entries
+
+
 def load_profile() -> dict[str, Any]:
-    """Load the user profile from disk. Returns an empty skeleton if missing."""
+    """Load the user profile from disk. Returns an empty skeleton if missing.
+
+    If `work_style.working_principles` is empty, backfill from the persisted
+    project-level document `knowledge/working-principles.md` so that any cloned
+    environment inherits the rules. A non-empty local value always wins.
+    """
     path = _profile_path()
     if not path.exists():
-        return dict(_default_profile())
-    with path.open("r", encoding="utf-8") as f:
-        data: dict[str, Any] = json.load(f)
-        return data
+        profile = dict(_default_profile())
+    else:
+        with path.open("r", encoding="utf-8") as f:
+            data: dict[str, Any] = json.load(f)
+            profile = data
+    # Backfill persisted working principles if local profile has none.
+    work_style = profile.setdefault("work_style", {})
+    local_principles = work_style.get("working_principles") or []
+    if not local_principles:
+        doc_principles = _load_working_principles_from_doc()
+        if doc_principles:
+            work_style["working_principles"] = doc_principles
+    return profile
 
 
 def save_profile(profile: dict[str, Any]) -> None:

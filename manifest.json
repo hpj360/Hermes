@@ -39,7 +39,8 @@
     "loop-engineering.md",
     "memory-model.md",
     "skill-and-loop.md",
-    "skill-sync-management.md"
+    "skill-sync-management.md",
+    "working-principles.md"
   ],
   "notes": "Skills and knowledge documents are copied from the main repository. Each skill may have its own runtime dependencies; check the individual SKILL.md files. Built-in capabilities: Skill Sync (Local mode) via `hermes skill-sync --help`; Loop Engineering with Sub-Agent orchestration (Fan-out/Fan-in), builder-checker pattern, 6 stop rules, tool-level isolation, L1/L2/L3 staged autonomy, and OpenClaw Gateway integration via `hermes loop --help`."
 }
