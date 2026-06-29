@@ -398,6 +398,11 @@ def _render_work_style(lines: list[str], p: dict[str, Any]) -> None:
     lines.append(f"- **工作习惯**: {_join(work.get('work_habits', []))}")
     lines.append(f"- **沟通风格**: {_join(work.get('communication_style', []))}")
     lines.append(f"- **偏好工具**: {_join(work.get('tools_preferred', []))}")
+    principles = work.get("working_principles", []) or []
+    if principles:
+        lines.append("- **工作原则/规则**:")
+        for principle in principles:
+            lines.append(f"  - {principle}")
     lines.append("")
 
 
@@ -526,6 +531,7 @@ def _default_profile() -> dict[str, Any]:
             "work_habits": [],
             "communication_style": [],
             "tools_preferred": [],
+            "working_principles": [],
         },
         "personal_projects": [],
         "goals": {
