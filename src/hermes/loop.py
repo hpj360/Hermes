@@ -14,11 +14,14 @@ Implements the Loop Engineering pattern from cobusgreyling/loop-engineering:
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("hermes.loop")
 
 
 class LoopStage(str, Enum):
@@ -40,6 +43,7 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
     "daily-triage": {
         "name": "Daily Triage",
         "description": "每天扫描问题、分类优先级、报告High Priority/Watch List/Noise",
+        "execution_status": "scaffolding_only",  # 生成脚手架，运行走 guidance 模式
         "default_stage": LoopStage.L1_REPORT,
         "l1_capability": "只报告，不修改",
         "l2_capability": "小步自动修复，Verifier独立验证",
@@ -53,6 +57,7 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
     "knowledge-hygiene": {
         "name": "Knowledge Hygiene",
         "description": "定期清理知识库：过期文档、重复skill、intent debt检测、偿还三笔债",
+        "execution_status": "implemented",  # runner._run_knowledge_hygiene 实际执行
         "default_stage": LoopStage.L1_REPORT,
         "l1_capability": "只报告：过期文档、重复skill、缺失的项目约定",
         "l2_capability": "更新时间戳、标记重复、整理索引",
@@ -68,6 +73,7 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
     "ci-sweeper": {
         "name": "CI Sweeper",
         "description": "监控CI失败，尝试分类和修复flaky test",
+        "execution_status": "scaffolding_only",  # 生成脚手架，运行走 guidance 模式
         "default_stage": LoopStage.L1_REPORT,
         "l1_capability": "报告CI失败列表",
         "l2_capability": "尝试修复明显问题，跑测试验证",
@@ -83,6 +89,7 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
     "pr-babysitter": {
         "name": "PR Babysitter",
         "description": "盯PR状态，检查CI，提醒reviewer，处理反馈",
+        "execution_status": "scaffolding_only",  # 生成脚手架，运行走 guidance 模式
         "default_stage": LoopStage.L1_REPORT,
         "l1_capability": "报告PR状态和CI结果",
         "l2_capability": "回应review评论，修复小问题",
@@ -96,6 +103,7 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
     "builder-checker": {
         "name": "Builder/Checker Loop",
         "description": "写代码和查代码拆成两个Agent，编排器循环调度，查到全绿为止。三文件模式：builder.md + checker.md + loop编排器",
+        "execution_status": "implemented",  # runner._run_builder_checker 实际执行
         "default_stage": LoopStage.L2_ASSIST,
         "l1_capability": "builder只读分析，checker只报告（不修改）",
         "l2_capability": "builder写代码，checker跑检查，循环到ALL GREEN或停止条件触发",
@@ -113,12 +121,24 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
 }
 
 # ── Stop rules (六条停止条件) ─────────────────────────────────────────
+#
+# 设计原则（第一性原理）：
+# - 规则应互斥：每个停止场景只归一类，避免遮蔽。
+# - 评估顺序 = STOP_RULES 列表顺序 = 诊断优先级（最具体诊断优先）。
+# - ALL GREEN 实为成功条件（非停止），列为首条便于统一查阅，action=stop_success。
+# - budget_exceeded 与 rounds_exhausted 同属"资源耗尽"，列入规则保证可发现性
+#   （实际由 record_round 状态机处理，check_stop_rules 不重复检查）。
+#
+# 互斥条件（regression / same_failure_twice / no_progress 三者不重叠）：
+#   regression        : new ≠ ∅ AND overlap ≠ ∅      （改相关代码引入新失败）
+#   same_failure_twice: new = ∅ AND overlap ≠ ∅ AND count未减 （纯重复）
+#   no_progress       : new ≠ ∅ AND overlap = ∅ AND fixed ≠ ∅ AND count未减 （全换）
 
 STOP_RULES: list[dict[str, str]] = [
     {
         "id": "all_green",
         "name": "ALL GREEN",
-        "description": "所有检查通过。停止，附上每项检查的通过证明。",
+        "description": "所有检查通过（成功条件，非停止）。停止，附上每项检查的通过证明。",
         "action": "stop_success",
     },
     {
@@ -128,27 +148,33 @@ STOP_RULES: list[dict[str, str]] = [
         "action": "stop_escalate",
     },
     {
-        "id": "same_failure_twice",
-        "name": "同一失败连续两轮",
-        "description": "builder在猜，不是在修。停止，升级给人。",
-        "action": "stop_escalate",
-    },
-    {
-        "id": "regression",
-        "name": "回归",
-        "description": "修复导致之前通过的检查失败。停止，说明改了什么导致了回归。",
-        "action": "stop_escalate",
-    },
-    {
-        "id": "no_progress",
-        "name": "无实质进展",
-        "description": "连续2轮失败项数量没有减少。停止，可能任务范围过大，需要拆分成更小的子任务。",
+        "id": "budget_exceeded",
+        "name": "预算耗尽",
+        "description": "token 预算用尽。停止，报告已消耗预算与剩余失败项（由 record_round 状态机处理）。",
         "action": "stop_escalate",
     },
     {
         "id": "beyond_capability",
         "name": "疑似超出能力边界",
         "description": "builder反复尝试但失败原因涉及它无法访问的外部依赖或环境问题。停止，报告阻塞点。",
+        "action": "stop_escalate",
+    },
+    {
+        "id": "regression",
+        "name": "回归",
+        "description": "修复导致之前通过的检查失败（引入新失败且有重复失败）。停止，说明改了什么导致了回归。",
+        "action": "stop_escalate",
+    },
+    {
+        "id": "same_failure_twice",
+        "name": "同一失败连续两轮",
+        "description": "builder在猜，不是在修（纯重复，无新失败引入）。停止，升级给人。",
+        "action": "stop_escalate",
+    },
+    {
+        "id": "no_progress",
+        "name": "无实质进展",
+        "description": "连续2轮失败项数量没有减少且失败集合完全更换。停止，可能任务范围过大，需要拆分成更小的子任务。",
         "action": "stop_escalate",
     },
 ]
@@ -177,6 +203,14 @@ CHECKER_REPORT_FORMAT = """## Checker 报告格式
     file:line - 什么坏了 - 哪个检查抓到的
 
   如果同一文件有多个失败，合并列出。如果多个失败可能是同一根因，标注疑似同源。
+
+  报告末尾必须附上结构化失败协议块（供编排器解析，便于跨轮次比对同一失败）：
+    <!-- failures:json -->
+    {"passed": false, "failures": [{"file": "src/auth.py", "line": 42, "type": "ImportError"}]}
+    <!-- /failures -->
+
+  说明：file 是失败文件路径（不含行号以免行号漂移误判），type 是错误类型/检查名。
+  全部通过时输出 {"passed": true, "failures": []}。
 """
 
 # ── Red lines (红线) ───────────────────────────────────────────────────
@@ -276,6 +310,11 @@ class LoopState:
     noise_items: list[str] = field(default_factory=list)
 
 
+# meta.json schema version. Bump when the persisted shape changes; add a
+# migration branch in _load_loop_meta. Old files without this key are v0.
+META_SCHEMA_VERSION = 1
+
+
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -316,13 +355,30 @@ def list_loops() -> list[LoopState]:
                 state = _load_loop_meta(meta, entry.name)
                 if state:
                     result.append(state)
-            except (json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, OSError, ValueError) as exc:
+                # ValueError covers enum members that no longer exist after a
+                # schema change (previously swallowed silently, hiding loops).
+                logger.warning("Skipping loop '%s' with unreadable meta: %s", entry.name, exc)
                 continue
     return result
 
 
 def _load_loop_meta(meta: dict[str, Any], name: str) -> LoopState | None:
     loop_dir = loops_dir() / name
+    # Schema version check + migration. v0 = files written before versioning
+    # existed (0.2.0 era); they lack agent_reports/tokens_used on rounds but
+    # LoopRound.from_dict already defaults those. Surface a warning instead of
+    # silently swallowing enum ValueErrors (which previously made loops
+    # disappear from `list` with no log).
+    version = meta.get("schema_version", 0)
+    if version > META_SCHEMA_VERSION:
+        logger.warning(
+            "Loop '%s' meta.json schema_version=%s is newer than supported %s; "
+            "loading with best-effort defaults.",
+            name,
+            version,
+            META_SCHEMA_VERSION,
+        )
     rounds_data = meta.get("rounds", [])
     rounds = [LoopRound.from_dict(r) for r in rounds_data]
     return LoopState(
@@ -351,6 +407,7 @@ def _save_loop_meta(state: LoopState) -> None:
     loop_dir = loops_dir() / state.name
     loop_dir.mkdir(parents=True, exist_ok=True)
     meta = {
+        "schema_version": META_SCHEMA_VERSION,
         "pattern": state.pattern,
         "stage": state.stage.value,
         "status": state.status.value,
@@ -835,80 +892,10 @@ def check_stop_rules(
             },
         }
 
-    # Rule 3: Regression — some failures fixed but new ones appeared
-    # Only triggers when there IS overlap (some failures persist) to distinguish
-    # from no_progress (completely different failure set)
-    if len(rounds) >= 2:
-        prev_failures = set(rounds[-2].failure_items)
-        curr_failures = set(rounds[-1].failure_items)
-        new_failures = curr_failures - prev_failures
-        previously_fixed = prev_failures - curr_failures
-        persistent = prev_failures & curr_failures
-        if new_failures and previously_fixed and persistent:
-            # Some items fixed, some new appeared, some persist — regression
-            return {
-                "should_stop": True,
-                "rule_id": "regression",
-                "rule_name": "回归",
-                "description": f"修复导致新失败: {', '.join(sorted(new_failures))}。之前修好的: {', '.join(sorted(previously_fixed))}",
-                "action": "stop_escalate",
-                "escalation_info": {
-                    "current_round": current_round,
-                    "new_failures": sorted(new_failures),
-                    "previously_fixed": sorted(previously_fixed),
-                },
-            }
-
-    # Rule 4: Same failure twice consecutively
-    # Only triggers when there is overlap AND no progress (failure count didn't decrease)
-    if len(rounds) >= 2:
-        last_two = rounds[-2:]
-        if (
-            not last_two[0].passed
-            and not last_two[1].passed
-            and set(last_two[0].failure_items) & set(last_two[1].failure_items)
-        ):
-            common = set(last_two[0].failure_items) & set(last_two[1].failure_items)
-            # Only trigger if failure count didn't decrease (no real progress)
-            if last_two[1].failure_count >= last_two[0].failure_count:
-                return {
-                    "should_stop": True,
-                    "rule_id": "same_failure_twice",
-                    "rule_name": "同一失败连续两轮",
-                    "description": f"builder在猜，不是在修。共同失败项: {', '.join(sorted(common))}",
-                    "action": "stop_escalate",
-                    "escalation_info": {
-                        "current_round": current_round,
-                        "repeated_failures": sorted(common),
-                        "last_two_rounds": [
-                            {"round": r.round_num, "failures": r.failure_items}
-                            for r in last_two
-                        ],
-                    },
-                }
-
-    # Rule 5: No progress — failure count not decreasing for 2 consecutive rounds
-    if len(rounds) >= 2:
-        last_two_counts = [rounds[-2].failure_count, rounds[-1].failure_count]
-        if (
-            last_two_counts[0] > 0
-            and last_two_counts[1] > 0
-            and last_two_counts[1] >= last_two_counts[0]
-        ):
-            return {
-                "should_stop": True,
-                "rule_id": "no_progress",
-                "rule_name": "无实质进展",
-                "description": f"连续2轮失败项数量未减少 ({last_two_counts[0]} → {last_two_counts[1]})。可能任务范围过大。",
-                "action": "stop_escalate",
-                "escalation_info": {
-                    "current_round": current_round,
-                    "failure_counts": last_two_counts,
-                    "suggestion": "拆分成更小的子任务",
-                },
-            }
-
-    # Rule 6: Beyond capability — external dependency / environment issues
+    # Rule 3: Beyond capability — external dependency / environment issues.
+    # Evaluated BEFORE regression/same_failure_twice so that a repeated
+    # environment error is diagnosed as "超出能力" (accurate) rather than
+    # "在猜" (misleading). Previously this rule was last and got shadowed.
     if rounds and not rounds[-1].passed:
         last_round = rounds[-1]
         capability_signals = [
@@ -947,6 +934,75 @@ def check_stop_rules(
                     "matched_signals": matched_signals,
                     "last_result": last_round.result_summary,
                     "blocker": "外部依赖或环境问题，需要人工介入",
+                },
+            }
+
+    # Rules 4-6 are mutually exclusive (互斥) based on set relationships:
+    #   regression        : new ≠ ∅ AND overlap ≠ ∅
+    #   same_failure_twice: new = ∅ AND overlap ≠ ∅ AND count未减
+    #   no_progress       : new ≠ ∅ AND overlap = ∅ AND fixed ≠ ∅ AND count未减
+    # This eliminates the shadowing where regression always preempted the others.
+    if len(rounds) >= 2:
+        prev_failures = set(rounds[-2].failure_items)
+        curr_failures = set(rounds[-1].failure_items)
+        new_failures = curr_failures - prev_failures
+        previously_fixed = prev_failures - curr_failures
+        persistent = prev_failures & curr_failures
+        prev_count = rounds[-2].failure_count
+        curr_count = rounds[-1].failure_count
+        count_not_decreased = curr_count >= prev_count
+
+        # Rule 4: Regression — introduced new failures AND some old failures persist
+        # (builder edited related code and broke something new).
+        if new_failures and persistent:
+            return {
+                "should_stop": True,
+                "rule_id": "regression",
+                "rule_name": "回归",
+                "description": f"修复导致新失败: {', '.join(sorted(new_failures))}。之前修好的: {', '.join(sorted(previously_fixed))}",
+                "action": "stop_escalate",
+                "escalation_info": {
+                    "current_round": current_round,
+                    "new_failures": sorted(new_failures),
+                    "previously_fixed": sorted(previously_fixed),
+                    "persistent": sorted(persistent),
+                },
+            }
+
+        # Rule 5: Same failure twice — no new failures, old ones persist, count not down.
+        # (builder is guessing, not fixing).
+        if not new_failures and persistent and count_not_decreased:
+            return {
+                "should_stop": True,
+                "rule_id": "same_failure_twice",
+                "rule_name": "同一失败连续两轮",
+                "description": f"builder在猜，不是在修。共同失败项: {', '.join(sorted(persistent))}",
+                "action": "stop_escalate",
+                "escalation_info": {
+                    "current_round": current_round,
+                    "repeated_failures": sorted(persistent),
+                    "last_two_rounds": [
+                        {"round": r.round_num, "failures": r.failure_items}
+                        for r in rounds[-2:]
+                    ],
+                },
+            }
+
+        # Rule 6: No progress — completely different failure set, count not down.
+        # (task scope too large; each fix surfaces an unrelated new failure).
+        if new_failures and not persistent and previously_fixed and count_not_decreased:
+            return {
+                "should_stop": True,
+                "rule_id": "no_progress",
+                "rule_name": "无实质进展",
+                "description": f"连续2轮失败项数量未减少 ({prev_count} → {curr_count}) 且失败集合完全更换。可能任务范围过大。",
+                "action": "stop_escalate",
+                "escalation_info": {
+                    "current_round": current_round,
+                    "failure_counts": [prev_count, curr_count],
+                    "new_failures": sorted(new_failures),
+                    "previously_fixed": sorted(previously_fixed),
+                    "suggestion": "拆分成更小的子任务",
                 },
             }
 

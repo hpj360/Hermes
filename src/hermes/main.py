@@ -157,8 +157,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     if not settings.hermes_project_root.exists():
         issues.append(f"Project root missing: {settings.hermes_project_root}")
+    # hermes_main_repo_path is an optional inherited-env source (OpenClaw),
+    # not a hard dependency — a missing repo is informational, not a warning,
+    # so an independent Hermes install does not flag its absence as a problem.
     if not settings.hermes_main_repo_path.exists():
-        warnings.append(f"Main repo path not found: {settings.hermes_main_repo_path}")
+        logging.getLogger("hermes").info(
+            "Inherited repo path not found (optional): %s", settings.hermes_main_repo_path
+        )
 
     providers = settings.configured_providers()
     if not providers:

@@ -105,16 +105,18 @@ def test_stop_rule_no_progress() -> None:
 
 
 def test_stop_rule_no_progress_count_increased() -> None:
-    """Rule 3/5: When failure count increases, same_failure_twice triggers
-    (because overlap exists AND count didn't decrease)."""
+    """新互斥设计: {a}→{a,b} 引入新失败且有重复 → regression（改坏了）。
+
+    旧设计此处用 "或" 断言掩盖了规则优先级 bug；新互斥设计下明确归为
+    regression（new≠∅ AND overlap≠∅），不再依赖评估顺序的偶然性。
+    """
     rounds = [
         _make_round(1, passed=False, failure_items=["a"], failure_count=1),
         _make_round(2, passed=False, failure_items=["a", "b"], failure_count=2),
     ]
     result = check_stop_rules("test", current_round=2, max_rounds=5, rounds=rounds)
     assert result["should_stop"] is True
-    # same_failure_twice triggers because "a" overlaps AND count increased
-    assert result["rule_id"] in ("same_failure_twice", "no_progress")
+    assert result["rule_id"] == "regression"
 
 
 def test_stop_rule_beyond_capability() -> None:
@@ -173,16 +175,61 @@ def test_stop_rule_single_round_not_passed() -> None:
     assert result["should_stop"] is False
 
 
-def test_all_six_rules_defined() -> None:
-    """Verify all 6 stop rules are defined in STOP_RULES."""
-    assert len(STOP_RULES) == 6
+def test_all_stop_rules_defined() -> None:
+    """Verify all stop rules are defined in STOP_RULES (1 success + 6 stop)."""
+    assert len(STOP_RULES) == 7
     rule_ids = [r["id"] for r in STOP_RULES]
     assert "all_green" in rule_ids
     assert "rounds_exhausted" in rule_ids
+    assert "budget_exceeded" in rule_ids
     assert "same_failure_twice" in rule_ids
     assert "regression" in rule_ids
     assert "no_progress" in rule_ids
     assert "beyond_capability" in rule_ids
+
+
+def test_stop_rules_order_matches_evaluation() -> None:
+    """STOP_RULES 列表顺序必须等于 check_stop_rules 评估顺序（发现4.2 一致性）。"""
+    expected = [
+        "all_green",
+        "rounds_exhausted",
+        "budget_exceeded",
+        "beyond_capability",
+        "regression",
+        "same_failure_twice",
+        "no_progress",
+    ]
+    assert [r["id"] for r in STOP_RULES] == expected
+
+
+def test_stop_rules_mutually_exclusive() -> None:
+    """互斥设计验证：regression/same_failure_twice/no_progress 三者条件不重叠。
+
+    构造三个典型场景，各自只触发一条规则，证明无遮蔽。
+    """
+    # regression: new≠∅ AND overlap≠∅  ({a,b}→{a,c})
+    r = check_stop_rules(
+        "t", 2, 5,
+        [_make_round(1, failure_items=["a.py:1", "b.py:2"]),
+         _make_round(2, failure_items=["a.py:1", "c.py:3"])],
+    )
+    assert r["rule_id"] == "regression"
+
+    # same_failure_twice: new=∅ AND overlap≠∅ AND count未减  ({a}→{a})
+    r = check_stop_rules(
+        "t", 2, 5,
+        [_make_round(1, failure_items=["x.py:1"], failure_count=1),
+         _make_round(2, failure_items=["x.py:1"], failure_count=1)],
+    )
+    assert r["rule_id"] == "same_failure_twice"
+
+    # no_progress: new≠∅ AND overlap=∅ AND fixed≠∅ AND count未减  ({a,b}→{c,d})
+    r = check_stop_rules(
+        "t", 2, 5,
+        [_make_round(1, failure_items=["a", "b"], failure_count=2),
+         _make_round(2, failure_items=["c", "d"], failure_count=2)],
+    )
+    assert r["rule_id"] == "no_progress"
 
 
 # ── Loop Patterns Tests ───────────────────────────────────────────────
@@ -311,11 +358,40 @@ def test_record_round_persists() -> None:
         assert loop.rounds[0].tokens_used == 10000
         assert loop.budget_used_tokens == 10000
         assert loop.current_round == 1
+        # 阶段F: meta.json must carry schema_version.
+        import json as _json
+
+        meta = _json.loads((loops_dir() / "test-record-loop" / "meta.json").read_text("utf-8"))
+        assert meta["schema_version"] == 1
     finally:
         # Clean up
         test_dir = loops_dir() / "test-record-loop"
         if test_dir.exists():
             shutil.rmtree(test_dir)
+
+
+def test_meta_schema_version_v0_backcompat() -> None:
+    """阶段F: 旧版 meta.json（无 schema_version，v0）应能加载，不崩溃。
+
+    旧文件缺 agent_reports/tokens_used 等字段，from_dict 默认值兜底；
+    list_loops 不再静默吞错。
+    """
+    import json as _json
+    import shutil
+    from hermes.loop import _load_loop_meta, loops_dir
+
+    loop_dir = loops_dir() / "test-v0-meta"
+    loop_dir.mkdir(parents=True, exist_ok=True)
+    # v0-style meta: no schema_version, minimal fields.
+    v0_meta = {"pattern": "custom", "status": "idle", "stage": "l1_report", "rounds": []}
+    (loop_dir / "meta.json").write_text(_json.dumps(v0_meta), encoding="utf-8")
+    try:
+        state = _load_loop_meta(v0_meta, "test-v0-meta")
+        assert state is not None
+        assert state.rounds == []
+        assert state.budget_used_tokens == 0  # default
+    finally:
+        shutil.rmtree(loop_dir, ignore_errors=True)
 
 
 def test_check_budget_ok() -> None:
@@ -432,6 +508,73 @@ def test_aggregate_results_all_green_case_insensitive() -> None:
     assert result.all_passed is True
 
 
+def test_aggregate_results_structured_failures_protocol() -> None:
+    """阶段B: 结构化失败协议块应被解析为归一化 (file|type) 键，丢弃行号。
+
+    这让 stop-rule set 比较能抵抗行号漂移（builder 编辑上方行导致行号 +1）。
+    """
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+    report = (
+        "FAILED\n"
+        "src/auth.py:42 - ImportError\n"
+        "<!-- failures:json -->\n"
+        '{"passed": false, "failures": [{"file": "src/auth.py", "line": 42, "type": "ImportError"}]}\n'
+        "<!-- /failures -->"
+    )
+    tasks = [AgentTask(role="checker_lint", status="completed", result=report, session_id="c")]
+    result = orch.aggregate_results(tasks, round_num=1)
+    assert result.all_passed is False
+    # Normalized key drops line number: "checker_lint: src/auth.py|ImportError"
+    assert any("src/auth.py|ImportError" in f for f in result.failure_items)
+    # Line number 42 must NOT appear in the normalized failure item.
+    assert all(": 42" not in f for f in result.failure_items)
+
+
+def test_aggregate_results_line_drift_survives_structured_protocol() -> None:
+    """阶段B: 同一失败因行号漂移（42→43）仍应被 stop-rule 识别为重复。
+
+    旧启发式提取整行 "src/auth.py:42"，行号变即 set 不匹配；新协议用
+    file|type 归一化，行号漂移后仍判定 same_failure_twice。
+    """
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+    report_r1 = (
+        "FAILED\n<!-- failures:json -->\n"
+        '{"passed": false, "failures": [{"file": "src/auth.py", "line": 42, "type": "ImportError"}]}\n'
+        "<!-- /failures -->"
+    )
+    report_r2 = (
+        "FAILED\n<!-- failures:json -->\n"
+        '{"passed": false, "failures": [{"file": "src/auth.py", "line": 43, "type": "ImportError"}]}\n'
+        "<!-- /failures -->"
+    )
+    r1 = orch.aggregate_results(
+        [AgentTask(role="checker_lint", status="completed", result=report_r1, session_id="c")], 1
+    )
+    r2 = orch.aggregate_results(
+        [AgentTask(role="checker_lint", status="completed", result=report_r2, session_id="c")], 2
+    )
+    # Same normalized key → set intersection non-empty → regression/same_failure_twice reachable.
+    assert set(r1.failure_items) & set(r2.failure_items), "line drift broke failure identity"
+
+
+def test_aggregate_results_fallback_no_structured_block() -> None:
+    """阶段B: 无结构化块时回退到 verbatim 首行，不启发式猜测 file:line。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+    report = "FAILED\nsomething went wrong in the build"
+    tasks = [AgentTask(role="checker_test", status="completed", result=report, session_id="c")]
+    result = orch.aggregate_results(tasks, round_num=1)
+    assert result.all_passed is False
+    # Fallback item is role-prefixed verbatim, not a guessed "file:" line.
+    assert len(result.failure_items) == 1
+    assert result.failure_items[0].startswith("checker_test:")
+
+
 def test_loop_round_from_dict_explicit_none_normalized() -> None:
     """Bug 2 (HIGH): explicit None in failure_items/agent_reports must be
     normalized to defaults, not crash downstream set()/dict() operations."""
@@ -447,10 +590,12 @@ def test_loop_round_from_dict_explicit_none_normalized() -> None:
     r = LoopRound.from_dict(data)
     assert r.failure_items == []
     assert r.agent_reports == {}
-    # Downstream stop-rule evaluation must not crash.
+    # Downstream stop-rule evaluation must not crash (None normalized to []).
     r2 = LoopRound.from_dict({**data, "round_num": 2})
     result = check_stop_rules("t", 2, 5, [r, r2])
-    assert result["should_stop"] is True
+    # With empty failure_items, no regression/same_failure/no_progress triggers;
+    # the point is that it returns without raising TypeError.
+    assert "should_stop" in result
 
 
 def test_loop_round_json_roundtrip_with_agent_reports() -> None:

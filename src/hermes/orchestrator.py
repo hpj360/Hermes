@@ -12,8 +12,11 @@ Key components:
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
+import re
+import socket
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -24,6 +27,52 @@ from typing import Any
 from hermes.config import get_settings
 
 logger = logging.getLogger("hermes.orchestrator")
+
+# Structured failure protocol markers emitted by checker.md templates.
+# Checkers are asked to append a JSON block so the orchestrator can extract
+# normalized (file, type) failure keys instead of guessing from free text.
+_FAILURES_BLOCK_RE = re.compile(
+    r"<!--\s*failures:json\s*-->\s*(\{.*?\})\s*<!--\s*/failures\s*-->",
+    re.DOTALL,
+)
+
+
+def _parse_structured_failures(checker_result: str, role: str) -> list[str]:
+    """Extract failure items from a checker report.
+
+    Prefers the structured ``<!-- failures:json -->`` protocol block: returns
+    normalized ``"file|type"`` keys (without line numbers) so stop-rule set
+    comparison survives line-number drift when a builder edits earlier lines.
+
+    Falls back to a single verbatim item ``"<role>: <first non-empty line>"``
+    when no structured block is present — this never guesses which lines are
+    failures (the old ``"file:"/".py:"`` heuristic is removed).
+    """
+    match = _FAILURES_BLOCK_RE.search(checker_result)
+    if match:
+        try:
+            data = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            data = {}
+        failures = data.get("failures") or []
+        items: list[str] = []
+        for f in failures:
+            if not isinstance(f, dict):
+                continue
+            file = str(f.get("file", "")).strip()
+            ftype = str(f.get("type", "")).strip()
+            # Normalize to "file|type" — drop line numbers deliberately.
+            key = f"{file}|{ftype}" if file or ftype else ""
+            if key:
+                items.append(f"{role}: {key}")
+        if items:
+            return items
+    # Fallback: verbatim first meaningful line, prefixed with role. No guessing.
+    for line in checker_result.splitlines():
+        stripped = line.strip()
+        if stripped and "ALL GREEN" not in stripped.upper():
+            return [f"{role}: {stripped}"]
+    return [f"{role}: [UNPARSEABLE FAILURE]"]
 
 
 @dataclass
@@ -119,7 +168,14 @@ class OpenClawClient:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError) as exc:
+        except (
+            urllib.error.URLError,
+            urllib.error.HTTPError,
+            OSError,
+            json.JSONDecodeError,
+            http.client.HTTPException,  # BadStatusLine, IncompleteRead, RemoteDisconnected
+            socket.timeout,
+        ) as exc:
             logger.debug("Gateway request failed: %s %s -> %s", method, path, exc)
             return None
 
@@ -304,6 +360,17 @@ class Orchestrator:
 
         Applies the "don't filter" principle: checker reports are passed
         through verbatim, not interpreted or summarized.
+
+        Failure extraction uses a structured protocol — checker.md templates
+        ask the checker to emit a JSON block:
+            <!-- failures:json -->
+            {"passed": false, "failures": [{"file": "src/a.py", "line": 42, "type": "ImportError"}]}
+            <!-- /failures -->
+        When present, failures are parsed into normalized ``(file, type)``
+        keys so stop-rule set comparison survives line-number drift (a builder
+        editing an earlier line shifts line numbers without changing the
+        underlying failure). When absent, the checker's full report is used
+        as a single failure item (no heuristic line-guessing).
         """
         total_tokens = sum(t.tokens_used for t in tasks)
 
@@ -315,26 +382,23 @@ class Orchestrator:
         for task in tasks:
             if task.role.startswith("checker") or task.role == "checker":
                 # Red line: never report success without checker output.
-                # Empty/None result must be treated as failure (not skipped),
-                # otherwise the loop can be marked COMPLETED with zero verification.
                 if not task.result:
                     all_passed = False
                     checker_reports.append(
                         f"### {task.role}\n[CHECKER PRODUCED NO OUTPUT]"
                     )
+                    failure_items.append(f"{task.role}: [NO OUTPUT]")
                     continue
                 checker_reports.append(f"### {task.role}\n{task.result}")
                 result_upper = task.result.upper()
                 if "ALL GREEN" in result_upper:
-                    # Explicit success signal from this checker.
+                    # Explicit success signal from this checker (protocol, not interpretation).
                     continue
                 # Any non-empty, non-ALL-GREEN checker output is a failure.
                 all_passed = False
-                # Extract failure lines (file:line pattern) — verbatim, not interpreted.
-                for line in task.result.split("\n"):
-                    line = line.strip()
-                    if line and ("file:" in line.lower() or ".py:" in line or ".ts:" in line):
-                        failure_items.append(line)
+                # Prefer structured failure protocol; fall back to verbatim report.
+                structured = _parse_structured_failures(task.result, task.role)
+                failure_items.extend(structured)
             elif task.role == "builder":
                 if task.status == "failed":
                     all_passed = False

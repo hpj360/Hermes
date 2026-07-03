@@ -40,3 +40,26 @@ def test_knowledge_discovery() -> None:
     assert root.exists()
     docs = list_knowledge_docs()
     assert len(docs) >= 4
+
+
+def test_inherit_env_paths_overridable(monkeypatch) -> None:
+    """阶段C: inherit_env_paths 应可通过 HERMES_INHERIT_ENV_PATHS 覆盖，
+    不再是硬编码 ClassVar（发现2.1）。"""
+    from pathlib import Path
+
+    monkeypatch.setenv("HERMES_INHERIT_ENV_PATHS", "/custom/a:/custom/b")
+    settings = get_settings(force_reload=True)
+    paths = settings.inherit_env_paths()
+    assert paths == [Path("/custom/a"), Path("/custom/b")]
+
+
+def test_inherit_env_paths_repo_relative(monkeypatch) -> None:
+    """阶段C: 无显式覆盖时，路径基于 hermes_main_repo_path 动态计算。"""
+    from pathlib import Path
+
+    monkeypatch.delenv("HERMES_INHERIT_ENV_PATHS", raising=False)
+    monkeypatch.setenv("HERMES_MAIN_REPO_PATH", "/some/openclaw/repo")
+    settings = get_settings(force_reload=True)
+    paths = settings.inherit_env_paths()
+    # Should include the project root .env and the custom repo .env.
+    assert any(p == Path("/some/openclaw/repo/.env") for p in paths)

@@ -15,7 +15,6 @@ to stay within sandbox allow-listed directories.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import ClassVar
 
 from dotenv import load_dotenv
 from pydantic import Field
@@ -182,14 +181,33 @@ class Settings(BaseSettings):
         alias="HERMES_PROFILE_PATH",
     )
 
-    # Search paths that are consulted for inherited .env files.
-    inherit_env_paths: ClassVar[list[Path]] = [
-        Path("/workspace/.env"),
-        Path("/workspace/OpenClaw/openclaw-main/.env"),
-    ]
+    # Search paths consulted for inherited .env files. Computed dynamically from
+    # hermes_main_repo_path so the OpenClaw repo location is overridable via
+    # HERMES_MAIN_REPO_PATH (previously a hard-coded ClassVar bound to
+    # /workspace/OpenClaw/openclaw-main, which broke forks/relocations).
+    # An explicit HERMES_INHERIT_ENV_PATHS (colon-separated) overrides entirely.
+
+    def inherit_env_paths(self) -> list[Path]:
+        """Return .env search paths, overridable and repo-relative."""
+        import os
+
+        explicit = os.environ.get("HERMES_INHERIT_ENV_PATHS", "")
+        if explicit:
+            return [Path(p) for p in explicit.split(":") if p]
+        paths = [self.hermes_project_root / ".env"]
+        if self.hermes_main_repo_path and self.hermes_main_repo_path != self.hermes_project_root:
+            paths.append(self.hermes_main_repo_path / ".env")
+        return paths
 
     def configured_providers(self) -> list[str]:
-        """Return names of LLM providers that have API keys configured."""
+        """Return names of LLM providers that have API keys configured.
+
+        Note: these provider fields are mirrored from OpenClaw's env schema so
+        that inherited Skills (which read the same env vars) work transparently.
+        Hermes itself does not consume provider keys for its own logic — this
+        method is a convenience for the `doctor`/`status` commands to surface
+        which providers are available to the execution plane.
+        """
         provider_keys = [
             ("openai", self.openai_api_key),
             ("anthropic", self.anthropic_api_key),
@@ -221,9 +239,30 @@ class Settings(BaseSettings):
 def load_inherited_env() -> None:
     """Load environment variables from main project .env files.
 
-    Existing non-empty environment variables are never overwritten.
+    Existing non-empty environment variables are never overwritten. Paths are
+    resolved directly from env vars (not the Settings instance) because this
+    runs during bootstrap before Settings is constructed.
     """
-    for path in Settings.inherit_env_paths:
+    import os
+
+    explicit = os.environ.get("HERMES_INHERIT_ENV_PATHS", "")
+    if explicit:
+        paths = [Path(p) for p in explicit.split(":") if p]
+    else:
+        project_root = Path(__file__).resolve().parents[2]
+        paths = [project_root / ".env"]
+        main_repo = os.environ.get("HERMES_MAIN_REPO_PATH", "")
+        if main_repo:
+            main_path = Path(main_repo)
+            if main_path != project_root:
+                paths.append(main_path / ".env")
+        else:
+            # Default OpenClaw location (only used when HERMES_MAIN_REPO_PATH
+            # is unset); overridable, not a hard dependency.
+            default_openclaw = Path("/workspace/OpenClaw/openclaw-main")
+            if default_openclaw.exists() and default_openclaw != project_root:
+                paths.append(default_openclaw / ".env")
+    for path in paths:
         if path.exists():
             load_dotenv(path, override=False, verbose=False)
 
