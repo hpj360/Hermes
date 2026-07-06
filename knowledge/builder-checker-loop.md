@@ -49,16 +49,17 @@ tools: Read, Grep, Glob, Bash
 
 ### 文件三：stop-rules.md（停止规则）
 
-六条刹车条件，覆盖实战中常见的卡死模式：
+七条刹车条件，覆盖实战中常见的卡死模式：
 
 | # | 规则 | 触发条件 | 动作 |
 |---|------|---------|------|
 | 1 | ALL GREEN | 所有检查通过 | 停止（成功） |
 | 2 | 轮次用尽 | 达到轮次上限（默认5轮） | 停止，升级 |
-| 3 | 同一失败连续两轮 | builder在猜，不是在修 | 停止，升级 |
-| 4 | 回归 | 修复导致之前通过的检查失败 | 停止，升级 |
-| 5 | 无实质进展 | 连续2轮失败项数量未减少 | 停止，拆分任务 |
-| 6 | 超出能力边界 | 外部依赖/环境问题 | 停止，报告阻塞点 |
+| 3 | 预算耗尽 | token 预算用尽 | 停止，升级（由 record_round 状态机处理） |
+| 4 | 超出能力边界 | 外部依赖/环境问题 | 停止，报告阻塞点 |
+| 5 | 回归 | 修复导致新失败且有持续失败 | 停止，升级 |
+| 6 | 同一失败连续两轮 | builder在猜，不是在修 | 停止，升级 |
+| 7 | 无实质进展 | 连续2轮失败项数量未减少且失败集合完全更换 | 停止，拆分任务 |
 
 升级协议：停止时必须携带当前轮次、失败项列表、已尝试方法、失败原因判断。
 
@@ -130,7 +131,7 @@ hermes loop run my-task
 ├── loop-budget.md   # 成本预算
 ├── builder.md       # builder Agent定义（有Write/Edit工具）
 ├── checker.md       # checker Agent定义（无Write/Edit，工具级硬隔离）
-├── stop-rules.md    # 六条停止条件 + 红线 + 升级协议 + 编排器规则
+├── stop-rules.md    # 七条停止条件 + 红线 + 升级协议 + 编排器规则
 └── meta.json        # 机器可读状态
 ```
 
@@ -157,7 +158,7 @@ result = check_stop_rules(
 ### 审计新增检查项
 
 `hermes loop audit` 现在检查两个新维度：
-- **Stop rules defined (6 conditions)** — 是否定义了全部六条停止规则
+- **Stop rules defined (7 conditions)** — 是否定义了全部七条停止规则
 - **Tool-level isolation** — checker.md 的 tools 字段是否排除了 Write 和 Edit
 
 ## 实践中的坑
@@ -174,4 +175,4 @@ result = check_stop_rules(
 
 这篇文章讲的是**实践**（三个文件怎么搭、怎么跑、怎么刹车）。
 
-Hermes 项目将两者融合：概念层面有 [knowledge/loop-engineering.md](file:///workspace/knowledge/loop-engineering.md) 知识文档，实践层面有 `hermes loop` CLI工具链 + builder-checker模式 + 六条停止规则 + 工具级硬隔离。
+Hermes 项目将两者融合：概念层面有 [knowledge/loop-engineering.md](file:///workspace/knowledge/loop-engineering.md) 知识文档，实践层面有 `hermes loop` CLI工具链 + builder-checker模式 + 七条停止规则 + 工具级硬隔离。

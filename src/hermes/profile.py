@@ -28,15 +28,22 @@ def _working_principles_doc_path() -> Path:
 # Strict pattern: only `## 规则N：` / `## 规则N:` (N = 中文数字 or arabic) is a rule
 # heading. This avoids matching `## 规则补充` / `## 规则附录` (Bug 5).
 _RULE_HEADING_RE = re.compile(r"^##\s*规则[一二三四五六七八九十百\d]+\s*[:：]")
+_HEADING_RE = re.compile(r"^#+\s")
 
 
 def _load_working_principles_from_doc() -> list[str]:
     """Parse principle entries from knowledge/working-principles.md.
 
     Each entry is `## 规则N：标题` followed by a body. The body runs until the
-    next rule heading or end of document — `---` separators inside a rule body
-    are preserved (fixes the truncation/data-loss bug where `---` ended a rule
-    early and silently dropped its remainder).
+    next rule heading, any other markdown heading (which starts a non-rule
+    section and must NOT leak into the rule body), or end of document.
+    Trailing ``---`` separator lines (markdown thematic breaks that delimit
+    sections but aren't part of the rule content) are stripped from the end
+    of each rule body.
+
+    Fenced code blocks (``` / ~~~) are tracked so `#` comment lines inside
+    them are not mistaken for markdown headings, and `## 规则N：` text inside
+    a code block is not parsed as a rule heading.
 
     Returns an empty list if the document is missing or unreadable.
     """
@@ -50,20 +57,46 @@ def _load_working_principles_from_doc() -> list[str]:
     entries: list[str] = []
     current_title: str | None = None
     current_body: list[str] = []
+    in_code_block = False
+
+    def _flush() -> None:
+        nonlocal current_title, current_body
+        if current_title is not None:
+            # Strip trailing `---` thematic-break lines (and surrounding blank
+            # lines) that delimit sections but aren't part of the rule's actual
+            # content. A blank line often separates `---` from the next heading.
+            body_lines = list(current_body)
+            while body_lines and body_lines[-1].strip() in ("", "---"):
+                body_lines.pop()
+            body = "\n".join(body_lines).strip()
+            entries.append(current_title if not body else f"{current_title}\n{body}")
+        current_title = None
+        current_body = []
+
     for line in text.splitlines():
-        if _RULE_HEADING_RE.match(line):
-            # Flush previous rule.
+        stripped = line.lstrip()
+        # Track fenced code blocks — inside ```/~~~ blocks, # lines are
+        # comments, not markdown headings.
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_block = not in_code_block
             if current_title is not None:
-                body = "\n".join(current_body).strip()
-                entries.append(current_title if not body else f"{current_title}\n{body}")
+                current_body.append(line)
+            continue
+        if in_code_block:
+            if current_title is not None:
+                current_body.append(line)
+            continue
+        if _RULE_HEADING_RE.match(line):
+            _flush()
             current_title = line.lstrip("# ").strip()
             current_body = []
+        elif _HEADING_RE.match(line):
+            # Any other heading ends the current rule's body so trailing
+            # non-rule sections (e.g. `## 加载机制`) don't leak in.
+            _flush()
         elif current_title is not None:
-            # Body accumulates until the next rule heading (NOT `---`).
             current_body.append(line)
-    if current_title is not None:
-        body = "\n".join(current_body).strip()
-        entries.append(current_title if not body else f"{current_title}\n{body}")
+    _flush()
     return entries
 
 

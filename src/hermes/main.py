@@ -667,7 +667,7 @@ def cmd_loop_status(args: argparse.Namespace) -> int:
 
 
 def cmd_loop_stop_rules(args: argparse.Namespace) -> int:
-    print("=== Loop Stop Rules (Six Conditions) ===")
+    print("=== Loop Stop Rules (Seven Conditions) ===")
     print()
     for i, rule in enumerate(STOP_RULES, 1):
         action_marker = "✓" if rule["action"] == "stop_success" else "⚠"
@@ -840,7 +840,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_loop_status.add_argument("name", help="Loop name")
     p_loop_status.set_defaults(func=cmd_loop_status)
 
-    p_loop_stop = p_loop_sub.add_parser("stop-rules", help="Show the six stop rules")
+    p_loop_stop = p_loop_sub.add_parser("stop-rules", help="Show the seven stop rules")
     p_loop_stop.set_defaults(func=cmd_loop_stop_rules)
 
     return parser

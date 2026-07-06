@@ -46,6 +46,109 @@ def _guidance_mode(loop_name: str, pattern: str) -> dict[str, Any]:
     }
 
 
+def _terminal_status_to_stop(
+    name: str, status: LoopStatus, entry: str
+) -> dict[str, Any]:
+    """Map a terminal LoopStatus to a STOP_RULES-compliant final_stop dict.
+
+    Used by all three entry paths in run_loop_continuous (precheck, rejected,
+    post-round) so they agree on BOTH rule_id AND description for the same
+    loop state — previously these paths had divergent inline implementations
+    that produced different descriptions for identical loop states.
+
+    - COMPLETED → all_green (stop_success)
+    - BUDGET_EXCEEDED → budget_exceeded (stop_escalate)
+    - NEEDS_HUMAN → re-derive via check_stop_rules; if a rule fires, return
+      its result VERBATIM (preserving the specific diagnosis such as
+      "修复导致新失败: c。之前修好的: b"); else fall back to rounds_exhausted
+      with a state-drift description
+    - ERROR → rounds_exhausted with an explicit "error state" description
+      (ERROR has no derivable rule; rounds_exhausted is the catch-all
+      escalation, but the description makes clear it's an error, not
+      genuinely exhausted rounds)
+    - unknown future terminal status → log a warning and fall back to
+      rounds_exhausted (fail loud, don't silently misclassify)
+
+    `entry` is a short caller-supplied label (e.g. "precheck", "rejected",
+    "post-round") embedded in fallback descriptions for traceability.
+    """
+    if status == LoopStatus.COMPLETED:
+        return {
+            "should_stop": True,
+            "rule_id": "all_green",
+            "rule_name": "ALL GREEN",
+            "description": "All checks passed (loop status: completed)",
+            "action": "stop_success",
+        }
+    if status == LoopStatus.BUDGET_EXCEEDED:
+        return {
+            "should_stop": True,
+            "rule_id": "budget_exceeded",
+            "rule_name": "预算耗尽",
+            "description": f"Budget exhausted (loop status: {status.value})",
+            "action": "stop_escalate",
+        }
+    if status == LoopStatus.NEEDS_HUMAN:
+        loop = get_loop(name)
+        if loop:
+            derived = check_stop_rules(
+                name, loop.current_round, loop.max_rounds, loop.rounds
+            )
+            if derived.get("should_stop"):
+                # Preserve check_stop_rules' specific diagnosis VERBATIM — do
+                # NOT overwrite with a generic message. The original
+                # description (e.g. "修复导致新失败: c。之前修好的: b") is exactly
+                # what the user needs to see to understand why the loop
+                # stopped. Overwriting it was a regression that lost the
+                # diagnosis while keeping only the rule_id.
+                return derived
+        # Fallback: NEEDS_HUMAN but no specific rule currently matches (state
+        # drift — e.g. rounds cleared but status not reset, or max_rounds
+        # raised after the loop stopped). Use a descriptive format consistent
+        # across all entry paths.
+        return {
+            "should_stop": True,
+            "rule_id": "rounds_exhausted",
+            "rule_name": "轮次用尽",
+            "description": (
+                f"State-machine guard: status={status.value}, "
+                f"no specific rule matched ({entry})"
+            ),
+            "action": "stop_escalate",
+        }
+    if status == LoopStatus.ERROR:
+        # ERROR has no derivable stop rule (record_round never sets ERROR;
+        # it's only set by external intervention or unexpected exceptions).
+        # Map to rounds_exhausted (the catch-all escalation) but make the
+        # description explicit so users don't mistake it for genuinely
+        # exhausted rounds.
+        return {
+            "should_stop": True,
+            "rule_id": "rounds_exhausted",
+            "rule_name": "轮次用尽",
+            "description": (
+                f"Loop in error state ({entry}); requires human intervention"
+            ),
+            "action": "stop_escalate",
+        }
+    # Unknown future terminal status — fail loud, don't silently misclassify.
+    logger.warning(
+        "Unknown terminal status %s for loop %s; mapping to rounds_exhausted",
+        status,
+        name,
+    )
+    return {
+        "should_stop": True,
+        "rule_id": "rounds_exhausted",
+        "rule_name": "轮次用尽",
+        "description": (
+            f"State-machine guard: status={status.value}, "
+            f"no specific rule matched ({entry})"
+        ),
+        "action": "stop_escalate",
+    }
+
+
 def run_loop(name: str) -> dict[str, Any]:
     """Execute one round of a loop.
 
@@ -61,9 +164,19 @@ def run_loop(name: str) -> dict[str, Any]:
         return {"success": False, "error": f"Loop '{name}' not found"}
 
     if loop.status == LoopStatus.COMPLETED:
-        return {"success": False, "error": "Loop already completed. Use `hermes loop resume` to restart."}
+        return {
+            "success": False,
+            "error": "Loop already completed. Use `hermes loop resume` to restart.",
+        }
     if loop.status == LoopStatus.BUDGET_EXCEEDED:
         return {"success": False, "error": "Budget exceeded. Increase budget or reset the loop."}
+    if loop.status == LoopStatus.NEEDS_HUMAN:
+        return {
+            "success": False,
+            "error": "Loop stopped for human review. Use `hermes loop resume` to restart after fixing.",
+        }
+    if loop.status == LoopStatus.ERROR:
+        return {"success": False, "error": "Loop in error state. Use `hermes loop resume` to restart."}
 
     # Check budget before starting
     budget = check_budget(name)
@@ -263,8 +376,8 @@ def _guidance_builder_checker(
         "principles": [
             "Tool-level hard isolation: checker physically cannot modify files",
             "Don't filter: pass checker's raw failure report to builder verbatim",
-            "6 stop rules: ALL GREEN / rounds exhausted / same failure twice /",
-            "  regression / no progress / beyond capability",
+            "7 stop rules: ALL GREEN / rounds exhausted / budget exceeded /",
+            "  beyond capability / regression / same failure twice / no progress",
         ],
     })
     return guidance
@@ -302,6 +415,29 @@ def run_loop_continuous(name: str, max_rounds: int | None = None) -> dict[str, A
     rounds_executed: list[dict[str, Any]] = []
     final_stop: dict[str, Any] = {"should_stop": False, "action": "continue"}
 
+    # Pre-check: if the loop is already in a terminal state, do not enter the
+    # round loop. Without this, run_loop() returns success=False (rejected by
+    # its own status guard) and we would break with the default final_stop
+    # ({should_stop: False, action: continue}) and overall success=True —
+    # misleading callers into thinking a round ran and the loop should
+    # continue. Map the terminal status via _terminal_status_to_stop so the
+    # diagnosis matches the other entry paths (all three agree on rule_id AND
+    # description for the same loop state).
+    if loop.status in (
+        LoopStatus.COMPLETED,
+        LoopStatus.BUDGET_EXCEEDED,
+        LoopStatus.NEEDS_HUMAN,
+        LoopStatus.ERROR,
+    ):
+        final_stop = _terminal_status_to_stop(name, loop.status, "precheck")
+        return {
+            "success": True,
+            "loop": name,
+            "rounds_executed": 0,
+            "rounds": [],
+            "final_stop": final_stop,
+        }
+
     while True:
         # Check budget
         budget = check_budget(name)
@@ -313,13 +449,15 @@ def run_loop_continuous(name: str, max_rounds: int | None = None) -> dict[str, A
                 "rule_id": "budget_exceeded",
                 "rule_name": "预算耗尽",
                 "description": f"Budget exhausted: {budget['used']}/{budget['limit']} tokens",
-                "action": "stop_budget",
+                "action": "stop_escalate",
             }
             break
         if budget["action"] == "alert":
             logger.warning(
                 "Budget warning: %s/%s tokens (%.1f%%)",
-                budget["used"], budget["limit"], budget["percentage"],
+                budget["used"],
+                budget["limit"],
+                budget["percentage"],
             )
 
         # Execute one round
@@ -327,6 +465,28 @@ def run_loop_continuous(name: str, max_rounds: int | None = None) -> dict[str, A
         rounds_executed.append(result)
 
         if not result.get("success"):
+            # run_loop rejected the round (e.g. status guard, budget). Derive a
+            # meaningful final_stop from the current loop status instead of
+            # leaving the default "continue" — otherwise callers see a
+            # misleading "should_stop: False, success: True" for a no-op run.
+            rejected_loop = get_loop(name)
+            if rejected_loop and rejected_loop.status in (
+                LoopStatus.COMPLETED,
+                LoopStatus.BUDGET_EXCEEDED,
+                LoopStatus.NEEDS_HUMAN,
+                LoopStatus.ERROR,
+            ):
+                final_stop = _terminal_status_to_stop(
+                    name, rejected_loop.status, "rejected"
+                )
+            else:
+                final_stop = {
+                    "should_stop": True,
+                    "rule_id": "beyond_capability",
+                    "rule_name": "超出能力边界",
+                    "description": f"run_loop failed: {result.get('error', 'unknown')}",
+                    "action": "stop_escalate",
+                }
             break
 
         # Check if guidance mode was used
@@ -351,14 +511,25 @@ def run_loop_continuous(name: str, max_rounds: int | None = None) -> dict[str, A
             }
             break
 
-        if updated_loop.status in (LoopStatus.COMPLETED, LoopStatus.NEEDS_HUMAN, LoopStatus.BUDGET_EXCEEDED):
-            final_stop = {
-                "should_stop": True,
-                "rule_id": "status_change",
-                "rule_name": f"状态变更: {updated_loop.status.value}",
-                "description": f"Loop status changed to {updated_loop.status.value}",
-                "action": "stop",
-            }
+        if updated_loop.status in (
+            LoopStatus.COMPLETED,
+            LoopStatus.NEEDS_HUMAN,
+            LoopStatus.BUDGET_EXCEEDED,
+            LoopStatus.ERROR,
+        ):
+            # Map terminal loop status back to a real stop rule id/action via
+            # the shared helper — never fabricate 'status_change'/'stop'.
+            # Using the helper (instead of an inline mapping) ensures all
+            # three entry paths (precheck / rejected / post-round) agree on
+            # BOTH rule_id AND description for the same loop state, and
+            # avoids the three-way logic drift that previously existed.
+            # ERROR is included here so an externally-set error state is
+            # caught immediately after the round rather than wasting another
+            # round (previously ERROR only triggered on the next run_loop
+            # call's status guard).
+            final_stop = _terminal_status_to_stop(
+                name, updated_loop.status, "post-round"
+            )
             break
 
     return {
@@ -373,8 +544,12 @@ def run_loop_continuous(name: str, max_rounds: int | None = None) -> dict[str, A
 def resume_loop(name: str) -> dict[str, Any]:
     """Resume a loop from its last recorded state.
 
-    Resets the loop status to RUNNING if it was NEEDS_HUMAN or ERROR,
-    then continues execution from the next round.
+    Resets the loop status to IDLE if it was NEEDS_HUMAN, ERROR, COMPLETED, or
+    BUDGET_EXCEEDED. For COMPLETED and BUDGET_EXCEEDED loops, the round history
+    and budget are also reset so the loop starts a fresh cycle (a completed or
+    budget-exhausted loop has nothing to "continue"; keeping stale rounds would
+    make stop rules re-fire immediately, and keeping a stale budget would keep
+    the loop locked). Then continues execution from the next round.
     """
     loop = get_loop(name)
     if not loop:
@@ -385,5 +560,13 @@ def resume_loop(name: str) -> dict[str, Any]:
         from hermes.loop import _save_loop_meta
         _save_loop_meta(loop)
         logger.info("Loop '%s' status reset to IDLE for resume", name)
+    elif loop.status in (LoopStatus.COMPLETED, LoopStatus.BUDGET_EXCEEDED):
+        loop.status = LoopStatus.IDLE
+        loop.rounds = []
+        loop.current_round = 0
+        loop.budget_used_tokens = 0
+        from hermes.loop import _save_loop_meta
+        _save_loop_meta(loop)
+        logger.info("Loop '%s' reset to IDLE for fresh resume (history cleared)", name)
 
     return run_loop_continuous(name)

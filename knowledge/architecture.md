@@ -175,13 +175,14 @@ LoopRound 构建
   │   ├── 更新 budget_used_tokens
   │   └── 更新 status (COMPLETED/NEEDS_HUMAN/RUNNING)
   │
-  └── check_stop_rules()  ← 6 条规则依次检查
+  └── check_stop_rules()  ← 7 条规则依次检查
       ├── Rule 1: ALL GREEN → 停止成功
       ├── Rule 2: 轮次用尽 → 升级
-      ├── Rule 3: 同一失败连续两轮 → 升级
-      ├── Rule 4: 回归 → 升级
-      ├── Rule 5: 无实质进展 → 升级
-      └── Rule 6: 超出能力边界 → 升级
+      ├── Rule 3: 预算耗尽 → 升级（record_round 状态机处理）
+      ├── Rule 4: 超出能力边界 → 升级
+      ├── Rule 5: 回归 → 升级
+      ├── Rule 6: 同一失败连续两轮 → 升级
+      └── Rule 7: 无实质进展 → 升级
 ```
 
 ### 4.2 Gateway 降级流
@@ -247,21 +248,22 @@ hermes skill-sync add wechat-reader
 │  │ • 自动循环 + 自动提 PR                          │    │
 │  │ • 需要 denylist 和严格停止规则                   │    │
 │  │ • 预算硬停止 + 轮次上限                          │    │
-│  │ • 6 条停止规则全部生效                           │    │
+│  │ • 7 条停止规则全部生效                           │    │
 │  └─────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 5.2 六条停止规则
+### 5.2 七条停止规则
 
 | # | 规则 | 触发条件 | 动作 |
 |---|------|---------|------|
 | 1 | ALL GREEN | 最新一轮 `passed=True` | `stop_success` |
 | 2 | 轮次用尽 | `current_round >= max_rounds` | `stop_escalate` |
-| 3 | 同一失败连续两轮 | 连续两轮有交集失败项 AND 失败数未减少 | `stop_escalate` |
-| 4 | 回归 | 有新失败 + 有已修复 + 有持续失败 | `stop_escalate` |
-| 5 | 无实质进展 | 连续2轮失败数未减少 | `stop_escalate` |
-| 6 | 超出能力边界 | 失败信息匹配16个环境问题信号词 | `stop_escalate` |
+| 3 | 预算耗尽 | `budget_used_tokens >= budget_limit_tokens`（由 record_round 状态机处理） | `stop_escalate` |
+| 4 | 超出能力边界 | 失败信息匹配16个环境问题信号词 | `stop_escalate` |
+| 5 | 回归 | 有新失败 + 有已修复 + 有持续失败 | `stop_escalate` |
+| 6 | 同一失败连续两轮 | 连续两轮有交集失败项 AND 失败数未减少 | `stop_escalate` |
+| 7 | 无实质进展 | 连续2轮失败数未减少 AND 失败集合完全更换 | `stop_escalate` |
 
 ### 5.3 内置 Loop 模式
 
@@ -285,7 +287,7 @@ hermes skill-sync add wechat-reader
 | 预算已配置 | 8 | 防止成本失控 |
 | Maker/Checker 分离 | 10 | 生成与评判分离 |
 | 最大轮次已设 | 8 | 3-10 轮 |
-| 6 条停止规则 | 12 | 全部定义 |
+| 7 条停止规则 | 12 | 全部定义 |
 | 工具级隔离 | 13 | checker 无 Write/Edit |
 
 ---
@@ -376,7 +378,7 @@ hermes skill-sync add wechat-reader
 ├── loop-budget.md     ← 预算跟踪（限制/已用/预警线）
 ├── builder.md         ← Builder Agent 定义（tools: Read,Write,Edit,Glob,Grep,Bash）
 ├── checker.md         ← Checker Agent 定义（tools: Read,Grep,Glob,Bash — 无Write/Edit）
-└── stop-rules.md      ← 六条停止条件详细说明
+└── stop-rules.md      ← 七条停止条件详细说明
 
 .state/
 └── skill_sync.json    ← Skill Sync 状态（managed_skills + custom_agents）
@@ -420,7 +422,7 @@ hermes
     ├── resume <name>              #   从中断处恢复
     ├── logs <name>                #   查看执行历史
     ├── status <name>              #   查看状态+预算
-    └── stop-rules                 #   显示六条停止规则
+    └── stop-rules                 #   显示七条停止规则
 ```
 
 ---
@@ -435,7 +437,7 @@ hermes
 | CLI | argparse | 标准库，零额外依赖 |
 | HTTP | urllib | 标准库，Gateway 通信 |
 | Lint | ruff | line-length=100, target=py310 |
-| 测试 | pytest + pytest-asyncio | 29 个测试 |
+| 测试 | pytest + pytest-asyncio | 75 个测试 |
 | 构建 | setuptools | src/ 布局 |
 | 运行时依赖 | 仅 3 个 | pydantic, pydantic-settings, python-dotenv |
 

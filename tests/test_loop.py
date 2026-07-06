@@ -6,12 +6,16 @@ from hermes.loop import (
     LOOP_PATTERNS,
     STOP_RULES,
     LoopRound,
+    LoopStatus,
+    _save_loop_meta,
     check_budget,
     check_stop_rules,
+    get_loop,
     init_loop,
     list_loops,
     record_round,
 )
+from hermes.runner import run_loop_continuous
 
 
 # ── Stop Rules Tests ──────────────────────────────────────────────────
@@ -176,7 +180,7 @@ def test_stop_rule_single_round_not_passed() -> None:
 
 
 def test_all_stop_rules_defined() -> None:
-    """Verify all stop rules are defined in STOP_RULES (1 success + 6 stop)."""
+    """Verify all stop rules are defined in STOP_RULES (1 success + 6 escalation = 7 total)."""
     assert len(STOP_RULES) == 7
     rule_ids = [r["id"] for r in STOP_RULES]
     assert "all_green" in rule_ids
@@ -623,3 +627,437 @@ def test_loop_round_json_roundtrip_with_agent_reports() -> None:
     assert restored.failure_items == original.failure_items
     assert restored.agent_reports == original.agent_reports
     assert restored.tokens_used == 12345
+
+
+# ── State Machine Regression Tests (对抗审查 round 5-9) ──────────────
+
+
+def test_record_round_budget_limit_zero_not_locked() -> None:
+    """record_round: when budget_limit_tokens=0 (unlimited/no-budget mode),
+    the `>=` comparison must NOT lock the loop as BUDGET_EXCEEDED on the first
+    round. The `> 0` guard ensures budget_limit=0 means "no budget enforcement".
+    Previously the bug locked loops with budget_limit=0 as BUDGET_EXCEEDED
+    even when passed=False and no stop rule fired."""
+    init_loop("test-zero-budget", pattern="knowledge-hygiene")
+    loop = get_loop("test-zero-budget")
+    loop.budget_limit_tokens = 0
+    _save_loop_meta(loop)
+
+    round_data = _make_round(1, passed=False, failure_items=["a"], failure_count=1)
+    result = record_round("test-zero-budget", round_data, tokens_used=100)
+    assert result["success"] is True
+    # Strong assertion: with limit=0 guard, passed=False, and no stop rule
+    # firing (only 1 round), status must be RUNNING — not budget_exceeded
+    # (the bug) and not NEEDS_HUMAN (no stop rule matched). A weak `!=
+    # budget_exceeded` would pass even if the bug locked the loop as ERROR.
+    assert result["status"] == "running", (
+        f"limit=0 guard failed: status={result['status']} (expected 'running')"
+    )
+
+
+def test_record_round_budget_check_priority() -> None:
+    """record_round: the budget_exceeded check is evaluated before the passed
+    check (if/elif ordering). This test locks the current ordering so future
+    refactors don't silently change which condition wins when both are true.
+    Current behavior: budget exhaustion takes precedence (hard resource limit)
+    — a passed round that also exhausted the budget is reported as
+    budget_exceeded, not completed. This is intentional: budget is a hard
+    ceiling that must be surfaced even on success."""
+    init_loop("test-budget-priority", pattern="knowledge-hygiene")
+    loop = get_loop("test-budget-priority")
+    loop.budget_limit_tokens = 100
+    loop.budget_used_tokens = 90  # already near limit
+    _save_loop_meta(loop)
+
+    round_data = _make_round(1, passed=True, failure_items=[], failure_count=0)
+    result = record_round("test-budget-priority", round_data, tokens_used=20)
+    # 90+20=110 >= 100 → BUDGET_EXCEEDED wins over passed=True (current ordering).
+    assert result["status"] == "budget_exceeded", (
+        f"budget should take priority over passed: status={result['status']}"
+    )
+
+
+def test_run_loop_continuous_budget_hard_stop_uses_stop_escalate() -> None:
+    """run_loop_continuous: when budget is already exhausted, the hard_stop
+    path must return action='stop_escalate' (consistent with STOP_RULES),
+    not the old 'stop_budget'."""
+    init_loop("test-continuous-budget", pattern="knowledge-hygiene")
+    loop = get_loop("test-continuous-budget")
+    loop.budget_limit_tokens = 100
+    loop.budget_used_tokens = 100
+    _save_loop_meta(loop)
+    result = run_loop_continuous("test-continuous-budget")
+    assert result["success"] is True
+    stop = result["final_stop"]
+    assert stop["should_stop"] is True
+    assert stop["rule_id"] == "budget_exceeded"
+    assert stop["action"] == "stop_escalate"
+
+
+def test_run_loop_continuous_prechecks_completed_status() -> None:
+    """run_loop_continuous: if the loop is already COMPLETED, it must NOT enter
+    the round loop (which would be rejected by run_loop's status guard and
+    return a misleading success=True + rounds_executed=1 + final_stop=continue).
+    Instead it must return rounds_executed=0 + final_stop should_stop=True with
+    rule_id=all_green."""
+    init_loop("test-precheck-completed", pattern="knowledge-hygiene")
+    loop = get_loop("test-precheck-completed")
+    loop.status = LoopStatus.COMPLETED
+    _save_loop_meta(loop)
+
+    result = run_loop_continuous("test-precheck-completed")
+    assert result["success"] is True
+    assert result["rounds_executed"] == 0, (
+        f"expected 0 rounds for COMPLETED loop, got {result['rounds_executed']}"
+    )
+    assert result["final_stop"]["should_stop"] is True
+    assert result["final_stop"]["rule_id"] == "all_green"
+    assert result["final_stop"]["action"] == "stop_success"
+
+
+def test_run_loop_continuous_prechecks_budget_exceeded_status() -> None:
+    """run_loop_continuous precheck: a BUDGET_EXCEEDED loop must return
+    rounds_executed=0 + final_stop with rule_id='budget_exceeded'."""
+    init_loop("test-precheck-budget", pattern="knowledge-hygiene")
+    loop = get_loop("test-precheck-budget")
+    loop.status = LoopStatus.BUDGET_EXCEEDED
+    _save_loop_meta(loop)
+
+    result = run_loop_continuous("test-precheck-budget")
+    assert result["success"] is True
+    assert result["rounds_executed"] == 0, (
+        f"expected 0 rounds for BUDGET_EXCEEDED loop, got {result['rounds_executed']}"
+    )
+    assert result["final_stop"]["should_stop"] is True
+    assert result["final_stop"]["rule_id"] == "budget_exceeded", (
+        f"wrong rule_id: {result['final_stop']['rule_id']} (expected 'budget_exceeded')"
+    )
+    assert result["final_stop"]["action"] == "stop_escalate"
+
+
+def test_run_loop_continuous_prechecks_error_status() -> None:
+    """run_loop_continuous precheck: an ERROR loop must return rounds_executed=0
+    + final_stop with rule_id='rounds_exhausted' (catch-all escalation) BUT the
+    description must explicitly mention 'error state' so users don't mistake it
+    for genuinely exhausted rounds."""
+    init_loop("test-precheck-error", pattern="knowledge-hygiene")
+    loop = get_loop("test-precheck-error")
+    loop.status = LoopStatus.ERROR
+    _save_loop_meta(loop)
+
+    result = run_loop_continuous("test-precheck-error")
+    assert result["success"] is True
+    assert result["rounds_executed"] == 0, (
+        f"expected 0 rounds for ERROR loop, got {result['rounds_executed']}"
+    )
+    assert result["final_stop"]["should_stop"] is True
+    assert result["final_stop"]["rule_id"] == "rounds_exhausted"
+    assert result["final_stop"]["action"] == "stop_escalate"
+    desc = result["final_stop"]["description"]
+    assert "error state" in desc.lower(), (
+        f"ERROR description doesn't mention 'error state': {desc!r}"
+    )
+
+
+def test_run_loop_continuous_precheck_needs_human_re_derives_rule() -> None:
+    """run_loop_continuous precheck: a NEEDS_HUMAN loop must re-derive the
+    actual stop rule via check_stop_rules (not hardcode rounds_exhausted).
+    A loop that stopped due to regression must report rule_id='regression'
+    from both the precheck and the in-loop branch — both entry paths must
+    agree on the diagnosis."""
+    init_loop("test-precheck-needs-human", pattern="knowledge-hygiene")
+    loop = get_loop("test-precheck-needs-human")
+    loop.status = LoopStatus.NEEDS_HUMAN
+    loop.current_round = 2
+    loop.max_rounds = 5
+    # Construct rounds that trigger regression: new failure + persistent failure.
+    loop.rounds = [
+        _make_round(1, passed=False, failure_items=["a", "b"], failure_count=2),
+        _make_round(2, passed=False, failure_items=["a", "c"], failure_count=2),
+    ]
+    _save_loop_meta(loop)
+
+    result = run_loop_continuous("test-precheck-needs-human")
+    assert result["success"] is True
+    assert result["rounds_executed"] == 0
+    # Re-derivation: new={c}, persistent={a} → regression (NOT rounds_exhausted).
+    assert result["final_stop"]["rule_id"] == "regression", (
+        f"precheck did not re-derive: rule_id={result['final_stop']['rule_id']} "
+        f"(expected 'regression')"
+    )
+    assert result["final_stop"]["should_stop"] is True
+    # The specific diagnosis from check_stop_rules must be preserved VERBATIM
+    # (not overwritten with a generic "terminal state" message). For
+    # round1={a,b}→round2={a,c}: new={c}, previously_fixed={b} →
+    # "修复导致新失败: c。之前修好的: b".
+    desc = result["final_stop"]["description"]
+    assert "修复导致新失败" in desc, (
+        f"specific diagnosis lost: description={desc!r} "
+        f"(expected to contain '修复导致新失败')"
+    )
+    assert "c" in desc, (
+        f"new failure item 'c' missing from description: {desc!r}"
+    )
+
+
+def test_run_loop_continuous_precheck_needs_human_fallback() -> None:
+    """run_loop_continuous precheck: a NEEDS_HUMAN loop where check_stop_rules
+    returns should_stop=False (state drift — e.g. only 1 round with progress,
+    no stop rule fires) must fall back to rounds_exhausted with a description
+    that explicitly says 'no specific rule matched'."""
+    init_loop("test-precheck-needs-human-fallback", pattern="knowledge-hygiene")
+    loop = get_loop("test-precheck-needs-human-fallback")
+    loop.status = LoopStatus.NEEDS_HUMAN
+    loop.current_round = 1
+    loop.max_rounds = 5
+    # Single round with progress (3 failures → 1 failure): no stop rule fires.
+    loop.rounds = [
+        _make_round(1, passed=False, failure_items=["a"], failure_count=1),
+    ]
+    _save_loop_meta(loop)
+
+    result = run_loop_continuous("test-precheck-needs-human-fallback")
+    assert result["success"] is True
+    assert result["rounds_executed"] == 0
+    assert result["final_stop"]["should_stop"] is True
+    assert result["final_stop"]["rule_id"] == "rounds_exhausted", (
+        f"fallback should map to rounds_exhausted, got "
+        f"{result['final_stop']['rule_id']}"
+    )
+    desc = result["final_stop"]["description"]
+    assert "no specific rule matched" in desc, (
+        f"fallback description doesn't explain state drift: {desc!r}"
+    )
+    assert "needs_human" in desc, (
+        f"fallback description doesn't mention the status: {desc!r}"
+    )
+
+
+def test_run_loop_rejects_needs_human_status() -> None:
+    """run_loop: a loop in NEEDS_HUMAN status must be rejected (not executed).
+    Previously only COMPLETED/BUDGET_EXCEEDED were guarded, letting a
+    NEEDS_HUMAN loop execute a round beyond max_rounds."""
+    from hermes.runner import run_loop
+
+    init_loop("test-reject-needs-human", pattern="knowledge-hygiene")
+    loop = get_loop("test-reject-needs-human")
+    loop.status = LoopStatus.NEEDS_HUMAN
+    loop.current_round = 5  # at/beyond max
+    _save_loop_meta(loop)
+
+    result = run_loop("test-reject-needs-human")
+    assert result["success"] is False
+    assert (
+        "human review" in result["error"].lower()
+        or "needs_human" in result.get("error", "").lower()
+    )
+
+
+def test_run_loop_rejects_error_status() -> None:
+    """run_loop: a loop in ERROR status must be rejected (not executed).
+    ERROR was previously not guarded, letting an error-state loop execute."""
+    from hermes.runner import run_loop
+
+    init_loop("test-reject-error", pattern="knowledge-hygiene")
+    loop = get_loop("test-reject-error")
+    loop.status = LoopStatus.ERROR
+    _save_loop_meta(loop)
+
+    result = run_loop("test-reject-error")
+    assert result["success"] is False
+    assert "error" in result["error"].lower()
+
+
+def test_resume_loop_budget_exceeded_resets() -> None:
+    """resume_loop: a BUDGET_EXCEEDED loop must be reset to IDLE with cleared
+    rounds/budget, otherwise it stays locked forever (check_budget hard_stop
+    keeps returning budget_exceeded)."""
+    from hermes.runner import resume_loop
+
+    init_loop("test-resume-budget", pattern="knowledge-hygiene")
+    loop = get_loop("test-resume-budget")
+    loop.status = LoopStatus.BUDGET_EXCEEDED
+    loop.budget_used_tokens = 999999
+    loop.current_round = 4
+    loop.rounds = [_make_round(1, passed=False, failure_items=["a"])]
+    _save_loop_meta(loop)
+
+    resume_loop("test-resume-budget")
+    loop_after = get_loop("test-resume-budget")
+    assert loop_after.status != LoopStatus.BUDGET_EXCEEDED, (
+        "resume_loop did not reset BUDGET_EXCEEDED status (loop stays locked)"
+    )
+    assert loop_after.budget_used_tokens == 0, (
+        f"budget not cleared: {loop_after.budget_used_tokens} (expected 0)"
+    )
+
+
+def test_resume_loop_completed_resets_history() -> None:
+    """resume_loop: a COMPLETED loop must be reset to IDLE with cleared
+    rounds/budget/current_round, otherwise stale passed=True rounds would make
+    stop rules re-fire immediately (all_green on first check)."""
+    from hermes.runner import resume_loop
+
+    init_loop("test-resume-completed", pattern="knowledge-hygiene")
+    loop = get_loop("test-resume-completed")
+    loop.status = LoopStatus.COMPLETED
+    loop.budget_used_tokens = 50000
+    loop.current_round = 3
+    loop.rounds = [
+        _make_round(1, passed=False, failure_items=["a"]),
+        _make_round(2, passed=False, failure_items=["a"]),
+        _make_round(3, passed=True),
+    ]
+    _save_loop_meta(loop)
+
+    resume_loop("test-resume-completed")
+    loop_after = get_loop("test-resume-completed")
+    assert loop_after.status != LoopStatus.COMPLETED, (
+        "resume did not reset COMPLETED status (run_loop guard would reject)"
+    )
+    assert loop_after.budget_used_tokens == 0, (
+        f"budget not cleared: {loop_after.budget_used_tokens} (expected 0)"
+    )
+    assert all(not r.passed for r in loop_after.rounds), (
+        "stale passed=True rounds not cleared by resume_loop reset"
+    )
+    assert loop_after.current_round <= 2, (
+        f"current_round not reset: {loop_after.current_round} (expected <=2)"
+    )
+
+
+def test_run_loop_continuous_post_round_catches_budget_exceeded(monkeypatch) -> None:
+    """run_loop_continuous post-round branch: when a round succeeds but
+    record_round sets status=BUDGET_EXCEEDED, and check_stop_rules returns
+    should_stop=False (budget is NOT checked by stop rules), the post-round
+    branch must catch BUDGET_EXCEEDED via _terminal_status_to_stop with
+    entry='post-round'. This is the MAIN normal scenario for the post-round
+    branch — BUDGET_EXCEEDED is the only terminal state stably reachable in
+    post-round during normal operation."""
+    import hermes.runner
+    from hermes.runner import run_loop_continuous
+
+    init_loop("test-post-round-budget", pattern="knowledge-hygiene")
+    loop = get_loop("test-post-round-budget")
+    assert loop.status == LoopStatus.IDLE
+
+    def fake_run_loop(name: str) -> dict:
+        updated = get_loop(name)
+        updated.status = LoopStatus.BUDGET_EXCEEDED
+        updated.current_round = 1
+        _save_loop_meta(updated)
+        return {
+            "success": True,
+            "mode": "local",
+            "loop": name,
+            "round": 1,
+            "passed": False,
+            "stop_check": {"should_stop": False, "action": "continue"},
+        }
+
+    monkeypatch.setattr(hermes.runner, "run_loop", fake_run_loop)
+
+    result = run_loop_continuous("test-post-round-budget")
+    assert result["success"] is True
+    assert result["rounds_executed"] == 1, (
+        f"expected 1 round executed, got {result['rounds_executed']}"
+    )
+    assert result["final_stop"]["should_stop"] is True
+    assert result["final_stop"]["rule_id"] == "budget_exceeded", (
+        f"post-round did not map BUDGET_EXCEEDED: rule_id="
+        f"{result['final_stop']['rule_id']}"
+    )
+    assert result["final_stop"]["action"] == "stop_escalate"
+    assert "Budget exhausted" in result["final_stop"]["description"], (
+        f"unexpected description: {result['final_stop']['description']!r}"
+    )
+
+
+def test_run_loop_continuous_post_round_catches_error(monkeypatch) -> None:
+    """run_loop_continuous post-round branch: when a round succeeds but the
+    loop is externally set to ERROR, the post-round branch must catch ERROR
+    immediately via _terminal_status_to_stop with entry='post-round' — NOT
+    waste another round waiting for run_loop's status guard to reject it."""
+    import hermes.runner
+    from hermes.runner import run_loop_continuous
+
+    init_loop("test-post-round-error", pattern="knowledge-hygiene")
+    loop = get_loop("test-post-round-error")
+    assert loop.status == LoopStatus.IDLE
+
+    def fake_run_loop(name: str) -> dict:
+        updated = get_loop(name)
+        updated.status = LoopStatus.ERROR
+        updated.current_round = 1
+        _save_loop_meta(updated)
+        return {
+            "success": True,
+            "mode": "local",
+            "loop": name,
+            "round": 1,
+            "passed": False,
+            "stop_check": {"should_stop": False, "action": "continue"},
+        }
+
+    monkeypatch.setattr(hermes.runner, "run_loop", fake_run_loop)
+
+    result = run_loop_continuous("test-post-round-error")
+    assert result["success"] is True
+    assert result["rounds_executed"] == 1, (
+        f"expected 1 round (immediate catch), got {result['rounds_executed']}"
+    )
+    assert result["final_stop"]["should_stop"] is True
+    assert result["final_stop"]["rule_id"] == "rounds_exhausted"
+    assert result["final_stop"]["action"] == "stop_escalate"
+    desc = result["final_stop"]["description"]
+    assert "error state" in desc.lower(), (
+        f"ERROR description doesn't mention 'error state': {desc!r}"
+    )
+    assert "post-round" in desc, (
+        f"ERROR not caught in post-round (missing 'post-round' label): {desc!r}"
+    )
+
+
+# ── Profile Parser Regression Tests ───────────────────────────────────
+
+
+def test_profile_working_principles_parser_excludes_non_rule_sections() -> None:
+    """profile._load_working_principles_from_doc: a non-rule heading (e.g.
+    `## 加载机制`) after a rule must NOT leak into the rule's body. The parser
+    must end the current rule's body at any markdown heading, not just rule
+    headings."""
+    from hermes.profile import _load_working_principles_from_doc
+
+    entries = _load_working_principles_from_doc()
+    # The real working-principles.md has 2 rules + a `## 加载机制` section.
+    assert len(entries) >= 2, f"expected >=2 rules, got {len(entries)}"
+    # Rule 2's body must NOT contain the `加载机制` section text.
+    rule2 = entries[1]
+    assert "加载机制" not in rule2, (
+        f"non-rule section leaked into rule body: {rule2!r}"
+    )
+    assert "load_profile" not in rule2, (
+        f"加载机制 implementation detail leaked into rule body: {rule2!r}"
+    )
+
+
+def test_profile_working_principles_parser_strips_trailing_separator() -> None:
+    """profile._load_working_principles_from_doc: trailing `---` thematic-break
+    lines (and surrounding blank lines) that delimit sections must be stripped
+    from the end of each rule body. Rule 2 ends with `---` before `## 加载机制`
+    — that `---` must not appear in the rule's body."""
+    from hermes.profile import _load_working_principles_from_doc
+
+    entries = _load_working_principles_from_doc()
+    assert len(entries) >= 2
+    rule2 = entries[1]
+    # The body must not end with `---` (stripped by _flush).
+    lines = rule2.split("\n")
+    assert lines[-1].strip() != "---", (
+        f"trailing --- not stripped: last line={lines[-1]!r}"
+    )
+    # And the `---` separator should not be in the body at all (it's between
+    # rule 2 and 加载机制, both stripped as trailing separator).
+    assert "\n---" not in rule2, (
+        f"--- separator found in rule body: {rule2!r}"
+    )
