@@ -1,0 +1,127 @@
+# AGENTS.md — Hermes Agent 工作约定
+
+> **任何 Agent 在新会话开始时必须先阅读本文件。**
+> 本文件持久化到仓库，fresh clone 后自动继承，确保跨会话/跨环境的一致性。
+
+---
+
+## 会话开始检查清单（必做，3 步）
+
+### 第 1 步：安装依赖（如未安装）
+
+```bash
+pip install -q -r requirements.txt -r requirements-dev.txt && pip install -e -q .
+```
+
+### 第 2 步：修复 git 远程跟踪 + 验证状态
+
+```bash
+bash scripts/setup-tracking.sh   # 修复 refspec 盲点（幂等，可重复运行）
+bash scripts/verify-state.sh     # 一键状态验证
+```
+
+### 第 3 步：根据 `verify-state.sh` 输出决定下一步
+
+| `verify-state.sh` 退出码 | 含义 | 下一步 |
+|--------------------------|------|--------|
+| 0（全部 ✅） | 工作已完成并同步 | **不要重复执行已完成的工作。** 询问用户新任务 |
+| 1（有 ❌） | 有问题需要处理 | 根据 ❌ 项修复，修复后重新运行脚本验证 |
+
+**关键**：`verify-state.sh` 直接用 `git ls-remote` 比较本地与远程 SHA，**不依赖 git refspec**。即使 fresh clone 后 refspec 盲点存在，它也能正确判断工作是否已推送。不要用 `git status` 作为"工作是否完成"的唯一依据——它可能因 refspec 缺失而显示异常。
+
+---
+
+## 完成任务的硬性规则
+
+### 规则 1：修复后必须立即 commit + push
+
+**根因教训**：本地 commit 未 push 时，环境重置（fresh clone）会丢失所有工作。`git fetch` 还会用旧的远程状态覆盖本地分支。
+
+**硬性要求**：
+
+```bash
+# 1. 验证修复有效
+bash scripts/verify-state.sh
+
+# 2. 提交（必须用 -c 指定 identity，避免 git identity 未配置错误）
+git add <具体文件>
+git -c user.name="Hermes Agent" -c user.email="hermes@agent.dev" commit -m "<message>"
+
+# 3. 立即推送（不要等"做完所有事再一起推"）
+git push origin trae/agent-glOxQF
+```
+
+**验证推送成功**：
+
+```bash
+# 不依赖 refspec 的验证
+git ls-remote origin trae/agent-glOxQF   # 远程 SHA
+git rev-parse HEAD                        # 本地 SHA
+# 两者必须一致
+```
+
+### 规则 2：不要用 `git add .` 或 `git add -A`
+
+- 用 `git add <具体文件>` 添加文件，避免误提交 `.env`、缓存、临时文件
+- 提交前用 `git status` 确认暂存内容
+
+### 规则 3：commit message 必须说明"为什么"
+
+- 不是"修改了 X"，而是"修复了 X 导致的 Y 问题"
+- 包含根因分析（一句话）和验证方式
+
+---
+
+## 避免长链路压缩导致结果未返回
+
+**根因教训**：fix → verify → commit → push 链路太长时，context 会被压缩，最终总结可能未返回给用户，让用户误以为"任务没完成"。
+
+### 策略 1：分阶段提交，每阶段独立 push
+
+不要等所有修改完成后一次性提交。每完成一个独立的修复单元就提交+推送：
+
+```
+修复单元 1 → commit + push → 修复单元 2 → commit + push → ...
+```
+
+这样即使会话中途被压缩或中断，已完成的工作也已持久化。
+
+### 策略 2：优先使用并行工具调用
+
+独立的操作（如读多个文件、运行多个验证命令）用并行工具调用，减少串行等待。
+
+### 策略 3：简洁输出
+
+- 不要在回复中重复诊断过程（除非用户问）
+- 用脚本输出代替手工罗列验证结果
+- 链接到文件而非内联大段代码
+
+---
+
+## 项目分支约定
+
+- **工作分支**：`trae/agent-glOxQF`
+- **主分支**：`main`（只接受合并，不直接开发）
+- **远程**：`origin`（GitHub: hpj360/Hermes）
+
+Fresh clone 后必须运行 `bash scripts/setup-tracking.sh` 配置 `trae/agent-glOxQF` 的远程跟踪，否则 `git status` 无法正确显示同步状态。
+
+---
+
+## 脚本说明
+
+| 脚本 | 用途 | 何时运行 |
+|------|------|---------|
+| `scripts/setup-tracking.sh` | 修复 fresh clone 后的 refspec 盲点 | 新会话开始时（幂等） |
+| `scripts/verify-state.sh` | 一键验证 git 同步 + tests + ruff + 关键文件 | 每次需要判断"任务是否完成"时 |
+
+两个脚本都**不依赖 git refspec**，在 fresh clone 环境中也能正确工作。
+
+---
+
+## 工作原则（持久化在 knowledge/working-principles.md）
+
+1. **从第一性原理出发**：解决问题/修 BUG/设计架构时，先回到本质约束与基本事实，拆解假设再推导方案，不从既有做法或惯例出发。
+2. **复杂任务后多 Agent 对抗性审查**：完成复杂任务后，开启多个独立角色 Agent 从反方视角质疑结论、复现验证、寻找边界与反例。审查发现的问题必须回溯修复，不得带病交付。
+
+详见 [knowledge/working-principles.md](file:///workspace/knowledge/working-principles.md)。
