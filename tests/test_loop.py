@@ -1328,7 +1328,7 @@ def test_stop_rules_have_hard_gate_field() -> None:
 
 
 def test_stop_rules_hard_gate_distribution() -> None:
-    """no_progress 是软门禁，其余 6 条是硬门禁。"""
+    """no_progress 是软门禁，其余 6 项是硬门禁（STOP_RULES 共 7 条：1 软 + 6 硬）。"""
     hard_gates = [r for r in STOP_RULES if r["hard_gate"]]
     soft_gates = [r for r in STOP_RULES if not r["hard_gate"]]
     assert len(hard_gates) == 6, f"Expected 6 hard gates, got {len(hard_gates)}"
@@ -1404,27 +1404,59 @@ def test_record_round_deliverables_all_present() -> None:
 
 
 def test_run_loop_continuous_gated_pauses_after_round() -> None:
-    """--gated 模式：每轮结束后暂停（NEEDS_HUMAN），final_stop 为 human_gate。"""
-    result = init_loop("test-gated", pattern="knowledge-hygiene")
+    """--gated 模式：每轮结束后暂停（NEEDS_HUMAN），final_stop 为 human_gate。
+
+    用 monkeypatch 强制 run_loop 返回 passed=False 且不触发停止规则，
+    确保 gated 分支（runner.py 的 human_gate 逻辑）被真正执行。
+    对抗审查 Critical 2：旧测试断言在 `if loop.status == NEEDS_HUMAN:` 条件块内，
+    实际执行路径 knowledge-hygiene 扫描返回 passed=True，status 变为 COMPLETED，
+    if 条件为 False，断言不执行——假绿。重写后强制 passed=False 走 gated 分支。
+    """
+    result = init_loop("test-gated-fix", pattern="builder-checker")
     assert result["success"]
 
     try:
-        # knowledge-hygiene pattern 在无 gateway 时走 guidance 模式
-        # gated 模式下应在第一轮后暂停
-        run_result = run_loop_continuous("test-gated", gated=True)
+        # monkeypatch run_loop 返回 passed=False，模拟一轮未通过但未触发停止规则
+        import hermes.runner
+
+        original_run_loop = hermes.runner.run_loop
+
+        def mock_run_loop(name: str, **kwargs: object) -> dict:
+            # 模拟一轮未通过但未触发停止规则（current_round=1, max_rounds=5）
+            from hermes.loop import record_round, get_loop
+
+            loop = get_loop(name)
+            if loop:
+                round_data = _make_round(1, passed=False, failure_items=["fake-issue"])
+                record_round(name, round_data, tokens_used=1000)
+            return {
+                "success": True,
+                "loop": name,
+                "round": 1,
+                "mode": "test",
+                "passed": False,
+            }
+
+        hermes.runner.run_loop = mock_run_loop
+        try:
+            run_result = run_loop_continuous("test-gated-fix", gated=True)
+        finally:
+            hermes.runner.run_loop = original_run_loop
+
         assert run_result["success"]
         final_stop = run_result.get("final_stop", {})
+        assert final_stop.get("rule_id") == "human_gate"
+        assert final_stop.get("action") == "stop_escalate"
+        assert "human" in final_stop.get("description", "").lower()
 
-        loop = get_loop("test-gated")
-        if loop and loop.status == LoopStatus.NEEDS_HUMAN:
-            # 如果触发了 human_gate
-            assert final_stop.get("rule_id") == "human_gate"
-            assert final_stop.get("action") == "stop_escalate"
-        # 如果 guidance 模式直接完成了也没关系，gated 只在 RUNNING 时暂停
+        # 验证 loop 状态变为 NEEDS_HUMAN
+        loop = get_loop("test-gated-fix")
+        assert loop is not None
+        assert loop.status == LoopStatus.NEEDS_HUMAN
     finally:
         import shutil
         from hermes.loop import loops_dir
-        test_dir = loops_dir() / "test-gated"
+        test_dir = loops_dir() / "test-gated-fix"
         if test_dir.exists():
             shutil.rmtree(test_dir)
 
@@ -1470,3 +1502,156 @@ def test_mcp_get_client_returns_none_for_unknown() -> None:
     """get_mcp_client 对未注册的 server 返回 None。"""
     from hermes.mcp import get_mcp_client
     assert get_mcp_client("nonexistent") is None
+
+
+# ── MCP Idempotency & Soft Degradation Tests ──────────────────────────
+
+
+def test_mcp_post_pr_comment_idempotent_skip() -> None:
+    """post_pr_comment 幂等：相同 body 的评论已存在时跳过。"""
+    from hermes.mcp import GitHubMCPClient
+    import hermes.mcp
+    import json
+
+    client = GitHubMCPClient(token="fake_token", repo="test/repo")
+
+    # monkeypatch urlopen 返回已有评论
+    class FakeResponse:
+        def __init__(self, data):
+            self._data = json.dumps(data).encode()
+
+        def read(self):
+            return self._data
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    existing_comments = [{"body": "test comment", "id": 1}]
+
+    original_urlopen = hermes.mcp.urllib.request.urlopen
+
+    def mock_urlopen(req, timeout=None):
+        return FakeResponse(existing_comments)
+
+    hermes.mcp.urllib.request.urlopen = mock_urlopen
+    try:
+        result = client.post_pr_comment(1, "test comment")
+    finally:
+        hermes.mcp.urllib.request.urlopen = original_urlopen
+
+    assert result["success"]
+    assert result.get("skipped") is True
+
+
+def test_mcp_post_pr_comment_failure_soft_degradation() -> None:
+    """post_pr_comment 失败时软降级（返回 error dict，不抛异常）。"""
+    from hermes.mcp import GitHubMCPClient
+    import hermes.mcp
+
+    client = GitHubMCPClient(token="fake_token", repo="test/repo")
+
+    original_urlopen = hermes.mcp.urllib.request.urlopen
+
+    def mock_urlopen_error(req, timeout=None):
+        raise Exception("Network error")
+
+    hermes.mcp.urllib.request.urlopen = mock_urlopen_error
+    try:
+        result = client.post_pr_comment(1, "test comment")
+    finally:
+        hermes.mcp.urllib.request.urlopen = original_urlopen
+
+    assert result["success"] is False
+    assert "error" in result
+    assert "Network error" in result["error"]
+
+    # 验证 audit_log 记录了失败
+    audit_log = client.get_audit_log()
+    assert len(audit_log) > 0
+    failed_records = [r for r in audit_log if not r["success"]]
+    assert len(failed_records) > 0
+
+
+def test_mcp_audit_log_no_token_leak() -> None:
+    """audit_log 不包含 token。"""
+    from hermes.mcp import GitHubMCPClient
+    import hermes.mcp
+    import json
+
+    client = GitHubMCPClient(token="secret_token_12345", repo="test/repo")
+
+    class FakeResponse:
+        def __init__(self, data):
+            self._data = json.dumps(data).encode()
+
+        def read(self):
+            return self._data
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    original_urlopen = hermes.mcp.urllib.request.urlopen
+    hermes.mcp.urllib.request.urlopen = lambda req, timeout=None: FakeResponse([])
+    try:
+        client.list_prs()
+    finally:
+        hermes.mcp.urllib.request.urlopen = original_urlopen
+
+    audit_log = client.get_audit_log()
+    for record in audit_log:
+        # token 不应出现在任何 audit 字段中
+        assert "secret_token_12345" not in str(record)
+        assert "secret_token_12345" not in str(record.get("args", {}))
+
+
+# ── Resume Gated Flag Tests ───────────────────────────────────────────
+
+
+def test_resume_loop_passes_gated_flag() -> None:
+    """resume_loop 的 gated 参数传递给 run_loop_continuous。
+
+    对抗审查 Critical 6：验证 resume_loop(name, gated=True) 会把 gated=True
+    传递给 run_loop_continuous，而不是静默切回全自动模式。
+    """
+    result = init_loop("test-resume-gated", pattern="builder-checker")
+    assert result["success"]
+
+    try:
+        import hermes.runner
+
+        # 先让 loop 进入 NEEDS_HUMAN 状态
+        loop = get_loop("test-resume-gated")
+        assert loop is not None
+        loop.status = LoopStatus.NEEDS_HUMAN
+        from hermes.loop import _save_loop_meta
+        _save_loop_meta(loop)
+
+        # monkeypatch run_loop_continuous 捕获 gated 参数
+        captured_args = {}
+        original_rlc = hermes.runner.run_loop_continuous
+
+        def mock_rlc(name, max_rounds=None, gated=False):
+            captured_args["gated"] = gated
+            return {"success": True, "loop": name, "rounds_executed": 0,
+                    "rounds": [], "final_stop": {"should_stop": False, "action": "continue"}}
+
+        hermes.runner.run_loop_continuous = mock_rlc
+        try:
+            from hermes.runner import resume_loop
+            resume_loop("test-resume-gated", gated=True)
+        finally:
+            hermes.runner.run_loop_continuous = original_rlc
+
+        assert captured_args.get("gated") is True
+    finally:
+        import shutil
+        from hermes.loop import loops_dir
+        test_dir = loops_dir() / "test-resume-gated"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)

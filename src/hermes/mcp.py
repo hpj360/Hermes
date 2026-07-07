@@ -13,8 +13,10 @@ Design principles (from Harness Engineering practice):
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -73,9 +75,6 @@ class GitHubMCPClient:
 
     def get_pr(self, pr_number: int) -> dict[str, Any]:
         """Read: Get PR details. Returns dict with 'success' key."""
-        import json
-        import urllib.request
-
         url = f"https://api.github.com/repos/{self.repo}/pulls/{pr_number}"
         try:
             req = urllib.request.Request(url, headers=self._headers())
@@ -90,9 +89,6 @@ class GitHubMCPClient:
 
     def get_issue(self, issue_number: int) -> dict[str, Any]:
         """Read: Get issue details."""
-        import json
-        import urllib.request
-
         url = f"https://api.github.com/repos/{self.repo}/issues/{issue_number}"
         try:
             req = urllib.request.Request(url, headers=self._headers())
@@ -107,9 +103,6 @@ class GitHubMCPClient:
 
     def list_prs(self, state: str = "open") -> dict[str, Any]:
         """Read: List PRs. state: open/closed/all."""
-        import json
-        import urllib.request
-
         url = f"https://api.github.com/repos/{self.repo}/pulls?state={state}&per_page=100"
         try:
             req = urllib.request.Request(url, headers=self._headers())
@@ -127,9 +120,6 @@ class GitHubMCPClient:
 
         If a comment with the same body already exists, skips posting.
         """
-        import json
-        import urllib.request
-
         # Idempotency check: look for existing comment with same body
         list_url = (
             f"https://api.github.com/repos/{self.repo}/issues/{pr_number}/comments"
@@ -173,9 +163,6 @@ class GitHubMCPClient:
 
         Checks for existing open PR with same head:base first.
         """
-        import json
-        import urllib.request
-
         # Idempotency check: look for existing open PR with same head/base
         list_url = (
             f"https://api.github.com/repos/{self.repo}/pulls"

@@ -1,6 +1,6 @@
 # Hermes 技术方案架构文档
 
-> 版本: 0.3.0 | 更新日期: 2026-06-26
+> 版本: 0.4.0 | 更新日期: 2026-07-07
 
 ## 一、项目定位
 
@@ -463,7 +463,7 @@ hermes
 | CLI | argparse | 标准库，零额外依赖 |
 | HTTP | urllib | 标准库，Gateway 通信 |
 | Lint | ruff | line-length=100, target=py310 |
-| 测试 | pytest + pytest-asyncio | 75 个测试 |
+| 测试 | pytest + pytest-asyncio | 103 个测试 |
 | 构建 | setuptools | src/ 布局 |
 | 运行时依赖 | 仅 3 个 | pydantic, pydantic-settings, python-dotenv |
 
@@ -506,7 +506,7 @@ Checker Agent 的 tools 字段物理上没有 Write/Edit，不是提示词约束
 以下是 Hermes 当前的已知限制，使用前请知悉：
 
 1. **PRD 完整度强相关** — 一句话需求会让需求分析阶段反复打回，整体效率下降。Hermes 不替代需求澄清
-2. **测试规模影响基线对比效果** — 当前 85 个测试，失败集合通常为空。基线对比在测试规模超 200 时效果更显著
+2. **测试规模影响基线对比效果** — 当前 103 个测试，失败集合通常为空。基线对比在测试规模超 200 时效果更显著
 3. **无 IDE 弹窗交互** — Hermes 是 CLI 工具，不提供 GUI 审批界面。--gated 模式通过 NEEDS_HUMAN 状态暂停
 4. **MCP 仅接 GitHub** — 不支持 TAPD/iWiki/工蜂等内部系统。需要其他系统时通过 Skill 脚本接入
 5. **L3 无人值守需谨慎** — 自动提 PR 需要 denylist 完整。当前 denylist 是路径列表，代码层未强制拦截

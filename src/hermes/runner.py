@@ -561,7 +561,7 @@ def run_loop_continuous(
     }
 
 
-def resume_loop(name: str) -> dict[str, Any]:
+def resume_loop(name: str, gated: bool = False) -> dict[str, Any]:
     """Resume a loop from its last recorded state.
 
     Resets the loop status to IDLE if it was NEEDS_HUMAN, ERROR, COMPLETED, or
@@ -570,6 +570,13 @@ def resume_loop(name: str) -> dict[str, Any]:
     budget-exhausted loop has nothing to "continue"; keeping stale rounds would
     make stop rules re-fire immediately, and keeping a stale budget would keep
     the loop locked). Then continues execution from the next round.
+
+    Args:
+        name: Loop name
+        gated: 若为 True，传递给 run_loop_continuous 保持 gated 模式（每轮后暂停
+            等待人工确认）。默认 False（向后兼容）。修复对抗审查 Critical 1：
+            之前 resume_loop 调用 run_loop_continuous(name) 不传 gated，导致
+            gated 模式 resume 后静默切回全自动。
     """
     loop = get_loop(name)
     if not loop:
@@ -589,4 +596,4 @@ def resume_loop(name: str) -> dict[str, Any]:
         _save_loop_meta(loop)
         logger.info("Loop '%s' reset to IDLE for fresh resume (history cleared)", name)
 
-    return run_loop_continuous(name)
+    return run_loop_continuous(name, gated=gated)

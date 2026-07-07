@@ -48,12 +48,13 @@
 **替代方案**: 每轮额外跑 pytest 做完整基线快照 → 否决，成本过高
 **参考**: 文章《从Vibe Coding到Harness》第六章基线对比经验
 
-### D006: 门禁软硬区分——hard_gate 字段
+### D006: 门禁软硬区分——hard_gate 声明性标签
 
 **日期**: 2026-07-07
 **决策**: STOP_RULES 和 audit_loop 检查项增加 hard_gate 字段
-**原因**: 硬门禁宁少不多——不是质量红线就别阻断流程。频繁打断会让团队退回 Vibe Coding
-**规则**: no_progress 为软门禁（可能只是任务大，拆分后可继续）；其余 6 条为硬门禁
+**原因**: 声明性分类标签，标识哪些是质量红线（hard_gate=True）、哪些是建议性检查（hard_gate=False）。不直接影响运行时行为——所有停止规则触发时都返回 stop_escalate，hard_gate 的价值在于让人类审查者快速识别"这条规则是红线还是建议"
+**规则**: no_progress 为软门禁（建议拆分任务后 resume）；其余 6 项为硬门禁（红线，必须介入）。STOP_RULES 共 7 条，1 软 + 6 硬
+**设计选择**: 不让 hard_gate 影响代码行为（YAGNI），避免"为概念而概念"的反模式 8。如未来需要差异化行为（如 hard_gate=False 时不设 NEEDS_HUMAN），再落地
 **参考**: 文章《从Vibe Coding到Harness》第六章软硬门禁取舍
 
 ### D007: 软门禁留"伤疤"

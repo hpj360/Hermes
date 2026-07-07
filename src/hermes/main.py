@@ -752,7 +752,8 @@ def cmd_loop_continuous(args: argparse.Namespace) -> int:
 def cmd_loop_resume(args: argparse.Namespace) -> int:
     """Resume a loop from its last recorded state."""
     print(f"=== Resume Loop: {args.name} ===")
-    result = resume_loop(args.name)
+    # 经验H：--gated 保持 gated 模式（每轮后暂停等待人工确认），默认 False
+    result = resume_loop(args.name, gated=getattr(args, "gated", False))
     if not result.get("success"):
         print(f"Error: {result.get('error', 'unknown error')}")
         return 1
@@ -1023,6 +1024,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_loop_resume = p_loop_sub.add_parser("resume", help="Resume a loop from last recorded state")
     p_loop_resume.add_argument("name", help="Loop name")
+    # 经验H：gated 模式——resume 后保持每轮后暂停等待人工确认（修复对抗审查 Critical 1）
+    p_loop_resume.add_argument(
+        "--gated",
+        action="store_true",
+        help="Pause after each round for human confirmation (preserves gated mode)",
+    )
     p_loop_resume.set_defaults(func=cmd_loop_resume)
 
     p_loop_logs = p_loop_sub.add_parser("logs", help="View execution history for a loop")
