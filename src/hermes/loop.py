@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -171,48 +171,61 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
 #   same_failure_twice: new = ∅ AND overlap ≠ ∅ AND count未减 （纯重复）
 #   no_progress       : new ≠ ∅ AND overlap = ∅ AND fixed ≠ ∅ AND count未减 （全换）
 
-STOP_RULES: list[dict[str, str]] = [
+STOP_RULES: list[dict[str, Any]] = [
     {
         "id": "all_green",
         "name": "ALL GREEN",
         "description": "所有检查通过（成功条件，非停止）。停止，附上每项检查的通过证明。",
         "action": "stop_success",
+        # 经验D：成功条件，硬性
+        "hard_gate": True,
     },
     {
         "id": "rounds_exhausted",
         "name": "轮次用尽",
         "description": "达到轮次上限。停止，报告仍失败的项、每轮尝试了什么、为什么没成功。",
         "action": "stop_escalate",
+        # 经验D：资源耗尽必须停
+        "hard_gate": True,
     },
     {
         "id": "budget_exceeded",
         "name": "预算耗尽",
         "description": "token 预算用尽。停止，报告已消耗预算与剩余失败项（由 record_round 状态机处理）。",
         "action": "stop_escalate",
+        "hard_gate": True,
     },
     {
         "id": "beyond_capability",
         "name": "疑似超出能力边界",
         "description": "builder反复尝试但失败原因涉及它无法访问的外部依赖或环境问题。停止，报告阻塞点。",
         "action": "stop_escalate",
+        # 经验D：外部问题无法继续
+        "hard_gate": True,
     },
     {
         "id": "regression",
         "name": "回归",
         "description": "修复导致之前通过的检查失败（引入新失败且有重复失败）。停止，说明改了什么导致了回归。",
         "action": "stop_escalate",
+        # 经验D：改坏了必须停
+        "hard_gate": True,
     },
     {
         "id": "same_failure_twice",
         "name": "同一失败连续两轮",
         "description": "builder在猜，不是在修（纯重复，无新失败引入）。停止，升级给人。",
         "action": "stop_escalate",
+        # 经验D：在猜必须停
+        "hard_gate": True,
     },
     {
         "id": "no_progress",
         "name": "无实质进展",
         "description": "连续2轮失败项数量没有减少且失败集合完全更换。停止，可能任务范围过大，需要拆分成更小的子任务。",
         "action": "stop_escalate",
+        # 经验D：可能只是任务大，拆分后可继续（软门禁）
+        "hard_gate": False,
     },
 ]
 
@@ -288,6 +301,8 @@ class LoopRound:
     failure_items: list[str] = field(default_factory=list)
     tokens_used: int = 0
     agent_reports: dict[str, str] = field(default_factory=dict)
+    # 经验A：该轮对应的基线失败项快照（历史已知失败，用于 regression 判定时排除）
+    baseline_failures: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -302,6 +317,7 @@ class LoopRound:
             "failure_items": self.failure_items,
             "tokens_used": self.tokens_used,
             "agent_reports": self.agent_reports,
+            "baseline_failures": self.baseline_failures,
         }
 
     @classmethod
@@ -311,6 +327,7 @@ class LoopRound:
         # would crash downstream `set(failure_items)` / `dict(agent_reports)`.
         failure_items = data.get("failure_items") or []
         agent_reports = data.get("agent_reports") or {}
+        baseline_failures = data.get("baseline_failures") or []
         return cls(
             round_num=data.get("round_num", 0),
             timestamp=data.get("timestamp", ""),
@@ -323,6 +340,7 @@ class LoopRound:
             failure_items=failure_items if isinstance(failure_items, list) else [],
             tokens_used=data.get("tokens_used", 0),
             agent_reports=agent_reports if isinstance(agent_reports, dict) else {},
+            baseline_failures=baseline_failures if isinstance(baseline_failures, list) else [],
         )
 
 
@@ -345,6 +363,12 @@ class LoopState:
     high_priority_items: list[str] = field(default_factory=list)
     watch_list: list[str] = field(default_factory=list)
     noise_items: list[str] = field(default_factory=list)
+    # 经验A：基线失败项（历史已知失败），regression 判定时排除，只计新增失败
+    baseline_failures: list[str] = field(default_factory=list)
+    # 经验B：审计软门禁留疤（未通过的检查项名称列表，软门禁失败留痕但不阻断）
+    audit_warnings: list[str] = field(default_factory=list)
+    # 经验F：产物清单（期望产出的文件路径列表，每轮校验存在性）
+    deliverables: list[str] = field(default_factory=list)
 
 
 # meta.json schema version. Bump when the persisted shape changes; add a
@@ -418,6 +442,10 @@ def _load_loop_meta(meta: dict[str, Any], name: str) -> LoopState | None:
         )
     rounds_data = meta.get("rounds", [])
     rounds = [LoopRound.from_dict(r) for r in rounds_data]
+    # 经验A/B/F：新字段读取，缺省为空列表（向后兼容旧 meta.json）
+    baseline_failures = meta.get("baseline_failures") or []
+    audit_warnings = meta.get("audit_warnings") or []
+    deliverables = meta.get("deliverables") or []
     return LoopState(
         name=name,
         pattern=meta.get("pattern", "custom"),
@@ -436,6 +464,9 @@ def _load_loop_meta(meta: dict[str, Any], name: str) -> LoopState | None:
         high_priority_items=meta.get("high_priority_items", []),
         watch_list=meta.get("watch_list", []),
         noise_items=meta.get("noise_items", []),
+        baseline_failures=baseline_failures if isinstance(baseline_failures, list) else [],
+        audit_warnings=audit_warnings if isinstance(audit_warnings, list) else [],
+        deliverables=deliverables if isinstance(deliverables, list) else [],
     )
 
 
@@ -458,6 +489,10 @@ def _save_loop_meta(state: LoopState) -> None:
         "high_priority_items": state.high_priority_items,
         "watch_list": state.watch_list,
         "noise_items": state.noise_items,
+        # 经验A/B/F：新字段序列化（list[str] 在 JSON 中原生可序列化）
+        "baseline_failures": state.baseline_failures,
+        "audit_warnings": state.audit_warnings,
+        "deliverables": state.deliverables,
     }
     (loop_dir / "meta.json").write_text(
         json.dumps(meta, indent=2, ensure_ascii=False),
@@ -636,7 +671,7 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
     if not loops:
         if name:
             return {"success": False, "error": f"Loop '{name}' not found"}
-        return {"success": True, "total": 0, "score": 0, "checks": [], "suggestions": ["No loops created yet. Run `hermes loop init <name>` to start."]}
+        return {"success": True, "total": 0, "score": 0, "checks": [], "warnings": [], "suggestions": ["No loops created yet. Run `hermes loop init <name>` to start."]}
 
     results: list[dict[str, Any]] = []
     total_score = 0
@@ -650,6 +685,7 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
             "name": "STATE.md exists",
             "passed": loop.state_path.exists(),
             "weight": 8,
+            "hard_gate": False,
         })
         if loop.state_path.exists():
             score += 8
@@ -660,6 +696,8 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
             "name": "LOOP.md has completion criteria",
             "passed": False,
             "weight": 15,
+            # 经验D：完成标准是硬门禁
+            "hard_gate": True,
         })
         if loop.config_path.exists():
             content = loop.config_path.read_text(encoding="utf-8")
@@ -676,6 +714,7 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
             "name": "Has Harness boundaries",
             "passed": loop.config_path.exists() and "边界条件" in loop.config_path.read_text(encoding="utf-8"),
             "weight": 10,
+            "hard_gate": False,
         })
         if checks[-1]["passed"]:
             score += 10
@@ -686,6 +725,7 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
             "name": "Uses L1 stage (start conservative)",
             "passed": loop.stage == LoopStage.L1_REPORT,
             "weight": 8,
+            "hard_gate": False,
         })
         if checks[-1]["passed"]:
             score += 8
@@ -697,6 +737,7 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
             "name": "Has fallback plan",
             "passed": loop.config_path.exists() and "降级" in loop.config_path.read_text(encoding="utf-8"),
             "weight": 8,
+            "hard_gate": False,
         })
         if checks[-1]["passed"]:
             score += 8
@@ -707,6 +748,7 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
             "name": "Budget configured",
             "passed": loop.budget_path.exists(),
             "weight": 8,
+            "hard_gate": False,
         })
         if checks[-1]["passed"]:
             score += 8
@@ -717,6 +759,7 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
             "name": "Maker/Checker separation documented",
             "passed": loop.config_path.exists() and "Evaluator" in loop.config_path.read_text(encoding="utf-8"),
             "weight": 10,
+            "hard_gate": False,
         })
         if checks[-1]["passed"]:
             score += 10
@@ -727,6 +770,7 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
             "name": "Max rounds set",
             "passed": loop.max_rounds > 0 and loop.max_rounds <= 10,
             "weight": 8,
+            "hard_gate": False,
         })
         if checks[-1]["passed"]:
             score += 8
@@ -738,6 +782,8 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
             "name": "Stop rules defined (7 conditions)",
             "passed": False,
             "weight": 12,
+            # 经验D：停止规则是硬门禁
+            "hard_gate": True,
         })
         loop_dir = loops_dir() / loop.name
         stop_rules_path = loop_dir / "stop-rules.md"
@@ -768,6 +814,8 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
             "name": "Tool-level isolation (checker has no Write/Edit)",
             "passed": False,
             "weight": 13,
+            # 经验D：安全红线，硬门禁
+            "hard_gate": True,
         })
         checker_path = loop_dir / "checker.md"
         if checker_path.exists():
@@ -794,6 +842,11 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
                 suggestions.append("Document tool-level isolation: checker must not have Write/Edit tools")
 
         total_score += score
+        # 经验B：软门禁留疤——收集未通过检查的 name（不是 suggestions）
+        loop_warnings = [c["name"] for c in checks if not c["passed"]]
+        # 持久化 audit_warnings 到 meta.json，供 _update_state_md 在 STATE.md 留痕
+        loop.audit_warnings = loop_warnings
+        _save_loop_meta(loop)
         results.append({
             "loop": loop.name,
             "pattern": loop.pattern,
@@ -801,6 +854,7 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
             "score": score,
             "checks": checks,
             "suggestions": suggestions,
+            "warnings": loop_warnings,
         })
 
     avg_score = total_score // len(results) if results else 0
@@ -812,12 +866,15 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
     elif avg_score >= 40:
         readiness = "Needs Work"
 
+    # 经验B：顶层汇总所有未通过检查的 name（扁平列表）
+    all_warnings = [w for r in results for w in r["warnings"]]
     return {
         "success": True,
         "total": len(results),
         "average_score": avg_score,
         "readiness": readiness,
         "loops": results,
+        "warnings": all_warnings,
     }
 
 
@@ -895,11 +952,28 @@ def check_stop_rules(
     current_round: int,
     max_rounds: int,
     rounds: list[LoopRound],
+    baseline_failures: list[str] | None = None,
 ) -> dict[str, Any]:
     """Check if any of the seven stop rules are triggered.
 
     Returns a dict with 'should_stop', 'rule_id', 'rule_name', 'description', and 'escalation_info'.
+
+    经验A：若提供 baseline_failures（历史已知失败项），则过滤掉 rounds 中每个 round
+    的 failure_items 里属于 baseline 的项，只对"新增失败"做后续判定。不提供时行为不变
+    （向后兼容）。
     """
+    # 经验A：排除基线失败项，只对新增失败做判定（向后兼容：不传则不过滤）
+    if baseline_failures:
+        baseline_set = set(baseline_failures)
+        rounds = [
+            replace(
+                r,
+                failure_items=[f for f in r.failure_items if f not in baseline_set],
+                failure_count=sum(1 for f in r.failure_items if f not in baseline_set),
+            )
+            for r in rounds
+        ]
+
     # Rule 1: ALL GREEN — handled by caller (passed=True on latest round)
     if rounds and rounds[-1].passed:
         return {
@@ -1287,6 +1361,9 @@ def record_round(
     if not loop:
         return {"success": False, "error": f"Loop '{name}' not found"}
 
+    # 经验A：记录该轮的基线失败项快照（便于跨轮次追溯当时的基线）
+    if not round_data.baseline_failures:
+        round_data.baseline_failures = list(loop.baseline_failures)
     loop.rounds.append(round_data)
     loop.current_round = round_data.round_num
     loop.last_run = datetime.now(timezone.utc).isoformat()
@@ -1297,7 +1374,14 @@ def record_round(
     elif round_data.passed:
         loop.status = LoopStatus.COMPLETED
     else:
-        stop = check_stop_rules(name, loop.current_round, loop.max_rounds, loop.rounds)
+        # 经验A：传入 baseline_failures，regression 判定时排除历史已知失败
+        stop = check_stop_rules(
+            name,
+            loop.current_round,
+            loop.max_rounds,
+            loop.rounds,
+            baseline_failures=loop.baseline_failures,
+        )
         if stop["should_stop"]:
             loop.status = LoopStatus.NEEDS_HUMAN
         else:
@@ -1305,6 +1389,13 @@ def record_round(
 
     _save_loop_meta(loop)
     _update_state_md(loop)
+
+    # 经验F：校验产物清单存在性，缺失项写入返回结果（不阻断，仅留痕）
+    missing_deliverables = (
+        [d for d in loop.deliverables if not Path(d).exists()]
+        if loop.deliverables
+        else []
+    )
 
     return {
         "success": True,
@@ -1314,6 +1405,7 @@ def record_round(
         "tokens_used": tokens_used,
         "budget_used": loop.budget_used_tokens,
         "budget_remaining": loop.budget_limit_tokens - loop.budget_used_tokens,
+        "missing_deliverables": missing_deliverables,
     }
 
 
@@ -1355,6 +1447,23 @@ def _update_state_md(loop: LoopState) -> None:
             if r.tokens_used:
                 lines.append(f"- Tokens: {r.tokens_used:,}")
             lines.append("")
+
+    # 经验B：软门禁留疤——展示审计未通过的检查项（留痕但不阻断执行）
+    if loop.audit_warnings:
+        lines.append("## Audit Warnings")
+        lines.append("（软门禁未通过项，留痕但不阻断执行）")
+        for w in loop.audit_warnings:
+            lines.append(f"- {w}")
+        lines.append("")
+
+    # 经验F：产物清单及存在性检查状态
+    if loop.deliverables:
+        lines.append("## Deliverables")
+        for d in loop.deliverables:
+            exists = Path(d).exists()
+            marker = "✓" if exists else "✗"
+            lines.append(f"- {marker} {d}")
+        lines.append("")
 
     loop.state_path.write_text("\n".join(lines), encoding="utf-8")
 

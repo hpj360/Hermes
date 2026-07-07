@@ -397,12 +397,17 @@ def _run_generic_with_gateway(
     return _guidance_mode(name, loop.pattern)
 
 
-def run_loop_continuous(name: str, max_rounds: int | None = None) -> dict[str, Any]:
+def run_loop_continuous(
+    name: str, max_rounds: int | None = None, gated: bool = False
+) -> dict[str, Any]:
     """Execute loop rounds continuously until a stop rule triggers.
 
     Args:
         name: Loop name
         max_rounds: Override max rounds (default: use loop's max_rounds)
+        gated: 经验H——若为 True，每轮执行后若未触发停止规则（loop 仍为 RUNNING），
+            则暂停循环并置 loop 为 NEEDS_HUMAN，等待人工确认后再继续（人工关卡）。
+            适用于高风险任务的人工监督场景。
 
     Returns:
         Summary of all rounds executed and final stop reason.
@@ -530,6 +535,21 @@ def run_loop_continuous(name: str, max_rounds: int | None = None) -> dict[str, A
             final_stop = _terminal_status_to_stop(
                 name, updated_loop.status, "post-round"
             )
+            break
+
+        # 经验H：gated 模式——每轮结束且仍在 RUNNING（未触发停止规则）时暂停，
+        # 置 loop 为 NEEDS_HUMAN，等待人工确认后再继续。
+        if gated and updated_loop.status == LoopStatus.RUNNING:
+            updated_loop.status = LoopStatus.NEEDS_HUMAN
+            from hermes.loop import _save_loop_meta
+            _save_loop_meta(updated_loop)
+            final_stop = {
+                "should_stop": True,
+                "rule_id": "human_gate",
+                "rule_name": "人工关卡",
+                "description": "Gated mode: waiting for human confirmation to continue",
+                "action": "stop_escalate",
+            }
             break
 
     return {

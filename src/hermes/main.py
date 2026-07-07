@@ -731,7 +731,8 @@ def cmd_loop_run(args: argparse.Namespace) -> int:
 def cmd_loop_continuous(args: argparse.Namespace) -> int:
     """Execute loop rounds continuously until a stop rule triggers."""
     print(f"=== Continuous Loop: {args.name} ===")
-    result = run_loop_continuous(args.name)
+    # 经验H：--gated 每轮后暂停等待人工确认（默认 False）
+    result = run_loop_continuous(args.name, gated=getattr(args, "gated", False))
     if not result.get("success"):
         print(f"Error: {result.get('error', 'unknown error')}")
         return 1
@@ -1012,6 +1013,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_loop_continuous = p_loop_sub.add_parser("continuous", help="Run loop continuously until stop rule triggers")
     p_loop_continuous.add_argument("name", help="Loop name")
+    # 经验H：gated 模式——每轮后暂停等待人工确认
+    p_loop_continuous.add_argument(
+        "--gated",
+        action="store_true",
+        help="Pause after each round for human confirmation",
+    )
     p_loop_continuous.set_defaults(func=cmd_loop_continuous)
 
     p_loop_resume = p_loop_sub.add_parser("resume", help="Resume a loop from last recorded state")

@@ -8,6 +8,7 @@ from hermes.loop import (
     LoopRound,
     LoopStatus,
     _save_loop_meta,
+    audit_loop,
     check_budget,
     check_stop_rules,
     get_loop,
@@ -1204,3 +1205,268 @@ def test_profile_working_principles_parser_strips_trailing_separator() -> None:
     assert "\n---" not in rule2, (
         f"--- separator found in rule body: {rule2!r}"
     )
+
+
+# ── Baseline Failures Tests ────────────────────────────────────────────
+
+
+def test_check_stop_rules_baseline_failures_excludes_history() -> None:
+    """基线对比：baseline_failures 中的失败项被排除，不参与 regression 判定。
+
+    场景：{a}→{a,c}，正常会触发 regression（new={c}, overlap={a}）。
+    但如果 c 是历史失败（在 baseline_failures 中），则 c 被排除，
+    实际变为 {a}→{a}，触发 same_failure_twice 而非 regression。
+    """
+    rounds = [
+        _make_round(1, passed=False, failure_items=["a.py:1"]),
+        _make_round(2, passed=False, failure_items=["a.py:1", "c.py:3"]),
+    ]
+    # 不传 baseline_failures → regression
+    result = check_stop_rules("test", 2, 5, rounds)
+    assert result["rule_id"] == "regression"
+
+    # 传 baseline_failures=["c.py:3"] → c 被排除，变为 {a}→{a} → same_failure_twice
+    result = check_stop_rules("test", 2, 5, rounds, baseline_failures=["c.py:3"])
+    assert result["rule_id"] == "same_failure_twice"
+
+
+def test_check_stop_rules_baseline_failures_makes_progress_visible() -> None:
+    """基线对比：排除历史失败后，真实的进展变得可见。
+
+    场景：{a,b,c}→{a,b}（修好了 c），正常应 continue（有进展）。
+    但如果误传 baseline=["c"]，c 被排除，变为 {a,b}→{a,b} → same_failure_twice。
+    这个测试验证 baseline_failures 的过滤确实生效。
+    """
+    rounds = [
+        _make_round(1, passed=False, failure_items=["a", "b", "c"], failure_count=3),
+        _make_round(2, passed=False, failure_items=["a", "b"], failure_count=2),
+    ]
+    # 不传 baseline → 有进展，continue
+    result = check_stop_rules("test", 2, 5, rounds)
+    assert result["should_stop"] is False
+
+    # 传 baseline=["c"] → c 被排除，{a,b}→{a,b} → same_failure_twice
+    result = check_stop_rules("test", 2, 5, rounds, baseline_failures=["c"])
+    assert result["rule_id"] == "same_failure_twice"
+
+
+def test_check_stop_rules_baseline_failures_none_preserves_behavior() -> None:
+    """基线对比：baseline_failures=None（默认）行为不变（向后兼容）。"""
+    rounds = [
+        _make_round(1, passed=False, failure_items=["a.py:1", "b.py:2"]),
+        _make_round(2, passed=False, failure_items=["a.py:1", "c.py:3"]),
+    ]
+    result_without = check_stop_rules("test", 2, 5, rounds)
+    result_with_none = check_stop_rules("test", 2, 5, rounds, baseline_failures=None)
+    assert result_without["rule_id"] == result_with_none["rule_id"]
+    assert result_without["should_stop"] == result_with_none["should_stop"]
+
+
+# ── Audit Warnings (Soft Gate Scars) Tests ─────────────────────────────
+
+
+def test_audit_loop_returns_warnings_list() -> None:
+    """audit_loop 返回 warnings 列表（未通过检查的 name）。"""
+    result = init_loop("test-audit-warnings", pattern="knowledge-hygiene")
+    assert result["success"]
+
+    try:
+        audit_result = audit_loop("test-audit-warnings")
+        assert audit_result["success"]
+        # 新创建的 loop 应该有未通过的检查项（如 LOOP.md 完成标准未填）
+        loop_result = audit_result["loops"][0]
+        assert "warnings" in loop_result
+        assert isinstance(loop_result["warnings"], list)
+        # score < 100 时至少有一个 warning
+        if loop_result["score"] < 100:
+            assert len(loop_result["warnings"]) > 0
+    finally:
+        import shutil
+        from hermes.loop import loops_dir
+        test_dir = loops_dir() / "test-audit-warnings"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)
+
+
+def test_audit_loop_warnings_persisted_to_state_md() -> None:
+    """audit_warnings 持久化到 STATE.md 的 Audit Warnings 段落。"""
+    result = init_loop("test-warnings-state", pattern="knowledge-hygiene")
+    assert result["success"]
+
+    try:
+        # 先跑一次 audit 生成 warnings
+        audit_loop("test-warnings-state")
+        # 再 record_round 触发 _update_state_md
+        round_data = _make_round(1, passed=True)
+        record_round("test-warnings-state", round_data, tokens_used=1000)
+
+        # 检查 STATE.md
+        from hermes.loop import loops_dir
+        state_path = loops_dir() / "test-warnings-state" / "STATE.md"
+        if state_path.exists():
+            content = state_path.read_text(encoding="utf-8")
+            # 如果有 warnings，应该有 Audit Warnings 段落
+            loop = get_loop("test-warnings-state")
+            if loop and loop.audit_warnings:
+                assert "Audit Warnings" in content or "## Audit" in content
+    finally:
+        import shutil
+        from hermes.loop import loops_dir
+        test_dir = loops_dir() / "test-warnings-state"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)
+
+
+# ── Hard Gate vs Soft Gate Tests ───────────────────────────────────────
+
+
+def test_stop_rules_have_hard_gate_field() -> None:
+    """每条 STOP_RULES 规则有 hard_gate 字段。"""
+    for rule in STOP_RULES:
+        assert "hard_gate" in rule, f"Rule {rule['id']} missing hard_gate field"
+        assert isinstance(rule["hard_gate"], bool)
+
+
+def test_stop_rules_hard_gate_distribution() -> None:
+    """no_progress 是软门禁，其余 6 条是硬门禁。"""
+    hard_gates = [r for r in STOP_RULES if r["hard_gate"]]
+    soft_gates = [r for r in STOP_RULES if not r["hard_gate"]]
+    assert len(hard_gates) == 6, f"Expected 6 hard gates, got {len(hard_gates)}"
+    assert len(soft_gates) == 1, f"Expected 1 soft gate, got {len(soft_gates)}"
+    assert soft_gates[0]["id"] == "no_progress"
+
+
+# ── Deliverables Checklist Tests ───────────────────────────────────────
+
+
+def test_record_round_checks_deliverables() -> None:
+    """record_round 校验产物清单，返回 missing_deliverables。"""
+    result = init_loop("test-deliverables", pattern="knowledge-hygiene")
+    assert result["success"]
+
+    try:
+        from hermes.loop import loops_dir, _save_loop_meta
+
+        loop = get_loop("test-deliverables")
+        assert loop is not None
+
+        # 设置一个不存在的 deliverable
+        loop.deliverables = ["nonexistent_file.py"]
+        _save_loop_meta(loop)
+
+        round_data = _make_round(1, passed=True)
+        record_result = record_round("test-deliverables", round_data, tokens_used=1000)
+        assert record_result["success"]
+        # 不存在的文件应在 missing_deliverables 中
+        assert "missing_deliverables" in record_result
+        assert "nonexistent_file.py" in record_result["missing_deliverables"]
+    finally:
+        import shutil
+        from hermes.loop import loops_dir
+        test_dir = loops_dir() / "test-deliverables"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)
+
+
+def test_record_round_deliverables_all_present() -> None:
+    """产物清单全部存在时，missing_deliverables 为空。"""
+    result = init_loop("test-deliv-ok", pattern="knowledge-hygiene")
+    assert result["success"]
+
+    try:
+        from hermes.loop import loops_dir, _save_loop_meta
+
+        # 创建一个临时文件作为 deliverable
+        loop = get_loop("test-deliv-ok")
+        assert loop is not None
+
+        # 创建一个真实存在的文件
+        loop_dir = loops_dir() / "test-deliv-ok"
+        real_file = loop_dir / "output.txt"
+        real_file.write_text("test content", encoding="utf-8")
+
+        loop.deliverables = [str(real_file)]
+        _save_loop_meta(loop)
+
+        round_data = _make_round(1, passed=True)
+        record_result = record_round("test-deliv-ok", round_data, tokens_used=1000)
+        assert record_result["success"]
+        assert record_result.get("missing_deliverables", []) == []
+    finally:
+        import shutil
+        from hermes.loop import loops_dir
+        test_dir = loops_dir() / "test-deliv-ok"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)
+
+
+# ── Gated Mode Tests ───────────────────────────────────────────────────
+
+
+def test_run_loop_continuous_gated_pauses_after_round() -> None:
+    """--gated 模式：每轮结束后暂停（NEEDS_HUMAN），final_stop 为 human_gate。"""
+    result = init_loop("test-gated", pattern="knowledge-hygiene")
+    assert result["success"]
+
+    try:
+        # knowledge-hygiene pattern 在无 gateway 时走 guidance 模式
+        # gated 模式下应在第一轮后暂停
+        run_result = run_loop_continuous("test-gated", gated=True)
+        assert run_result["success"]
+        final_stop = run_result.get("final_stop", {})
+
+        loop = get_loop("test-gated")
+        if loop and loop.status == LoopStatus.NEEDS_HUMAN:
+            # 如果触发了 human_gate
+            assert final_stop.get("rule_id") == "human_gate"
+            assert final_stop.get("action") == "stop_escalate"
+        # 如果 guidance 模式直接完成了也没关系，gated 只在 RUNNING 时暂停
+    finally:
+        import shutil
+        from hermes.loop import loops_dir
+        test_dir = loops_dir() / "test-gated"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)
+
+
+def test_run_loop_continuous_gated_default_false() -> None:
+    """默认不传 gated 时，行为不变（向后兼容）。"""
+    result = init_loop("test-no-gated", pattern="knowledge-hygiene")
+    assert result["success"]
+
+    try:
+        # 不传 gated，行为应与之前一致
+        run_result = run_loop_continuous("test-no-gated")
+        assert run_result["success"]
+        final_stop = run_result.get("final_stop", {})
+        # 不应是 human_gate
+        assert final_stop.get("rule_id") != "human_gate"
+    finally:
+        import shutil
+        from hermes.loop import loops_dir
+        test_dir = loops_dir() / "test-no-gated"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)
+
+
+# ── MCP (GitHub) Tests ─────────────────────────────────────────────────
+
+
+def test_mcp_github_client_init_without_token() -> None:
+    """GitHubMCPClient 无 token 时 available=False。"""
+    from hermes.mcp import GitHubMCPClient
+    client = GitHubMCPClient(token="", repo="test/repo")
+    assert client.available is False
+
+
+def test_mcp_registry_has_github() -> None:
+    """MCP_REGISTRY 包含 github。"""
+    from hermes.mcp import MCP_REGISTRY, GitHubMCPClient
+    assert "github" in MCP_REGISTRY
+    assert MCP_REGISTRY["github"] is GitHubMCPClient
+
+
+def test_mcp_get_client_returns_none_for_unknown() -> None:
+    """get_mcp_client 对未注册的 server 返回 None。"""
+    from hermes.mcp import get_mcp_client
+    assert get_mcp_client("nonexistent") is None

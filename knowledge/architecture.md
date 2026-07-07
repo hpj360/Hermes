@@ -496,3 +496,21 @@ Checker Agent 的 tools 字段物理上没有 Write/Edit，不是提示词约束
 
 ### 8. 配置继承
 不重复定义 API Key，从主项目 .env 继承。优先级：进程环境 > Hermes .env > 主仓库 .env > 默认值。
+
+---
+
+## 十一、当前限制与诚实声明
+
+> 来源：文章《从Vibe Coding到Harness》第十章"诚实说限制"经验
+
+以下是 Hermes 当前的已知限制，使用前请知悉：
+
+1. **PRD 完整度强相关** — 一句话需求会让需求分析阶段反复打回，整体效率下降。Hermes 不替代需求澄清
+2. **测试规模影响基线对比效果** — 当前 85 个测试，失败集合通常为空。基线对比在测试规模超 200 时效果更显著
+3. **无 IDE 弹窗交互** — Hermes 是 CLI 工具，不提供 GUI 审批界面。--gated 模式通过 NEEDS_HUMAN 状态暂停
+4. **MCP 仅接 GitHub** — 不支持 TAPD/iWiki/工蜂等内部系统。需要其他系统时通过 Skill 脚本接入
+5. **L3 无人值守需谨慎** — 自动提 PR 需要 denylist 完整。当前 denylist 是路径列表，代码层未强制拦截
+6. **单机场景** — 无跨需求任务看板、无多人协作锁。适合单人或小团队使用
+7. **演进日志从 v0.4.0 开始** — 之前的决策靠 git log 和代码注释追溯
+
+> 决策记录详见 [DECISIONS.md](file:///workspace/knowledge/DECISIONS.md)

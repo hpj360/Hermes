@@ -31,6 +31,34 @@ bash scripts/verify-state.sh     # 一键状态验证
 
 ---
 
+## 半自动原则（Gated Mode）
+
+> 来源：文章《从Vibe Coding到Harness》第五章"半自动模式才是当前的最优解"
+
+**核心原则**：AI 对自己生成的东西天然无"否决欲望"——这是模型级偏置，不是 prompt 层面能控制的。关键节点必须有人。
+
+### 使用方式
+
+```bash
+# 每轮结束后暂停，等待人工确认后才继续下一轮
+hermes loop continuous my-task --gated
+```
+
+### 设计约束
+
+1. **Hermes 是 CLI 工具**，不实现 IDE 弹窗、"每分钟不超一次点击"等体感约束
+2. **--gated 是可选参数**，默认关闭。L1 报告模式不需要 gated，L2/L3 建议开启
+3. **暂停机制**：每轮结束后如果未触发停止规则，设置 NEEDS_HUMAN 状态，等待 `hermes loop resume` 继续
+4. **不替代停止规则**：gated 只在"本该继续"时暂停；如果停止规则触发，仍然停止
+
+### 何时不使用 gated
+
+- L1_REPORT 阶段（只报告不修改，无风险）
+- 简单的 knowledge-hygiene 扫描（只读操作）
+- 测试已全绿且无 regression 风险的场景
+
+---
+
 ## 完成任务的硬性规则
 
 ### 规则 1：修复后必须立即 commit + push
