@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from typing import Any
 from pathlib import Path
 
 from hermes.config import get_settings
@@ -391,6 +392,21 @@ def cmd_loop_list(args: argparse.Namespace) -> int:
 
 
 def cmd_loop_init(args: argparse.Namespace) -> int:
+    # Interactive pain-point → pattern mapping
+    if getattr(args, "interactive", False):
+        selected = _interactive_pattern_picker()
+        if selected is None:
+            return 1
+        args.pattern = selected
+    elif getattr(args, "from_pain_point", None):
+        selected = _recommend_pattern_for_pain_point(args.from_pain_point)
+        if selected is None:
+            print(f"Error: no pattern matches pain point '{args.from_pain_point}'")
+            print("Try --interactive, or pass --pattern explicitly.")
+            return 1
+        print(f"  💡 Pain point '{args.from_pain_point}' → pattern: {selected}")
+        args.pattern = selected
+
     pattern = args.pattern or "custom"
     if pattern != "custom" and pattern not in LOOP_PATTERNS:
         print(f"Unknown pattern: {pattern}")
@@ -409,6 +425,84 @@ def cmd_loop_init(args: argparse.Namespace) -> int:
     print(f"  2. Run `hermes loop audit {result['name']}` to check readiness")
     print(f"  3. Run `hermes loop run {result['name']}` to execute (L1 report-only first!)")
     return 0
+
+
+# Pain-point → pattern recommendation. Order is priority (first match wins).
+# Mirrors the 7 built-in workflows in Cobus Greyling's loop-engineering.
+PAIN_POINT_PATTERNS: list[tuple[str, str]] = [
+    ("ci broken", "ci-sweeper"),
+    ("ci fails", "ci-sweeper"),
+    ("ci is", "ci-sweeper"),
+    ("ci flaky", "ci-sweeper"),
+    ("flaky", "ci-sweeper"),
+    ("pr stuck", "pr-babysitter"),
+    ("pr review", "pr-babysitter"),
+    ("stuck", "pr-babysitter"),
+    ("pr 慢", "pr-babysitter"),
+    ("pr 卡", "pr-babysitter"),
+    ("issue 乱", "issue-triage"),
+    ("issue 太乱", "issue-triage"),
+    ("issue triage", "issue-triage"),
+    ("issue backlog", "issue-triage"),
+    ("unlabeled", "issue-triage"),
+    ("changelog", "changelog-draft"),
+    ("release notes", "changelog-draft"),
+    ("change log", "changelog-draft"),
+    ("发版说明", "changelog-draft"),
+    ("更新日志", "changelog-draft"),
+    ("knowledge stale", "knowledge-hygiene"),
+    ("knowledge 过期", "knowledge-hygiene"),
+    ("知识库 乱", "knowledge-hygiene"),
+    ("知识库 过期", "knowledge-hygiene"),
+    ("每天巡检", "daily-triage"),
+    ("daily check", "daily-triage"),
+    ("巡检", "daily-triage"),
+    ("bug fix", "builder-checker"),
+    ("修 bug", "builder-checker"),
+    ("重构", "builder-checker"),
+    ("refactor", "builder-checker"),
+]
+
+
+def _recommend_pattern_for_pain_point(text: str) -> str | None:
+    """Map a free-form pain-point description to a pattern. First substring match wins."""
+    needle = text.lower()
+    for keyword, pattern in PAIN_POINT_PATTERNS:
+        if keyword.lower() in needle:
+            return pattern
+    return None
+
+
+def _interactive_pattern_picker() -> str | None:
+    """Interactive pain-point → pattern picker (stdin-driven).
+
+    Asks the user to describe their pain in one phrase, then recommends a
+    pattern. Designed to be safe in non-TTY contexts: if stdin is not a TTY,
+    prints a guidance message and returns None (caller should pass --pattern
+    explicitly). Falls back to a hard-coded sample picker if input is empty.
+    """
+    if not sys.stdin.isatty():
+        print("  ⚠️  --interactive requires a TTY. Pass --pattern or --from-pain-point instead.")
+        return None
+    print("  What problem are you trying to solve? (one short phrase)")
+    print("  Examples: 'PR keeps getting stuck', 'changelog is tedious', 'CI flaky'")
+    print()
+    try:
+        raw = input("  > ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    if not raw:
+        return None
+    pattern = _recommend_pattern_for_pain_point(raw)
+    if pattern is None:
+        print(f"  No pattern matches '{raw}'. Showing all available patterns:")
+        for key, p in LOOP_PATTERNS.items():
+            print(f"    {key:25s}  {p['description']}")
+        return None
+    print(f"  → Recommended pattern: {pattern}")
+    print(f"    {LOOP_PATTERNS[pattern]['description']}")
+    return pattern
 
 
 def cmd_loop_audit(args: argparse.Namespace) -> int:
@@ -436,15 +530,76 @@ def cmd_loop_audit(args: argparse.Namespace) -> int:
             for s in lr["suggestions"]:
                 print(f"    → {s}")
         print()
+
+    # Badge generation (--badge flag)
+    if getattr(args, "badge", False):
+        for lr in result["loops"]:
+            badge = _render_loop_badge(lr)
+            print("── Loop Ready Badge ──")
+            print(badge["markdown"])
+            print()
+            if getattr(args, "badge_format", "md") == "svg":
+                print("── SVG ──")
+                print(badge["svg"])
+                print()
+        return 0
+
     return 0
 
 
+def _render_loop_badge(loop_result: dict[str, Any]) -> dict[str, str]:
+    """Render a Loop Ready badge for one loop's audit result.
+
+    Returns {"markdown": str, "svg": str} for embedding in README/docs.
+    Threshold: score >= 85 = "Loop Ready" (green), >= 70 = "Loop Aware" (yellow),
+    else "Loop Incubating" (grey). Mirrors the stage/audit semantics already
+    used in audit_loop's "readiness" field.
+    """
+    score = loop_result["score"]
+    name = loop_result["loop"]
+    pattern = loop_result["pattern"]
+    if score >= 85:
+        label, color, emoji = "Loop Ready", "brightgreen", "🟢"
+    elif score >= 70:
+        label, color, emoji = "Loop Aware", "yellow", "🟡"
+    else:
+        label, color, emoji = "Loop Incubating", "lightgrey", "⚪"
+    md = (
+        f"![{label}](https://img.shields.io/badge/"
+        f"{label.replace(' ', '_')}-{score}%2F100-{color}) "
+        f"{emoji} **{name}** (`{pattern}`) — {label} · score {score}/100"
+    )
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="170" height="20" '
+        f'role="img" aria-label="{label}: {score}/100">'
+        f'<linearGradient id="s" x2="0" y2="100%">'
+        f'<stop offset="0" stop-color="#bbb" stop-opacity=".1"/>'
+        f'<stop offset="1" stop-opacity=".1"/></linearGradient>'
+        f'<clipPath id="r"><rect width="170" height="20" rx="3" fill="#fff"/></clipPath>'
+        f'<g clip-path="url(#r)">'
+        f'<rect width="110" height="20" fill="#555"/>'
+        f'<rect x="110" width="60" height="20" fill="{color if "bright" in color or "yellow" in color or "green" in color else "#9f9f9f"}"/>'
+        f'<rect width="170" height="20" fill="url(#s)"/></g>'
+        f'<g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="110">'
+        f'<text aria-hidden="true" x="565" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="1000">{label}</text>'
+        f'<text x="565" y="140" transform="scale(.1)" fill="#fff" textLength="1000">{label}</text>'
+        f'<text aria-hidden="true" x="1395" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="500">{score}/100</text>'
+        f'<text x="1395" y="140" transform="scale(.1)" fill="#fff" textLength="500">{score}/100</text></g></svg>'
+    )
+    return {"markdown": md, "svg": svg}
+
+
 def cmd_loop_budget(args: argparse.Namespace) -> int:
+    """Token cost estimator (alias: cost).
+
+    对应 Cobus Greyling loop-engineering 的 `loop-cost` 命令。
+    拆分自 budget 子命令，提升可发现性。
+    """
     result = estimate_cost(args.name)
     if not result.get("success"):
         print(f"Error: {result.get('error')}")
         return 1
-    print(f"=== Loop Budget: {result['loop']} ===")
+    print(f"=== Loop Cost Estimate: {result['loop']} ===")
     print(f"  Per-round estimate:  {result['per_round_estimate_tokens']:,} tokens")
     print(f"  Max rounds:          {result['max_rounds']}")
     print(f"  Total estimate:      {result['total_estimate_tokens']:,} tokens")
@@ -459,6 +614,10 @@ def cmd_loop_budget(args: argparse.Namespace) -> int:
     else:
         print("  ✗ WARNING: Estimated cost exceeds budget! Consider reducing max_rounds or increasing limit.")
     return 0
+
+
+# Alias for `hermes loop cost` (preferred name, matches loop-engineering convention).
+cmd_loop_cost = cmd_loop_budget
 
 
 def cmd_loop_advance(args: argparse.Namespace) -> int:
@@ -806,15 +965,42 @@ def build_parser() -> argparse.ArgumentParser:
         choices=list(LOOP_PATTERNS.keys()) + ["custom"],
         help="Built-in pattern to use (default: custom)",
     )
+    p_loop_init.add_argument(
+        "--interactive", "-i",
+        action="store_true",
+        help="Interactive picker: describe your pain, get a pattern recommendation",
+    )
+    p_loop_init.add_argument(
+        "--from-pain-point",
+        dest="from_pain_point",
+        help="Non-interactive: pass a short pain-point phrase, get a pattern recommendation",
+    )
     p_loop_init.set_defaults(func=cmd_loop_init)
 
     p_loop_audit = p_loop_sub.add_parser("audit", help="Audit loop readiness and quality")
     p_loop_audit.add_argument("name", nargs="?", help="Specific loop to audit (default: all)")
+    p_loop_audit.add_argument(
+        "--badge",
+        action="store_true",
+        help="Render a Loop Ready badge (markdown shields.io) for embedding in README/docs",
+    )
+    p_loop_audit.add_argument(
+        "--badge-format",
+        choices=["md", "svg"],
+        default="md",
+        help="Badge output format (default: md); only meaningful with --badge",
+    )
     p_loop_audit.set_defaults(func=cmd_loop_audit)
 
-    p_loop_budget = p_loop_sub.add_parser("budget", help="Estimate token cost for a loop")
+    p_loop_budget = p_loop_sub.add_parser("budget", help="Estimate token cost for a loop (alias: cost)")
     p_loop_budget.add_argument("name", help="Loop name")
     p_loop_budget.set_defaults(func=cmd_loop_budget)
+
+    # Preferred name: matches `loop-cost` in the loop-engineering reference CLI.
+    # `budget` is kept as alias for backward compatibility.
+    p_loop_cost = p_loop_sub.add_parser("cost", help="Estimate token cost for a loop (preferred over 'budget')")
+    p_loop_cost.add_argument("name", help="Loop name")
+    p_loop_cost.set_defaults(func=cmd_loop_cost)
 
     p_loop_advance = p_loop_sub.add_parser("advance", help="Advance loop to next autonomy stage (L1→L2→L3)")
     p_loop_advance.add_argument("name", help="Loop name")

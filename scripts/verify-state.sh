@@ -122,7 +122,11 @@ fi
 echo ""
 echo "── 6. 措辞一致性 ──"
 
-STALE=$(grep -rn -E "(六条|6 条|6条|six stop|6 stop)" src/ tests/ knowledge/ manifest.json 2>/dev/null | grep -v __pycache__ | wc -l)
+STALE=0
+for pattern in "六条" "6 条" "6条" "six stop" "6 stop"; do
+    count=$(grep -rE "$pattern" src/ tests/ knowledge/ manifest.json 2>/dev/null | grep -v __pycache__ | wc -l 2>/dev/null) || count=0
+    STALE=$((STALE + count))
+done
 if [ "$STALE" = "0" ]; then
     ok "无残留 '六条/6 stop' 措辞"
 else

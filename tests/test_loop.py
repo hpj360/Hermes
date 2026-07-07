@@ -263,6 +263,149 @@ def test_knowledge_hygiene_has_parallel_scanners() -> None:
     assert len(parallel_scanners) >= 3, "Expected at least 3 parallel scanner agents"
 
 
+# ── New patterns (Cobus Greyling 7-workflow alignment) ─────────────────
+
+
+def test_seven_built_in_patterns() -> None:
+    """7 内置工作流，对齐 Cobus Greyling loop-engineering 框架。
+
+    daily-triage / knowledge-hygiene / ci-sweeper / pr-babysitter /
+    issue-triage / changelog-draft / builder-checker = 7
+    """
+    assert len(LOOP_PATTERNS) == 7, f"Expected 7 patterns, got {len(LOOP_PATTERNS)}"
+    expected = {
+        "daily-triage", "knowledge-hygiene", "ci-sweeper", "pr-babysitter",
+        "issue-triage", "changelog-draft", "builder-checker",
+    }
+    assert set(LOOP_PATTERNS.keys()) == expected
+
+
+def test_issue_triage_pattern_shape() -> None:
+    """issue-triage pattern must declare denylist + parallel sub-agents + L1 default."""
+    pattern = LOOP_PATTERNS["issue-triage"]
+    assert pattern["default_stage"].value == "l1_report"
+    assert "label:security" in pattern["denylist"]
+    parallel = [a for a in pattern["sub_agents"] if a.get("parallel")]
+    assert len(parallel) >= 2, "issue-triage should have at least 2 parallel scanners"
+
+
+def test_changelog_draft_pattern_shape() -> None:
+    """changelog-draft pattern must protect CHANGELOG.md in denylist."""
+    pattern = LOOP_PATTERNS["changelog-draft"]
+    assert pattern["default_stage"].value == "l1_report"
+    assert "CHANGELOG.md" in pattern["denylist"]
+    assert pattern["max_rounds"] <= 3, "changelog should be short (≤3 rounds)"
+
+
+# ── Pain-point → pattern mapping (interactive picker) ──────────────────
+
+
+def test_pain_point_to_pattern_recommendation() -> None:
+    """Pain-point keywords must map to the right pattern (first match wins)."""
+    from hermes.main import _recommend_pattern_for_pain_point
+
+    assert _recommend_pattern_for_pain_point("PR keeps getting stuck") == "pr-babysitter"
+    assert _recommend_pattern_for_pain_point("CI is flaky again") == "ci-sweeper"
+    assert _recommend_pattern_for_pain_point("changelog is tedious") == "changelog-draft"
+    assert _recommend_pattern_for_pain_point("issue 太乱") == "issue-triage"
+    assert _recommend_pattern_for_pain_point("更新日志") == "changelog-draft"
+    assert _recommend_pattern_for_pain_point("bug fix needed") == "builder-checker"
+    assert _recommend_pattern_for_pain_point("知识库 过期") == "knowledge-hygiene"
+
+
+def test_pain_point_no_match_returns_none() -> None:
+    """Unrecognized pain point must return None (caller decides)."""
+    from hermes.main import _recommend_pattern_for_pain_point
+
+    assert _recommend_pattern_for_pain_point("xyzzy plugh") is None
+    assert _recommend_pattern_for_pain_point("") is None
+
+
+# ── Loop Ready badge rendering ─────────────────────────────────────────
+
+
+def test_loop_badge_thresholds() -> None:
+    """Badge label/color must follow the 85/70 threshold semantics."""
+    from hermes.main import _render_loop_badge
+
+    high = _render_loop_badge({"loop": "x", "pattern": "p", "score": 92})
+    assert "Loop_Ready" in high["markdown"]
+    assert "brightgreen" in high["markdown"]
+    assert "🟢" in high["markdown"]
+
+    mid = _render_loop_badge({"loop": "x", "pattern": "p", "score": 75})
+    assert "Loop_Aware" in mid["markdown"]
+    assert "yellow" in mid["markdown"]
+    assert "🟡" in mid["markdown"]
+
+    low = _render_loop_badge({"loop": "x", "pattern": "p", "score": 50})
+    assert "Loop_Incubating" in low["markdown"]
+    assert "lightgrey" in low["markdown"]
+    assert "⚪" in low["markdown"]
+
+    # All three must include the loop name + pattern + score
+    for badge in (high, mid, low):
+        assert "x" in badge["markdown"]
+        assert "`p`" in badge["markdown"]
+        assert "/100" in badge["markdown"]
+        # SVG must be valid SVG
+        assert badge["svg"].startswith("<svg")
+        assert badge["svg"].endswith("</svg>")
+
+
+# ── CLI subcommand registration ────────────────────────────────────────
+
+
+def test_cost_subcommand_is_registered() -> None:
+    """hermes loop cost must be a registered subcommand (alias of budget)."""
+    from hermes.main import build_parser
+
+    parser = build_parser()
+    # Parse a real call to ensure cost is recognized
+    args = parser.parse_args(["loop", "cost", "my-loop"])
+    assert args.loop_cmd == "cost"
+    assert args.name == "my-loop"
+    assert callable(args.func), "cost subcommand must have a callable func"
+
+
+def test_budget_subcommand_still_works_as_alias() -> None:
+    """hermes loop budget must remain as a backward-compatible alias."""
+    from hermes.main import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["loop", "budget", "my-loop"])
+    assert args.loop_cmd == "budget"
+    assert args.name == "my-loop"
+
+
+def test_audit_badge_flag_registered() -> None:
+    """hermes loop audit --badge and --badge-format must be registered."""
+    from hermes.main import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["loop", "audit", "--badge", "--badge-format", "svg"])
+    assert args.badge is True
+    assert args.badge_format == "svg"
+
+    args2 = parser.parse_args(["loop", "audit", "my-loop"])
+    assert args2.badge is False
+    assert args2.badge_format == "md"
+
+
+def test_init_interactive_flag_registered() -> None:
+    """hermes loop init --interactive and --from-pain-point must be registered."""
+    from hermes.main import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["loop", "init", "x", "--interactive"])
+    assert args.interactive is True
+    assert args.from_pain_point is None
+
+    args2 = parser.parse_args(["loop", "init", "x", "--from-pain-point", "PR stuck"])
+    assert args2.from_pain_point == "PR stuck"
+    assert args2.interactive is False
+
+
 # ── LoopRound Serialization Tests ─────────────────────────────────────
 
 

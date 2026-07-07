@@ -100,6 +100,43 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
             {"role": "pr_monitor", "agent_file": None, "parallel": False},
         ],
     },
+    "issue-triage": {
+        # 对应 Cobus Greyling loop-engineering 7 套工作流中的 "Issue Triage"。
+        # 设计目标：把"积压 Issue 太乱"这类持续但低风险任务系统化。
+        # 默认 L1：只分类/打标，不修改代码；升级到 L2 可关闭明显重复/无效 issue。
+        "name": "Issue Triage",
+        "description": "扫描未分配/无标签的 issue，按优先级分类，建议标签/负责人，关闭明显无效项",
+        "execution_status": "scaffolding_only",
+        "default_stage": LoopStage.L1_REPORT,
+        "l1_capability": "报告未分类 issue 列表 + 推荐标签/优先级 + 疑似重复项",
+        "l2_capability": "为 issue 打标签/分配人，关闭明显重复或已超时的 stale issue",
+        "l3_capability": "无人值守自动分诊 + 周报（需denylist保护安全敏感issue）",
+        "denylist": ["label:security", "label:auth-bypass", "*P0*"],
+        "max_rounds": 3,
+        "sub_agents": [
+            {"role": "issue_scanner", "agent_file": None, "parallel": False},
+            {"role": "duplicate_detector", "agent_file": None, "parallel": True},
+            {"role": "label_suggester", "agent_file": None, "parallel": True},
+        ],
+    },
+    "changelog-draft": {
+        # 对应 Cobus Greyling loop-engineering 7 套工作流中的 "Changelog Drafter"。
+        # 设计目标：把"发布前翻几十条 commit 写 changelog"自动化。
+        # 默认 L1：基于 git log 自动生成 changelog 草稿；L2 可自动追加到 CHANGELOG.md。
+        "name": "Changelog Drafter",
+        "description": "扫描自上次 release 以来的 commits/PRs，按 conventional commits 分类生成 CHANGELOG 草稿",
+        "execution_status": "scaffolding_only",
+        "default_stage": LoopStage.L1_REPORT,
+        "l1_capability": "生成草稿写入 STATE.md 的 Changelog Draft 段（不修改 CHANGELOG.md）",
+        "l2_capability": "将草稿自动追加到 CHANGELOG.md 的 [Unreleased] 段（人类review后commit）",
+        "l3_capability": "无人值守：自动 bump version + commit CHANGELOG.md（需严格tag/分支保护）",
+        "denylist": ["CHANGELOG.md"],  # L2 默认追加到段内；L3 须人工触发 tag
+        "max_rounds": 2,
+        "sub_agents": [
+            {"role": "commit_classifier", "agent_file": None, "parallel": False},
+            {"role": "pr_summarizer", "agent_file": None, "parallel": True},
+        ],
+    },
     "builder-checker": {
         "name": "Builder/Checker Loop",
         "description": "写代码和查代码拆成两个Agent，编排器循环调度，查到全绿为止。三文件模式：builder.md + checker.md + loop编排器",

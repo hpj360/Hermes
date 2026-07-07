@@ -273,6 +273,8 @@ hermes skill-sync add wechat-reader
 | knowledge-hygiene | L1 | 2 | manifest/skill/knowledge scanner × 3 | 是 |
 | ci-sweeper | L1 | 3 | ci_monitor + builder + checker | 否 |
 | pr-babysitter | L1 | 5 | pr_monitor | 否 |
+| issue-triage | L1 | 3 | issue_scanner + duplicate_detector + label_suggester | 是 |
+| changelog-draft | L1 | 2 | commit_classifier + pr_summarizer | 是 |
 | builder-checker | L2 | 5 | builder + checker_lint/type/test × 3 | 是 |
 
 ### 5.4 就绪度审计（10 项检查，满分 100）
@@ -289,6 +291,30 @@ hermes skill-sync add wechat-reader
 | 最大轮次已设 | 8 | 3-10 轮 |
 | 7 条停止规则 | 12 | 全部定义 |
 | 工具级隔离 | 13 | checker 无 Write/Edit |
+
+### 5.5 吴恩达三层 Loop 对照（Andrew Ng 框架）
+
+参考 [Cobus Greyling loop-engineering](https://github.com/cobusgreyling/loop-engineering) 引用的吴恩达观点："做产品需要三层 Loop"，与 Hermes 的对应关系：
+
+| 层次 | 频率 | 吴恩达定义 | Hermes 对应 | 停止条件 |
+|------|------|------------|------------|---------|
+| **L₀ Agent 编码 Loop**（最内层） | 分钟级 | Agent 写代码 + 自我测试 | `builder-checker` 单轮内的 3 个并行 checker（lint/type/test，[runner.py L255-310](file:///workspace/src/hermes/runner.py#L255-L310)） | 单个 checker 失败 |
+| **L₁ 开发者反馈 Loop**（中层） | 小时级 | Agent 跑一轮，人审查后给反馈 | 完整一轮（builder + 3 checker）→ `resume_loop` 接收人类反馈重跑 | 7 条停止规则中的 same_failure_twice / no_progress / regression |
+| **L₂ 外部反馈 Loop**（最外层） | 天/周级 | 用户/Alpha测试反馈 + A/B测试 | 整个 loop 周期（默认 5 轮），由 L1→L2→L3 阶段升级决定何时升级给人 | rounds_exhausted / budget_exceeded → `stop_escalate` |
+
+**关键共识**（与 [knowledge/working-principles.md](file:///workspace/knowledge/working-principles.md) 规则一"第一性原理"一致）：吴恩达认为"什么算完成还得靠人看"——这正是 LOOP.md"完成标准"审计权重最高（15/100）的根因。Loop 自动化的是"执行"，完成定义权永远在人类。
+
+### 5.6 对齐 Cobus Greyling 框架的能力补齐
+
+参考 loop-engineering 的 7 套内置工作流 + 4 步 CLI 流程，Hermes 已实现的能力与差距：
+
+| 能力维度 | Cobus Greyling | Hermes | 状态 |
+|---------|---------------|--------|------|
+| 7 套工作流 | 7 | 7（新增 issue-triage + changelog-draft） | ✅ 已对齐 |
+| 交互式选择器 | ✓ | `hermes loop init --interactive` / `--from-pain-point` | ✅ 已补齐 |
+| Token 成本估算 | `loop-cost` | `hermes loop cost`（`budget` 仍为别名） | ✅ 已对齐 |
+| 审计评分 + 徽章 | `loop-audit --badge` | `hermes loop audit --badge` | ✅ 已补齐 |
+| 8 步标准流程 | ✓ | 7 条停止规则替代（更具体） | ✅ 升级而非简单对齐 |
 
 ---
 
