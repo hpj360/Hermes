@@ -75,18 +75,17 @@ bash scripts/verify-state.sh
 git add <具体文件>
 git -c user.name="Hermes Agent" -c user.email="hermes@agent.dev" commit -m "<message>"
 
-# 3. 立即推送（不要等"做完所有事再一起推"）
-git push origin trae/agent-glOxQF
+# 3. 立即推送并用脚本校验（不要等"做完所有事再一起推"）
+bash scripts/git-push.sh
 ```
 
-**验证推送成功**：
+**push 幻觉防护（硬性）**：
 
-```bash
-# 不依赖 refspec 的验证
-git ls-remote origin trae/agent-glOxQF   # 远程 SHA
-git rev-parse HEAD                        # 本地 SHA
-# 两者必须一致
-```
+- **必须用 `scripts/git-push.sh` 替代裸 `git push`**——脚本把 push + `ls-remote` 校验绑成原子操作，SHA 不一致就非零退出
+- **根因**：模型 `git push` 后可能没读到 stderr，或脑补成功 hash，实际远端没收到。唯一可信源是 `git ls-remote` 返回的远端 SHA
+- **禁止行为**：push 后只看 stdout 就报告"已推送"，必须跑校验
+- **校验失败时**：不得报告成功，必须重试或向用户报告失败原因
+- 如因特殊原因用了裸 `git push`，必须立即手动执行 `git ls-remote origin trae/agent-glOxQF` 与 `git rev-parse HEAD` 对比，两者必须一致
 
 ### 规则 2：不要用 `git add .` 或 `git add -A`
 
@@ -142,8 +141,9 @@ Fresh clone 后必须运行 `bash scripts/setup-tracking.sh` 配置 `trae/agent-
 |------|------|---------|
 | `scripts/setup-tracking.sh` | 修复 fresh clone 后的 refspec 盲点 | 新会话开始时（幂等） |
 | `scripts/verify-state.sh` | 一键验证 git 同步 + tests + ruff + 关键文件 | 每次需要判断"任务是否完成"时 |
+| `scripts/git-push.sh` | push + ls-remote 校验原子化，防 push 幻觉 | 每次 commit 后推送时（替代裸 `git push`） |
 
-两个脚本都**不依赖 git refspec**，在 fresh clone 环境中也能正确工作。
+三个脚本都**不依赖 git refspec**，在 fresh clone 环境中也能正确工作。
 
 ---
 
