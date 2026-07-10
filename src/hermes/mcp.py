@@ -81,7 +81,10 @@ class GitHubMCPClient:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read())
             self._record("get_pr", {"pr_number": pr_number}, True)
-            return {"success": True, "pr": data}
+            # 借鉴 ai-berkshire 双源交叉验证：读方法返回 _sources 字段标记数据来源。
+            # 当前仅 GitHub 单源，audit_loop 检查 _sources 字段数，单源产生 warning。
+            # 未来扩展多 MCP 时，同一字段从两个独立 API 取数即可达成双源验证。
+            return {"success": True, "pr": data, "_sources": ["github-api"]}
         except Exception as e:
             self._record("get_pr", {"pr_number": pr_number}, False, str(e))
             logger.warning("GitHub MCP get_pr failed (soft degradation): %s", e)
@@ -95,7 +98,7 @@ class GitHubMCPClient:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read())
             self._record("get_issue", {"issue_number": issue_number}, True)
-            return {"success": True, "issue": data}
+            return {"success": True, "issue": data, "_sources": ["github-api"]}
         except Exception as e:
             self._record("get_issue", {"issue_number": issue_number}, False, str(e))
             logger.warning("GitHub MCP get_issue failed (soft degradation): %s", e)
@@ -109,7 +112,7 @@ class GitHubMCPClient:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read())
             self._record("list_prs", {"state": state}, True)
-            return {"success": True, "prs": data}
+            return {"success": True, "prs": data, "_sources": ["github-api"]}
         except Exception as e:
             self._record("list_prs", {"state": state}, False, str(e))
             logger.warning("GitHub MCP list_prs failed (soft degradation): %s", e)

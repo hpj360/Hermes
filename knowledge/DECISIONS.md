@@ -87,6 +87,50 @@
 **原因**: "完成"不再是"AI 觉得做完了"，而是"产物清单全部存在"。让产生问题的人产生验证手段
 **参考**: 文章《从Vibe Coding到Harness》第三章"开发完成"定义扩容
 
+### D011: multi-perspective pattern（多视角并行分析）
+
+**决策**：借鉴 ai-berkshire 的 4 视角并行框架，新增 `multi-perspective` pattern。N 个 perspective agent 全部 `parallel=True` 同消息并行 spawn，synthesizer 串行汇总。
+
+**为什么这么定**：
+- 分析类任务（非修复类）需要多视角对照，串行 builder-checker 不适合
+- 复用已有 `fan_out`/`fan_in`，无新增并行原语（YAGNI）
+- 默认 3 视角（正面/风险/中立），用户可改 LOOP.md
+
+**不做**：不自研并行调度（threading/asyncio），复用 OpenClaw Gateway 的并行能力
+
+### D012: 产物抽检声明性标记协议
+
+**决策**：deliverables 中用 `<!-- claim: -->` 标记可验证断言，`audit_deliverables` 校验标记存在性（不校验内容真假）。
+
+**为什么这么定**：
+- 与现有 `<!-- failures:json -->` 协议一脉相承，已有先例
+- 校验"内容真假"需要用户自验函数，当前无领域知识（YAGNI）
+- 标记存在性已能抓到"agent 没写任何断言"的问题
+
+**不做**：不做正则抽取数字 + 独立源比对（ai-berkshire 的 report_audit.py 模式），因为领域特定
+
+### D013: 反端水硬约束仅限 multi-perspective
+
+**决策**：`audit_loop` 对 `multi-perspective` pattern 检查 `summary.md` 含 `<!-- conclusion: -->` 标记。其他 pattern 不受约束。
+
+**为什么这么定**：
+- 分析类任务必须收敛到明确结论，禁止"一方面...另一方面..."
+- 探索类任务（builder-checker/knowledge-hygiene）强行收敛会催生假结论
+- hard_gate=True 但不阻断运行（声明性标签，与 D006 一致）
+
+**不做**：不做全局"结论明确度"检查（风险过高）
+
+### D014: MCP 双源标记当前预留
+
+**决策**：MCP 读方法返回 `_sources` 字段标记数据来源。当前仅 GitHub 单源，audit_loop 单源产生 warning 不阻断。
+
+**为什么这么定**：
+- Hermes 当前只有 GitHub MCP，双源验证无法真正生效
+- `_sources` 字段为未来扩展预留，新增 MCP 时无需改 audit 逻辑
+- warning 不阻断，避免当前所有 MCP 数据都报错
+
+**不做**：不做主动双源取数 + 误差检查（当前无第二个数据源，YAGNI）
+
 ## 二、反模式清单（永远不要做的事）
 
 > 来源：文章《从Vibe Coding到Harness》第十章 + Hermes 项目实战教训
@@ -111,3 +155,4 @@
 | 2026-06-29 | v0.3.0 | issue-triage + changelog-draft pattern、cost/badge/interactive CLI |
 | 2026-07-06 | v0.3.1 | _terminal_status_to_stop 统一状态映射、conftest 隔离、profile 解析器重写 |
 | 2026-07-07 | v0.4.0 | 基线对比简化版、软门禁留疤、门禁软硬区分、产物清单校验、--gated 半自动、GitHub MCP |
+| 2026-07-07 | v0.5.0 | multi-perspective pattern、产物抽检准出、反端水硬约束、MCP 双源标记（借鉴 ai-berkshire） |

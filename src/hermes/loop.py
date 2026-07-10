@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -135,6 +136,26 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
         "sub_agents": [
             {"role": "commit_classifier", "agent_file": None, "parallel": False},
             {"role": "pr_summarizer", "agent_file": None, "parallel": True},
+        ],
+    },
+    "multi-perspective": {
+        # 借鉴 ai-berkshire 的多视角并行框架：N 个 Agent 从不同视角并行分析
+        # 同一标的，Team Lead（synthesizer）汇总成报告。适合分析类任务（非修复类）。
+        "name": "Multi-Perspective Analysis",
+        "description": "N 个 Agent 从不同视角并行分析同一标的，synthesizer 汇总成报告。适合分析类任务",
+        "execution_status": "implemented",  # runner._run_multi_perspective 实际执行
+        "default_stage": LoopStage.L2_ASSIST,
+        "l1_capability": "各视角只读分析，汇总报告（不修改代码）",
+        "l2_capability": "各视角并行分析 + synthesizer 综合结论（含明确评级）",
+        "l3_capability": "无人值守并行分析 + 自动归档（需 denylist 保护敏感路径）",
+        "denylist": ["auth/", "payment/", "security/", ".env", "*.key"],
+        "max_rounds": 2,  # 分析类任务通常 1 轮即出报告，2 轮兜底
+        "generates_agents": True,  # 生成 perspective.md + summary.md 模板
+        "sub_agents": [
+            {"role": "perspective_1", "agent_file": "perspective.md", "parallel": True},
+            {"role": "perspective_2", "agent_file": "perspective.md", "parallel": True},
+            {"role": "perspective_3", "agent_file": "perspective.md", "parallel": True},
+            {"role": "synthesizer", "agent_file": "summary.md", "parallel": False},
         ],
     },
     "builder-checker": {
@@ -624,13 +645,21 @@ Last updated: {now}
 
     # Generate builder/checker agent definitions for builder-checker pattern
     if pattern_info.get("generates_agents"):
-        builder_md = _generate_builder_md(name, pattern_info)
-        checker_md = _generate_checker_md(name)
-        stop_rules_md = _generate_stop_rules_md(name, max_rounds)
-        (loop_dir / "builder.md").write_text(builder_md, encoding="utf-8")
-        (loop_dir / "checker.md").write_text(checker_md, encoding="utf-8")
-        (loop_dir / "stop-rules.md").write_text(stop_rules_md, encoding="utf-8")
-        files_created.extend(["builder.md", "checker.md", "stop-rules.md"])
+        if pattern == "multi-perspective":
+            # multi-perspective 生成 perspective.md + summary.md 模板
+            perspective_md = _generate_perspective_md(name, pattern_info)
+            summary_md = _generate_summary_md(name)
+            (loop_dir / "perspective.md").write_text(perspective_md, encoding="utf-8")
+            (loop_dir / "summary.md").write_text(summary_md, encoding="utf-8")
+            files_created.extend(["perspective.md", "summary.md"])
+        else:
+            builder_md = _generate_builder_md(name, pattern_info)
+            checker_md = _generate_checker_md(name)
+            stop_rules_md = _generate_stop_rules_md(name, max_rounds)
+            (loop_dir / "builder.md").write_text(builder_md, encoding="utf-8")
+            (loop_dir / "checker.md").write_text(checker_md, encoding="utf-8")
+            (loop_dir / "stop-rules.md").write_text(stop_rules_md, encoding="utf-8")
+            files_created.extend(["builder.md", "checker.md", "stop-rules.md"])
 
     state = LoopState(
         name=name,
@@ -841,6 +870,26 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
             else:
                 suggestions.append("Document tool-level isolation: checker must not have Write/Edit tools")
 
+        # 借鉴 ai-berkshire：multi-perspective pattern 的 summary.md 必须含明确结论
+        # （反端水硬约束）。仅约束 multi-perspective，不影响其他 pattern。
+        if loop.pattern == "multi-perspective":
+            loop_dir = loops_dir() / loop.name
+            summary_path = loop_dir / "summary.md"
+            has_conclusion = False
+            if summary_path.exists():
+                content = summary_path.read_text(encoding="utf-8")
+                has_conclusion = "<!-- conclusion:" in content
+            checks.append({
+                "name": "Summary has explicit conclusion (anti-fence-sitter)",
+                "passed": has_conclusion,
+                "weight": 12,
+                "hard_gate": True,
+            })
+            if has_conclusion:
+                score += 12
+            else:
+                suggestions.append("summary.md must contain <!-- conclusion: --> marker (anti-fence-sitter)")
+
         total_score += score
         # 经验B：软门禁留疤——收集未通过检查的 name（不是 suggestions）
         loop_warnings = [c["name"] for c in checks if not c["passed"]]
@@ -875,6 +924,59 @@ def audit_loop(name: str | None = None) -> dict[str, Any]:
         "readiness": readiness,
         "loops": results,
         "warnings": all_warnings,
+    }
+
+
+# 声明性标记协议：与 <!-- failures:json --> 一脉相承，agent 在产物中写标记，
+# Hermes 解析校验。校验"标记存在性"，不校验"内容真假"（后者需用户自验）。
+_CLAIM_RE = re.compile(r"<!--\s*claim:\s*(.+?)\s*-->")
+_CONCLUSION_RE = re.compile(r"<!--\s*conclusion:\s*(.+?)\s*-->")
+
+
+def audit_deliverables(name: str) -> dict[str, Any]:
+    """借鉴 ai-berkshire report_audit.py：抽检 loop 的 deliverables 产物。
+
+    检查项：
+    1. deliverables 中每个文件存在性（复用现有 missing_deliverables 逻辑）
+    2. 每个文件中 <!-- claim: --> 标记数量（≥1 为合格，0 为 warning）
+    3. multi-perspective pattern 的 summary.md 必须含 <!-- conclusion: --> 标记
+
+    返回 {"missing": [...], "claim_warnings": [...], "conclusion_missing": bool}
+    """
+    loop = get_loop(name)
+    if not loop:
+        return {"success": False, "error": f"Loop '{name}' not found"}
+
+    missing = [d for d in loop.deliverables if not Path(d).exists()] if loop.deliverables else []
+    claim_warnings: list[str] = []
+    conclusion_missing = False
+
+    if loop.deliverables:
+        for deliverable_path in loop.deliverables:
+            p = Path(deliverable_path)
+            if not p.exists():
+                continue
+            content = p.read_text(encoding="utf-8")
+            claims = _CLAIM_RE.findall(content)
+            if len(claims) == 0:
+                claim_warnings.append(f"{p.name}: no <!-- claim: --> markers found")
+
+    # multi-perspective 的 summary.md 必须含 conclusion 标记
+    if loop.pattern == "multi-perspective":
+        loop_dir = loops_dir() / loop.name
+        summary_path = loop_dir / "summary.md"
+        if summary_path.exists():
+            content = summary_path.read_text(encoding="utf-8")
+            if not _CONCLUSION_RE.search(content):
+                conclusion_missing = True
+        else:
+            conclusion_missing = True
+
+    return {
+        "success": True,
+        "missing": missing,
+        "claim_warnings": claim_warnings,
+        "conclusion_missing": conclusion_missing,
     }
 
 
@@ -1224,6 +1326,102 @@ tools: Read, Grep, Glob, Bash
 你的 tools 字段没有 Write 和 Edit。这不是提示词约束，是工具可见性的硬隔离。
 即使你"想"修复某个问题，你物理上无法修改任何文件。这是设计意图：
 **写代码的不验代码，验代码的不写代码。**
+"""
+
+
+def _generate_perspective_md(name: str, pattern_info: dict[str, Any]) -> str:
+    """Generate perspective.md agent definition template for multi-perspective pattern."""
+    denylist = pattern_info.get("denylist", [])
+    denylist_str = "\n".join(f"  - {d}" for d in denylist) if denylist else "  - （暂无）"
+    return f"""---
+name: perspective-{name}
+description: 从特定视角分析标的，只读不修改。与其他 perspective agent 并行执行。
+tools: Read, Grep, Glob, Bash
+---
+
+你是一个视角分析 agent，只负责从你的视角分析标的，不修改任何代码。
+
+## 接到任务时
+
+1. 阅读任务描述中的 **分析标的** 和 **你的视角**。
+2. 从你的视角出发，分析标的的关键特征。
+3. 列出你的视角下的 **正面发现（Bull）** 和 **风险点（Bear）**，各 3-5 条。
+4. 用 `<!-- claim: <可验证的断言> -->` 标记你做出的关键事实断言（至少 2 条），
+   供 synthesizer 抽检验证。
+
+## 汇报格式
+
+```
+## 视角：<你的视角>
+
+### Bull（正面发现）
+- ...
+
+### Bear（风险点）
+- ...
+
+### 关键断言
+<!-- claim: 断言1文本 -->
+<!-- claim: 断言2文本 -->
+```
+
+## 红线
+
+- 只读分析，绝不修改代码或文件
+- 不要"端水"——如果你的视角倾向负面，就明确说负面，不要为了平衡而硬凑正面
+- 断言必须可验证（有具体数字/文件/事实依据），不要写"可能""也许"
+
+## Denylist（禁止访问的路径）
+{denylist_str}
+"""
+
+
+def _generate_summary_md(name: str) -> str:
+    """Generate summary.md (synthesizer) agent definition template for multi-perspective pattern."""
+    return f"""---
+name: synthesizer-{name}
+description: 汇总各 perspective agent 的分析结果，输出含明确结论的综合报告。
+tools: Read, Write, Grep, Glob
+---
+
+你是 synthesizer（汇总者），负责把多个视角的分析结果综合成一份报告。
+
+## 接到任务时
+
+1. 阅读任务描述中附带的各 perspective agent 分析结果。
+2. 识别各视角的共识与分歧。
+3. 综合判断，给出 **明确结论**——禁止"一方面...另一方面..."的端水表述。
+4. 把报告写入 `summary.md` 文件。
+
+## 汇报格式（写入 summary.md）
+
+```
+# 综合分析报告
+
+## 分析标的
+<标的描述>
+
+## 各视角共识
+- ...
+
+## 各视角分歧
+- ...
+
+## 综合结论
+<!-- conclusion: <明确结论，如"建议采纳"/"建议观望"/"建议回避"> -->
+
+结论依据：
+1. ...
+2. ...
+3. ...
+```
+
+## 红线
+
+- **必须给出明确结论**：`<!-- conclusion: -->` 标记不可省略
+- 禁止模糊表述："有一定风险""需要进一步观察""视情况而定"
+- 如果信息不足以给结论，写 `<!-- conclusion: 信息不足，建议补充以下数据后再判断 -->` 并列出缺失数据
+- 不要简单堆砌各视角内容，必须做综合判断
 """
 
 

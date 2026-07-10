@@ -196,6 +196,9 @@ def run_loop(name: str) -> dict[str, Any]:
     if loop.pattern == "builder-checker":
         return _run_builder_checker(name, loop, round_num, now, loop_dir)
 
+    if loop.pattern == "multi-perspective":
+        return _run_multi_perspective(name, loop, round_num, now, loop_dir)
+
     # Default: try orchestrator, fall back to guidance
     orchestrator = Orchestrator()
     if not orchestrator.is_available():
@@ -342,6 +345,133 @@ def _run_builder_checker(
         "stop_check": stop,
         "record": record_result,
     }
+
+
+def _run_multi_perspective(
+    name: str,
+    loop: Any,
+    round_num: int,
+    now: str,
+    loop_dir: Path,
+) -> dict[str, Any]:
+    """借鉴 ai-berkshire：执行多视角并行分析轮次。
+
+    Gateway 可用时调用 orchestrator.run_parallel_perspectives，
+    不可用时降级到 guidance 模式。
+    """
+    orchestrator = Orchestrator()
+
+    if not orchestrator.is_available():
+        return _guidance_multi_perspective(name, loop, round_num, loop_dir)
+
+    # 从 LOOP.md 解析分析标的（默认用 loop name）
+    subject = name
+    if loop.config_path.exists():
+        content = loop.config_path.read_text(encoding="utf-8")
+        # LOOP.md 中 "## 分析标的" 段落
+        if "## 分析标的" in content:
+            after = content.split("## 分析标的", 1)[1]
+            subject = after.split("##", 1)[0].strip() or name
+
+    # 默认 3 个视角（用户可改 LOOP.md 中的视角列表）
+    perspectives = [
+        {"role": "perspective_1", "lens": "正面视角：发现标的的优势和机会"},
+        {"role": "perspective_2", "lens": "风险视角：发现标的的风险和隐患"},
+        {"role": "perspective_3", "lens": "中立视角：客观分析标的的现状"},
+    ]
+
+    result: RoundResult = orchestrator.run_parallel_perspectives(
+        loop_dir=loop_dir,
+        round_num=round_num,
+        subject=subject,
+        perspectives=perspectives,
+    )
+
+    # 构建 LoopRound
+    agent_reports: dict[str, str] = {}
+    for task in result.tasks:
+        if task.result:
+            agent_reports[task.role] = task.result
+
+    # multi-perspective 的 deliverable 是 summary.md
+    summary_path = loop_dir / "summary.md"
+    deliverables = [str(summary_path)] if summary_path.exists() else []
+
+    round_data = LoopRound(
+        round_num=round_num,
+        timestamp=now,
+        action=f"multi-perspective round ({len(perspectives)} perspectives)",
+        result_summary=result.summary,
+        verifier_result=result.checker_report,
+        passed=result.all_passed,
+        failure_count=len(result.failure_items),
+        failure_items=result.failure_items,
+        tokens_used=result.total_tokens,
+        agent_reports=agent_reports,
+    )
+
+    # 设置 deliverables 供 record_round 校验
+    if deliverables:
+        loop.deliverables = deliverables
+
+    record_result = record_round(name, round_data, tokens_used=result.total_tokens)
+
+    # Check stop rules
+    updated_loop = get_loop(name)
+    if updated_loop:
+        stop = check_stop_rules(
+            name, updated_loop.current_round, updated_loop.max_rounds, updated_loop.rounds
+        )
+    else:
+        stop = {"should_stop": False, "action": "continue"}
+
+    return {
+        "success": True,
+        "mode": "orchestrated",
+        "loop": name,
+        "round": round_num,
+        "result": result.to_dict(),
+        "passed": result.all_passed,
+        "stop_check": stop,
+        "record": record_result,
+    }
+
+
+def _guidance_multi_perspective(
+    name: str,
+    loop: Any,
+    round_num: int,
+    loop_dir: Path,
+) -> dict[str, Any]:
+    """Print guidance for manual multi-perspective execution."""
+    perspective_path = loop_dir / "perspective.md"
+    summary_path = loop_dir / "summary.md"
+
+    guidance = _guidance_mode(name, "multi-perspective")
+    guidance.update({
+        "round": round_num,
+        "max_rounds": loop.max_rounds,
+        "agent_files": {
+            "perspective": str(perspective_path),
+            "summary": str(summary_path),
+        },
+        "instructions": [
+            f"1. Cycle {round_num}/{loop.max_rounds}",
+            f"2. 并行启动 3 个 perspective agent（用 {perspective_path}）",
+            "3. 每个 agent 从不同视角分析标的（正面/风险/中立）",
+            "4. 收集所有 perspective 结果",
+            f"5. 启动 synthesizer agent（用 {summary_path}），汇总结果写入 summary.md",
+            "6. summary.md 必须含 <!-- conclusion: --> 标记（反端水硬约束）",
+            f"7. 重复直到报告完成或停止规则触发（max {loop.max_rounds} rounds）",
+            f"8. 记录轮次结果: hermes loop record {name} --passed/--failed --summary '...'",
+        ],
+        "principles": [
+            "多视角并行：N 个 agent 同消息并行分析，避免串行偏见",
+            "反端水：synthesizer 必须给明确结论，禁止'一方面...另一方面...'",
+            "声明性标记：perspective 产出含 <!-- claim: -->，summary 含 <!-- conclusion: -->",
+        ],
+    })
+    return guidance
 
 
 def _guidance_builder_checker(

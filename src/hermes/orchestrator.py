@@ -504,3 +504,76 @@ class Orchestrator:
 
         all_tasks = [builder] + checker_tasks
         return self.aggregate_results(all_tasks, round_num)
+
+    def run_parallel_perspectives(
+        self,
+        loop_dir: Path,
+        round_num: int,
+        subject: str,
+        perspectives: list[dict[str, str]],
+    ) -> RoundResult:
+        """借鉴 ai-berkshire：N 个 perspective agent 并行分析，synthesizer 汇总。
+
+        与 run_builder_checker_round 的区别：
+        - 无 builder 阶段，全部 perspective agent parallel=True 同消息 spawn
+        - synthesizer 在所有 perspective 完成后串行执行，读取全部结果汇总
+        - 产出 deliverable（summary.md），含 <!-- conclusion: --> 标记
+
+        Args:
+            loop_dir: Loop 工作目录（含 perspective.md / summary.md）
+            round_num: 当前轮次
+            subject: 分析标的描述
+            perspectives: [{"role": "perspective_1", "lens": "护城河视角"}, ...]
+        """
+        perspective_file = str(loop_dir / "perspective.md")
+        summary_file = str(loop_dir / "summary.md")
+
+        # Phase 1: N 个 perspective agent 并行（fan-out）
+        perspective_tasks: list[AgentTask] = []
+        for p in perspectives:
+            role = p.get("role", "perspective")
+            lens = p.get("lens", "通用视角")
+            perspective_tasks.append(AgentTask(
+                role=role,
+                agent_file=perspective_file,
+                task_description=(
+                    f"分析标的：{subject}\n\n"
+                    f"你的视角：{lens}\n\n"
+                    "按 perspective.md 的汇报格式输出分析结果，"
+                    "包含 Bull/Bear 各 3-5 条，以及至少 2 条 <!-- claim: --> 断言。"
+                ),
+                parallel=True,
+            ))
+
+        self.fan_out(perspective_tasks)
+        self.fan_in(perspective_tasks, timeout=300.0)
+
+        # Phase 2: synthesizer 串行汇总（fan-out 单任务）
+        # 把所有 perspective 结果拼接为 context
+        perspective_results: list[str] = []
+        for task in perspective_tasks:
+            result_text = task.result or "[NO OUTPUT]"
+            perspective_results.append(f"### {task.role}\n{result_text}")
+
+        synthesizer_context = (
+            f"分析标的：{subject}\n\n"
+            "以下是各视角 agent 的分析结果：\n\n"
+            + "\n\n".join(perspective_results)
+        )
+
+        synthesizer = AgentTask(
+            role="synthesizer",
+            agent_file=summary_file,
+            task_description=(
+                "汇总以下各视角分析结果，写入 summary.md 文件。"
+                "必须包含 <!-- conclusion: --> 标记给出明确结论。"
+            ),
+            context=synthesizer_context,
+            parallel=False,
+        )
+
+        self.fan_out([synthesizer])
+        self.fan_in([synthesizer], timeout=300.0)
+
+        all_tasks = perspective_tasks + [synthesizer]
+        return self.aggregate_results(all_tasks, round_num)

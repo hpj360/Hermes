@@ -6,8 +6,10 @@ from hermes.loop import (
     LOOP_PATTERNS,
     STOP_RULES,
     LoopRound,
+    LoopStage,
     LoopStatus,
     _save_loop_meta,
+    audit_deliverables,
     audit_loop,
     check_budget,
     check_stop_rules,
@@ -268,15 +270,16 @@ def test_knowledge_hygiene_has_parallel_scanners() -> None:
 
 
 def test_seven_built_in_patterns() -> None:
-    """7 内置工作流，对齐 Cobus Greyling loop-engineering 框架。
+    """8 内置工作流，对齐 Cobus Greyling loop-engineering 框架 + ai-berkshire 多视角并行。
 
     daily-triage / knowledge-hygiene / ci-sweeper / pr-babysitter /
-    issue-triage / changelog-draft / builder-checker = 7
+    issue-triage / changelog-draft / builder-checker = 7（Cobus Greyling）
+    multi-perspective = 1（ai-berkshire 借鉴）= 8
     """
-    assert len(LOOP_PATTERNS) == 7, f"Expected 7 patterns, got {len(LOOP_PATTERNS)}"
+    assert len(LOOP_PATTERNS) == 8, f"Expected 8 patterns, got {len(LOOP_PATTERNS)}"
     expected = {
         "daily-triage", "knowledge-hygiene", "ci-sweeper", "pr-babysitter",
-        "issue-triage", "changelog-draft", "builder-checker",
+        "issue-triage", "changelog-draft", "builder-checker", "multi-perspective",
     }
     assert set(LOOP_PATTERNS.keys()) == expected
 
@@ -1655,3 +1658,249 @@ def test_resume_loop_passes_gated_flag() -> None:
         test_dir = loops_dir() / "test-resume-gated"
         if test_dir.exists():
             shutil.rmtree(test_dir)
+
+
+# ── Multi-Perspective Pattern Tests (借鉴 ai-berkshire) ───────────────
+
+
+def test_multi_perspective_pattern_exists():
+    """multi-perspective pattern 在 LOOP_PATTERNS 中注册。"""
+    assert "multi-perspective" in LOOP_PATTERNS
+    info = LOOP_PATTERNS["multi-perspective"]
+    assert info["execution_status"] == "implemented"
+    assert info["generates_agents"] is True
+    # sub_agents 中 perspective 全部 parallel=True，synthesizer parallel=False
+    persp = [a for a in info["sub_agents"] if a["role"].startswith("perspective")]
+    synth = [a for a in info["sub_agents"] if a["role"] == "synthesizer"]
+    assert len(persp) >= 2
+    assert all(a["parallel"] for a in persp)
+    assert len(synth) == 1
+    assert synth[0]["parallel"] is False
+
+
+def test_init_multi_perspective_generates_perspective_and_summary():
+    """init multi-perspective 生成 perspective.md 和 summary.md。"""
+    result = init_loop("test-mp-init", pattern="multi-perspective")
+    assert result["success"]
+    files = result["files"]
+    assert "perspective.md" in files
+    assert "summary.md" in files
+    loop = get_loop("test-mp-init")
+    assert loop is not None
+    assert loop.pattern == "multi-perspective"
+    assert loop.stage == LoopStage.L2_ASSIST
+
+
+def test_perspective_md_contains_claim_marker_instruction():
+    """perspective.md 模板包含 <!-- claim: --> 标记说明。"""
+    init_loop("test-mp-claim", pattern="multi-perspective")
+    from hermes.loop import loops_dir
+    perspective_path = loops_dir() / "test-mp-claim" / "perspective.md"
+    content = perspective_path.read_text(encoding="utf-8")
+    assert "<!-- claim:" in content
+    assert "Bull" in content
+    assert "Bear" in content
+
+
+def test_summary_md_contains_conclusion_marker_instruction():
+    """summary.md 模板包含 <!-- conclusion: --> 标记说明。"""
+    init_loop("test-mp-conclusion", pattern="multi-perspective")
+    from hermes.loop import loops_dir
+    summary_path = loops_dir() / "test-mp-conclusion" / "summary.md"
+    content = summary_path.read_text(encoding="utf-8")
+    assert "<!-- conclusion:" in content
+    assert "禁止" in content or "必须" in content  # 反端水硬约束
+
+
+# ── audit_deliverables Tests (产物抽检准出) ───────────────────────────
+
+
+def test_audit_deliverables_missing_file_detected():
+    """audit_deliverables 检测到缺失的 deliverable 文件。"""
+    loop = get_loop("test-mp-init")
+    if loop is None:
+        init_loop("test-mp-init", pattern="multi-perspective")
+        loop = get_loop("test-mp-init")
+    loop.deliverables = ["nonexistent.md"]
+    _save_loop_meta(loop)
+    result = audit_deliverables("test-mp-init")
+    assert result["success"]
+    assert "nonexistent.md" in result["missing"]
+
+
+def test_audit_deliverables_claim_marker_warning():
+    """audit_deliverables 检测到 deliverable 缺少 <!-- claim: --> 标记。"""
+    from hermes.loop import loops_dir
+    init_loop("test-mp-claim-audit", pattern="multi-perspective")
+    loop = get_loop("test-mp-claim-audit")
+    # 写一个无 claim 标记的 deliverable
+    test_file = loops_dir() / "test-mp-claim-audit" / "report.md"
+    test_file.write_text("# Report\n\nNo claims here.", encoding="utf-8")
+    loop.deliverables = [str(test_file)]
+    _save_loop_meta(loop)
+    result = audit_deliverables("test-mp-claim-audit")
+    assert result["success"]
+    assert len(result["claim_warnings"]) > 0
+    assert "no <!-- claim:" in result["claim_warnings"][0]
+
+
+def test_audit_deliverables_claim_marker_present_no_warning():
+    """audit_deliverables 在有 <!-- claim: --> 标记时不报 warning。"""
+    from hermes.loop import loops_dir
+    init_loop("test-mp-claim-ok", pattern="multi-perspective")
+    loop = get_loop("test-mp-claim-ok")
+    test_file = loops_dir() / "test-mp-claim-ok" / "report.md"
+    test_file.write_text(
+        "# Report\n\n<!-- claim: 测试断言1 -->\n<!-- claim: 测试断言2 -->\n",
+        encoding="utf-8",
+    )
+    loop.deliverables = [str(test_file)]
+    _save_loop_meta(loop)
+    result = audit_deliverables("test-mp-claim-ok")
+    assert result["success"]
+    assert len(result["claim_warnings"]) == 0
+
+
+# ── Anti-Fence-Sitter (反端水) audit_loop Tests ───────────────────────
+
+
+def test_audit_loop_anti_fence_sitter_triggers_for_multi_perspective():
+    """audit_loop 对 multi-perspective pattern 检查 conclusion 标记。"""
+    init_loop("test-mp-anti-fence", pattern="multi-perspective")
+    result = audit_loop("test-mp-anti-fence")
+    assert result["success"]
+    # 应该有 "Summary has explicit conclusion" 检查项
+    loop_result = result["loops"][0]
+    check_names = [c["name"] for c in loop_result["checks"]]
+    assert any("conclusion" in name.lower() for name in check_names)
+
+
+def test_audit_loop_anti_fence_sitter_not_triggered_for_other_patterns():
+    """audit_loop 对非 multi-perspective pattern 不检查 conclusion 标记。"""
+    init_loop("test-bc-no-fence", pattern="builder-checker")
+    result = audit_loop("test-bc-no-fence")
+    assert result["success"]
+    loop_result = result["loops"][0]
+    check_names = [c["name"] for c in loop_result["checks"]]
+    assert not any("conclusion" in name.lower() for name in check_names)
+
+
+def test_audit_loop_conclusion_marker_present_passes():
+    """multi-perspective 的 summary.md 含 conclusion 标记时检查通过。"""
+    from hermes.loop import loops_dir
+    init_loop("test-mp-conclusion-ok", pattern="multi-perspective")
+    summary_path = loops_dir() / "test-mp-conclusion-ok" / "summary.md"
+    summary_path.write_text(
+        "# Summary\n\n<!-- conclusion: 建议采纳 -->\n",
+        encoding="utf-8",
+    )
+    result = audit_loop("test-mp-conclusion-ok")
+    loop_result = result["loops"][0]
+    conclusion_check = [
+        c for c in loop_result["checks"] if "conclusion" in c["name"].lower()
+    ]
+    assert len(conclusion_check) == 1
+    assert conclusion_check[0]["passed"] is True
+
+
+# ── Orchestrator run_parallel_perspectives Tests ─────────────────────
+
+
+def test_run_parallel_perspectives_fan_out_parallel_tasks():
+    """run_parallel_perspectives 构造 N 个 parallel=True 的 perspective task。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+    from pathlib import Path
+
+    orch = Orchestrator()
+    # mock fan_out 记录 parallel 属性
+    captured: list[AgentTask] = []
+
+    def mock_fan_out(tasks):
+        for t in tasks:
+            captured.append(t)
+            t.status = "completed"
+            t.session_id = "fake-session"
+        return tasks
+
+    def mock_fan_in(tasks, timeout=300.0):
+        for t in tasks:
+            t.result = f"result from {t.role}"
+            t.tokens_used = 100
+        return tasks
+
+    orch.fan_out = mock_fan_out
+    orch.fan_in = mock_fan_in
+
+    perspectives = [
+        {"role": "perspective_1", "lens": "正面"},
+        {"role": "perspective_2", "lens": "风险"},
+        {"role": "perspective_3", "lens": "中立"},
+    ]
+    orch.run_parallel_perspectives(
+        loop_dir=Path("/tmp/fake"),
+        round_num=1,
+        subject="测试标的",
+        perspectives=perspectives,
+    )
+
+    # 3 个 perspective + 1 个 synthesizer = 4 个 task
+    persp_tasks = [t for t in captured if t.role.startswith("perspective")]
+    synth_tasks = [t for t in captured if t.role == "synthesizer"]
+    assert len(persp_tasks) == 3
+    assert all(t.parallel for t in persp_tasks)
+    assert len(synth_tasks) == 1
+    assert synth_tasks[0].parallel is False
+
+
+def test_run_multi_perspective_guidance_when_gateway_unavailable():
+    """Gateway 不可用时 multi-perspective 降级到 guidance 模式。"""
+    from unittest.mock import patch
+    init_loop("test-mp-guidance", pattern="multi-perspective")
+    with patch("hermes.runner.Orchestrator") as MockOrch:
+        instance = MockOrch.return_value
+        instance.is_available.return_value = False
+        from hermes.runner import _run_multi_perspective, get_loop as gl
+        loop = gl("test-mp-guidance")
+        from hermes.loop import loops_dir
+        result = _run_multi_perspective(
+            "test-mp-guidance", loop, 1, "2025-01-01T00:00:00Z",
+            loops_dir() / "test-mp-guidance",
+        )
+        assert result["mode"] == "guidance"
+        assert "perspective" in result.get("agent_files", {})
+
+
+# ── MCP _sources (双源交叉验证) Tests ─────────────────────────────────
+
+
+def test_mcp_get_pr_returns_sources_field():
+    """get_pr 返回 _sources 字段标记数据来源（双源验证基础）。"""
+    from hermes.mcp import GitHubMCPClient
+    from unittest.mock import patch, MagicMock
+    client = GitHubMCPClient(token="fake-token", repo="test/repo")
+    # mock urlopen 返回有效响应
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = b'{"number": 1, "title": "test"}'
+    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        result = client.get_pr(1)
+    assert result["success"]
+    assert "_sources" in result
+    assert "github-api" in result["_sources"]
+
+
+def test_mcp_list_prs_returns_sources_field():
+    """list_prs 返回 _sources 字段。"""
+    from hermes.mcp import GitHubMCPClient
+    from unittest.mock import patch, MagicMock
+    client = GitHubMCPClient(token="fake-token", repo="test/repo")
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = b'[]'
+    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        result = client.list_prs()
+    assert result["success"]
+    assert "_sources" in result
+    assert len(result["_sources"]) >= 1
