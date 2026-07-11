@@ -2106,3 +2106,180 @@ def test_format_escalation_info_empty_inputs() -> None:
     assert _format_escalation_info(None) == []
     assert _format_escalation_info({}) == []
     assert _format_escalation_info(["not", "dict"]) == []  # type: ignore[arg-type]
+
+
+# ── P0-2: loop_metrics + estimate_cost 护栏 Tests ───────────────────
+
+
+def test_loop_metrics_empty_rounds_no_division() -> None:
+    """loop_metrics 对空 rounds 不除零。"""
+    import shutil
+    from hermes.loop import loop_metrics, loops_dir
+
+    result = init_loop("test-metrics-empty", pattern="knowledge-hygiene")
+    assert result["success"]
+    try:
+        m = loop_metrics("test-metrics-empty")
+        assert m["success"]
+        assert m["total_rounds"] == 0
+        assert m["avg_tokens_per_round"] == 0
+        assert m["pass_rate"] == 0
+        assert m["budget_percentage"] == 0  # limit 0 → 0, not div by zero
+    finally:
+        test_dir = loops_dir() / "test-metrics-empty"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)
+
+
+def test_loop_metrics_aggregates_rounds() -> None:
+    """loop_metrics 正确聚合 passed/failed/tokens 统计。"""
+    import shutil
+    from hermes.loop import loop_metrics, loops_dir
+
+    result = init_loop("test-metrics-agg", pattern="builder-checker")
+    assert result["success"]
+    try:
+        r1 = LoopRound(
+            round_num=1, timestamp="t1", action="build", result_summary="s1",
+            verifier_result="FAILED", passed=False, failure_count=2,
+            failure_items=["a", "b"], tokens_used=40000,
+        )
+        record_round("test-metrics-agg", r1, tokens_used=40000)
+        r2 = LoopRound(
+            round_num=2, timestamp="t2", action="build", result_summary="s2",
+            verifier_result="ALL GREEN", passed=True, failure_count=0,
+            failure_items=[], tokens_used=60000,
+        )
+        record_round("test-metrics-agg", r2, tokens_used=60000)
+
+        m = loop_metrics("test-metrics-agg")
+        assert m["success"]
+        assert m["total_rounds"] == 2
+        assert m["passed_rounds"] == 1
+        assert m["failed_rounds"] == 1
+        assert m["pass_rate"] == 50.0
+        assert m["total_tokens"] == 100000
+        assert m["avg_tokens_per_round"] == 50000.0
+    finally:
+        test_dir = loops_dir() / "test-metrics-agg"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)
+
+
+def test_loop_metrics_filters_zero_token_rounds() -> None:
+    """loop_metrics 计算 avg 时过滤 tokens_used=0 的轮次。"""
+    import shutil
+    from hermes.loop import loop_metrics, loops_dir
+
+    result = init_loop("test-metrics-zero", pattern="builder-checker")
+    assert result["success"]
+    try:
+        # 3 rounds: 2 with tokens, 1 with 0 tokens
+        r1 = LoopRound(
+            round_num=1, timestamp="t1", action="build", result_summary="s1",
+            verifier_result="FAILED", passed=False, failure_count=1,
+            failure_items=["a"], tokens_used=30000,
+        )
+        record_round("test-metrics-zero", r1, tokens_used=30000)
+        r2 = LoopRound(
+            round_num=2, timestamp="t2", action="build", result_summary="s2",
+            verifier_result="FAILED", passed=False, failure_count=1,
+            failure_items=["a"], tokens_used=0,
+        )
+        record_round("test-metrics-zero", r2, tokens_used=0)
+        r3 = LoopRound(
+            round_num=3, timestamp="t3", action="build", result_summary="s3",
+            verifier_result="FAILED", passed=False, failure_count=1,
+            failure_items=["a"], tokens_used=50000,
+        )
+        record_round("test-metrics-zero", r3, tokens_used=50000)
+
+        m = loop_metrics("test-metrics-zero")
+        # total_tokens includes all (even 0)
+        assert m["total_tokens"] == 80000
+        # avg only over rounds with tokens > 0: (30000+50000)/2 = 40000
+        assert m["avg_tokens_per_round"] == 40000.0
+    finally:
+        test_dir = loops_dir() / "test-metrics-zero"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)
+
+
+def test_estimate_cost_fallback_when_few_rounds() -> None:
+    """estimate_cost：有效样本 < 3 时回退固定 50k。"""
+    import shutil
+    from hermes.loop import estimate_cost, loops_dir
+
+    result = init_loop("test-cost-fallback", pattern="builder-checker")
+    assert result["success"]
+    try:
+        # Only 2 rounds with tokens → below MIN_SAMPLE=3 → fallback
+        r1 = LoopRound(
+            round_num=1, timestamp="t1", action="build", result_summary="s1",
+            verifier_result="FAILED", passed=False, failure_count=1,
+            failure_items=["a"], tokens_used=99999,
+        )
+        record_round("test-cost-fallback", r1, tokens_used=99999)
+
+        est = estimate_cost("test-cost-fallback")
+        assert est["success"]
+        assert est["estimate_source"] == "fallback_default"
+        assert est["per_round_estimate_tokens"] == 50000
+    finally:
+        test_dir = loops_dir() / "test-cost-fallback"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)
+
+
+def test_estimate_cost_historical_avg_when_enough_rounds() -> None:
+    """estimate_cost：有效样本 >= 3 时用历史平均。"""
+    import shutil
+    from hermes.loop import estimate_cost, loops_dir
+
+    result = init_loop("test-cost-hist", pattern="builder-checker")
+    assert result["success"]
+    try:
+        # 3 rounds: 30000 + 50000 + 40000 = 120000 / 3 = 40000
+        for i, tokens in enumerate([30000, 50000, 40000], 1):
+            r = LoopRound(
+                round_num=i, timestamp=f"t{i}", action="build", result_summary=f"s{i}",
+                verifier_result="FAILED", passed=False, failure_count=1,
+                failure_items=["a"], tokens_used=tokens,
+            )
+            record_round("test-cost-hist", r, tokens_used=tokens)
+
+        est = estimate_cost("test-cost-hist")
+        assert est["success"]
+        assert est["estimate_source"] == "historical_avg"
+        assert est["per_round_estimate_tokens"] == 40000
+    finally:
+        test_dir = loops_dir() / "test-cost-hist"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)
+
+
+def test_estimate_cost_filters_zero_token_rounds_for_avg() -> None:
+    """estimate_cost：计算历史平均时过滤 tokens_used=0 轮次。"""
+    import shutil
+    from hermes.loop import estimate_cost, loops_dir
+
+    result = init_loop("test-cost-filter", pattern="builder-checker")
+    assert result["success"]
+    try:
+        # 4 rounds: 3 with tokens (30000+50000+40000=120000/3=40000), 1 with 0
+        for i, tokens in enumerate([30000, 0, 50000, 40000], 1):
+            r = LoopRound(
+                round_num=i, timestamp=f"t{i}", action="build", result_summary=f"s{i}",
+                verifier_result="FAILED", passed=False, failure_count=1,
+                failure_items=["a"], tokens_used=tokens,
+            )
+            record_round("test-cost-filter", r, tokens_used=tokens)
+
+        est = estimate_cost("test-cost-filter")
+        assert est["estimate_source"] == "historical_avg"
+        # avg over 3 non-zero rounds = 40000, not 120000/4=30000
+        assert est["per_round_estimate_tokens"] == 40000
+    finally:
+        test_dir = loops_dir() / "test-cost-filter"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)

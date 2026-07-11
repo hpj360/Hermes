@@ -991,7 +991,21 @@ def estimate_cost(name: str) -> dict[str, Any]:
     if not loop:
         return {"success": False, "error": f"Loop '{name}' not found"}
 
-    per_round_tokens = 50000
+    # P0-2：用历史平均估算每轮 token，带护栏。
+    # 护栏1：过滤 tokens_used=0 的轮次（未实际执行或记录缺失，会拉低均值）。
+    # 护栏2：最小样本量——有效样本 < 3 时回退固定 50k。
+    #   根因：若 loop 只跑了 1 轮就因 beyond_capability 停止，历史均值要么极低
+    #  （import error 早停）要么极高（builder 读了很多文件），外推不如固定值稳定。
+    FALLBACK = 50000
+    MIN_SAMPLE = 3
+    token_rounds = [r for r in loop.rounds if r.tokens_used > 0]
+    if len(token_rounds) >= MIN_SAMPLE:
+        per_round_tokens = sum(r.tokens_used for r in token_rounds) // len(token_rounds)
+        estimate_source = "historical_avg"
+    else:
+        per_round_tokens = FALLBACK
+        estimate_source = "fallback_default"
+
     max_rounds = loop.max_rounds
     total_estimate = per_round_tokens * max_rounds
     budget_remaining = loop.budget_limit_tokens - loop.budget_used_tokens
@@ -1001,6 +1015,7 @@ def estimate_cost(name: str) -> dict[str, Any]:
         "success": True,
         "loop": name,
         "per_round_estimate_tokens": per_round_tokens,
+        "estimate_source": estimate_source,
         "max_rounds": max_rounds,
         "total_estimate_tokens": total_estimate,
         "budget_limit_tokens": loop.budget_limit_tokens,
@@ -1008,6 +1023,51 @@ def estimate_cost(name: str) -> dict[str, Any]:
         "budget_remaining_tokens": budget_remaining,
         "estimated_rounds_remaining": rounds_remaining,
         "within_budget": total_estimate <= loop.budget_limit_tokens,
+    }
+
+
+def loop_metrics(name: str) -> dict[str, Any]:
+    """Aggregate execution metrics from a loop's recorded rounds.
+
+    P0-2：指标看板——从 LoopState.rounds 聚合轮次/令牌/通过率统计，
+    供 `hermes loop metrics` 命令展示。空 rounds 不除零。
+    """
+    loop = get_loop(name)
+    if not loop:
+        return {"success": False, "error": f"Loop '{name}' not found"}
+
+    rounds = loop.rounds
+    total_rounds = len(rounds)
+    # 过滤 tokens_used=0 的轮次再算均值（与 estimate_cost 护栏一致）
+    token_rounds = [r for r in rounds if r.tokens_used > 0]
+    total_tokens = sum(r.tokens_used for r in rounds)
+    avg_tokens = total_tokens / len(token_rounds) if token_rounds else 0
+    passed = sum(1 for r in rounds if r.passed)
+    failed = total_rounds - passed
+    pass_rate = (passed / total_rounds * 100) if total_rounds else 0
+    budget_pct = (
+        loop.budget_used_tokens / loop.budget_limit_tokens * 100
+        if loop.budget_limit_tokens > 0
+        else 0
+    )
+
+    return {
+        "success": True,
+        "loop": name,
+        "pattern": loop.pattern,
+        "status": loop.status.value,
+        "current_round": loop.current_round,
+        "max_rounds": loop.max_rounds,
+        "total_rounds": total_rounds,
+        "passed_rounds": passed,
+        "failed_rounds": failed,
+        "pass_rate": round(pass_rate, 1),
+        "total_tokens": total_tokens,
+        "avg_tokens_per_round": round(avg_tokens, 1),
+        "budget_used_tokens": loop.budget_used_tokens,
+        "budget_limit_tokens": loop.budget_limit_tokens,
+        "budget_remaining_tokens": loop.budget_limit_tokens - loop.budget_used_tokens,
+        "budget_percentage": round(budget_pct, 1),
     }
 
 

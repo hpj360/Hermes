@@ -22,6 +22,7 @@ from hermes.loop import (
     get_loop_history,
     init_loop,
     list_loops,
+    loop_metrics,
     loops_dir,
 )
 from hermes.runner import resume_loop, run_loop, run_loop_continuous
@@ -887,6 +888,29 @@ def cmd_loop_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_loop_metrics(args: argparse.Namespace) -> int:
+    """Show aggregated execution metrics for a loop (指标看板)."""
+    m = loop_metrics(args.name)
+    if not m.get("success"):
+        print(f"Error: {m.get('error', 'unknown error')}")
+        return 1
+
+    print(f"=== Loop Metrics: {args.name} ===")
+    print(f"  Pattern:        {m['pattern']}")
+    print(f"  Status:         {m['status']}")
+    print(f"  Round:          {m['current_round']}/{m['max_rounds']} (executed: {m['total_rounds']})")
+    print()
+    print("  Rounds:")
+    print(f"    Passed: {m['passed_rounds']}  Failed: {m['failed_rounds']}  Pass rate: {m['pass_rate']}%")
+    print()
+    print("  Tokens:")
+    print(f"    Total:           {m['total_tokens']:,}")
+    print(f"    Avg per round:   {m['avg_tokens_per_round']:,.1f}")
+    print(f"    Budget used:     {m['budget_used_tokens']:,}/{m['budget_limit_tokens']:,} ({m['budget_percentage']}%)")
+    print(f"    Budget remaining:{m['budget_remaining_tokens']:,}")
+    return 0
+
+
 def cmd_loop_stop_rules(args: argparse.Namespace) -> int:
     print("=== Loop Stop Rules (Seven Conditions) ===")
     print()
@@ -1099,6 +1123,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_loop_status = p_loop_sub.add_parser("status", help="Show current loop status and budget")
     p_loop_status.add_argument("name", help="Loop name")
     p_loop_status.set_defaults(func=cmd_loop_status)
+
+    p_loop_metrics = p_loop_sub.add_parser("metrics", help="Show aggregated execution metrics (指标看板)")
+    p_loop_metrics.add_argument("name", help="Loop name")
+    p_loop_metrics.set_defaults(func=cmd_loop_metrics)
 
     p_loop_stop = p_loop_sub.add_parser("stop-rules", help="Show the seven stop rules")
     p_loop_stop.set_defaults(func=cmd_loop_stop_rules)
