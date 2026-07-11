@@ -620,6 +620,52 @@ def cmd_loop_budget(args: argparse.Namespace) -> int:
 cmd_loop_cost = cmd_loop_budget
 
 
+def _format_escalation_info(info: dict[str, Any] | None) -> list[str]:
+    """Format escalation_info diagnostic fields for display.
+
+    P0-1：停止规则触发时持久化的诊断信息。不同规则返回不同键，这里统一挑选
+    对人类排查最有价值的字段渲染，跳过 attempts / last_two_rounds 等冗长字段。
+    """
+    if not info or not isinstance(info, dict):
+        return []
+    lines: list[str] = []
+    # 通用：matched_signals（beyond_capability）
+    signals = info.get("matched_signals")
+    if signals:
+        lines.append(f"  Matched signals: {', '.join(signals)}")
+    # 通用：blocker（beyond_capability）
+    blocker = info.get("blocker")
+    if blocker:
+        lines.append(f"  Blocker: {blocker}")
+    # regression / no_progress
+    new_fails = info.get("new_failures")
+    if new_fails:
+        lines.append(f"  New failures: {', '.join(new_fails)}")
+    fixed = info.get("previously_fixed")
+    if fixed:
+        lines.append(f"  Previously fixed: {', '.join(fixed)}")
+    # regression
+    persistent = info.get("persistent")
+    if persistent:
+        lines.append(f"  Persistent: {', '.join(persistent)}")
+    # same_failure_twice
+    repeated = info.get("repeated_failures")
+    if repeated:
+        lines.append(f"  Repeated failures: {', '.join(repeated)}")
+    # no_progress
+    counts = info.get("failure_counts")
+    if counts and isinstance(counts, list) and len(counts) == 2:
+        lines.append(f"  Failure counts: {counts[0]} → {counts[1]}")
+    suggestion = info.get("suggestion")
+    if suggestion:
+        lines.append(f"  Suggestion: {suggestion}")
+    # rounds_exhausted
+    failed_items = info.get("failed_items")
+    if failed_items:
+        lines.append(f"  Failed items: {', '.join(failed_items[:5])}")
+    return lines
+
+
 def cmd_loop_advance(args: argparse.Namespace) -> int:
     result = advance_stage(args.name)
     if not result.get("success"):
@@ -673,6 +719,8 @@ def cmd_loop_run(args: argparse.Namespace) -> int:
         if stop.get("should_stop"):
             print(f"Stop rule triggered: {stop.get('rule_name', '?')}")
             print(f"  {stop.get('description', '')}")
+            for line in _format_escalation_info(stop.get("escalation_info")):
+                print(line)
         else:
             print("No stop rule triggered. Run again or use `hermes loop advance` to proceed.")
         return 0
@@ -692,6 +740,8 @@ def cmd_loop_run(args: argparse.Namespace) -> int:
             print()
             print(f"Stop rule triggered: {stop.get('rule_name', '?')}")
             print(f"  {stop.get('description', '')}")
+            for line in _format_escalation_info(stop.get("escalation_info")):
+                print(line)
         print()
         record = result.get("record", {})
         print(f"Budget: {record.get('budget_used', 0):,}/{record.get('budget_remaining', 0):,} tokens remaining")
@@ -740,6 +790,8 @@ def cmd_loop_continuous(args: argparse.Namespace) -> int:
     print(f"Rounds executed: {result['rounds_executed']}")
     final_stop = result.get("final_stop", {})
     print(f"Final stop: {final_stop.get('rule_name', 'none')} — {final_stop.get('description', '')}")
+    for line in _format_escalation_info(final_stop.get("escalation_info")):
+        print(line)
     print()
     for i, r in enumerate(result.get("rounds", [])):
         mode = r.get("mode", "?")
@@ -761,6 +813,8 @@ def cmd_loop_resume(args: argparse.Namespace) -> int:
     print(f"Rounds executed: {result['rounds_executed']}")
     final_stop = result.get("final_stop", {})
     print(f"Final stop: {final_stop.get('rule_name', 'none')} — {final_stop.get('description', '')}")
+    for line in _format_escalation_info(final_stop.get("escalation_info")):
+        print(line)
     return 0
 
 
@@ -796,6 +850,12 @@ def cmd_loop_logs(args: argparse.Namespace) -> int:
                 # Show first 200 chars of each agent report
                 preview = report[:200] + ("..." if len(report) > 200 else "")
                 print(f"    [{role}]: {preview}")
+        # P0-1：展示持久化的诊断信息（停止规则触发时回填）
+        esc_lines = _format_escalation_info(r.get("escalation_info"))
+        if esc_lines:
+            print("    Escalation:")
+            for line in esc_lines:
+                print(f"    {line}")
         print()
     return 0
 

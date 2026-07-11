@@ -1904,3 +1904,205 @@ def test_mcp_list_prs_returns_sources_field():
     assert result["success"]
     assert "_sources" in result
     assert len(result["_sources"]) >= 1
+
+
+# ── P0-1: escalation_info persistence Tests ─────────────────────────
+
+
+def test_loop_round_escalation_info_roundtrip() -> None:
+    """LoopRound escalation_info should survive to_dict → from_dict roundtrip."""
+    original = LoopRound(
+        round_num=2,
+        timestamp="2025-01-01T00:00:00Z",
+        action="builder round",
+        result_summary="permission denied",
+        verifier_result="FAILED",
+        passed=False,
+        failure_count=1,
+        failure_items=["auth.py:10"],
+        escalation_info={
+            "current_round": 2,
+            "matched_signals": ["permission denied"],
+            "blocker": "外部依赖或环境问题，需要人工介入",
+        },
+    )
+    d = original.to_dict()
+    assert d["escalation_info"] == original.escalation_info
+    restored = LoopRound.from_dict(d)
+    assert restored.escalation_info == original.escalation_info
+    assert restored.escalation_info["matched_signals"] == ["permission denied"]
+
+
+def test_loop_round_from_dict_escalation_info_default() -> None:
+    """from_dict should default escalation_info to {} when missing (backward compat)."""
+    minimal = {"round_num": 1, "passed": False}
+    restored = LoopRound.from_dict(minimal)
+    assert restored.escalation_info == {}
+
+
+def test_loop_round_from_dict_escalation_info_none_guard() -> None:
+    """from_dict should treat explicit None escalation_info as {} (not None)."""
+    data = {"round_num": 1, "passed": False, "escalation_info": None}
+    restored = LoopRound.from_dict(data)
+    assert restored.escalation_info == {}
+
+
+def test_loop_round_from_dict_escalation_info_type_guard() -> None:
+    """from_dict should coerce non-dict escalation_info to {} (defensive)."""
+    data = {"round_num": 1, "passed": False, "escalation_info": ["not", "a", "dict"]}
+    restored = LoopRound.from_dict(data)
+    assert restored.escalation_info == {}
+
+
+def test_record_round_persists_escalation_info() -> None:
+    """P0-1 时序修复：停止规则触发后 escalation_info 必须回填并持久化到 meta.json。
+
+    根因：record_round 在 loop.rounds.append(round_data) 之后才调用 check_stop_rules，
+    但 escalation_info 从未回填到 round_data，_save_loop_meta 持久化的 round 缺该字段，
+    导致 root_cause / matched_signals / blocker 永远为空。
+    """
+    import json as _json
+    import shutil
+    from hermes.loop import get_loop, loops_dir
+
+    result = init_loop("test-esc-persist", pattern="knowledge-hygiene")
+    assert result["success"]
+    try:
+        # 构造 beyond_capability 触发场景：result_summary 含 "permission denied"
+        round_data = LoopRound(
+            round_num=1,
+            timestamp="2025-01-01T00:00:00Z",
+            action="scan",
+            result_summary="Permission denied: cannot write to /etc/config",
+            verifier_result="FAILED",
+            passed=False,
+            failure_count=1,
+            failure_items=["access error"],
+        )
+        record_result = record_round("test-esc-persist", round_data, tokens_used=5000)
+        assert record_result["success"]
+
+        # Reload from disk: escalation_info must be persisted
+        loop = get_loop("test-esc-persist")
+        assert loop is not None
+        assert len(loop.rounds) == 1
+        esc = loop.rounds[0].escalation_info
+        assert esc, "escalation_info should be non-empty after stop rule trigger"
+        assert "matched_signals" in esc
+        assert "permission denied" in esc["matched_signals"]
+        assert esc["blocker"]
+
+        # Verify raw meta.json on disk carries the field
+        meta = _json.loads((loops_dir() / "test-esc-persist" / "meta.json").read_text("utf-8"))
+        assert meta["rounds"][0]["escalation_info"]["matched_signals"]
+    finally:
+        test_dir = loops_dir() / "test-esc-persist"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)
+
+
+def test_record_round_escalation_info_empty_when_no_stop() -> None:
+    """未触发停止规则时 escalation_info 应为空 dict（不应残留上次数据）。"""
+    import shutil
+    from hermes.loop import get_loop, loops_dir
+
+    result = init_loop("test-esc-empty", pattern="knowledge-hygiene")
+    assert result["success"]
+    try:
+        # 单轮失败但无 capability 信号、未达 max_rounds → 不停止，escalation_info 为 {}
+        round_data = LoopRound(
+            round_num=1,
+            timestamp="2025-01-01T00:00:00Z",
+            action="scan",
+            result_summary="Found 2 issues",
+            verifier_result="2 high priority",
+            passed=False,
+            failure_count=2,
+            failure_items=["issue1", "issue2"],
+        )
+        record_round("test-esc-empty", round_data, tokens_used=1000)
+        loop = get_loop("test-esc-empty")
+        assert loop is not None
+        assert loop.rounds[0].escalation_info == {}
+    finally:
+        test_dir = loops_dir() / "test-esc-empty"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)
+
+
+def test_record_round_regression_persists_escalation_info() -> None:
+    """regression 规则触发的 escalation_info（new_failures/persistent）也持久化。"""
+    import shutil
+    from hermes.loop import get_loop, loops_dir
+
+    # builder-checker max_rounds=5，避免 round 2 触发 rounds_exhausted 抢先于 regression
+    result = init_loop("test-esc-regression", pattern="builder-checker")
+    assert result["success"]
+    try:
+        # Round 1: failures {a.py:1, b.py:2}
+        r1 = LoopRound(
+            round_num=1, timestamp="t1", action="build", result_summary="s1",
+            verifier_result="FAILED", passed=False, failure_count=2,
+            failure_items=["a.py:1", "b.py:2"],
+        )
+        record_round("test-esc-regression", r1, tokens_used=1000)
+        # Round 2: failures {a.py:1, c.py:3} → regression (new + persistent)
+        r2 = LoopRound(
+            round_num=2, timestamp="t2", action="build", result_summary="s2",
+            verifier_result="FAILED", passed=False, failure_count=2,
+            failure_items=["a.py:1", "c.py:3"],
+        )
+        record_round("test-esc-regression", r2, tokens_used=1000)
+
+        loop = get_loop("test-esc-regression")
+        assert loop is not None
+        esc = loop.rounds[-1].escalation_info
+        assert esc, "regression escalation_info should be persisted"
+        assert "c.py:3" in esc["new_failures"]
+        assert "a.py:1" in esc["persistent"]
+    finally:
+        test_dir = loops_dir() / "test-esc-regression"
+        if test_dir.exists():
+            shutil.rmtree(test_dir)
+
+
+def test_format_escalation_info_renders_fields() -> None:
+    """_format_escalation_info 应渲染各规则的关键诊断字段。"""
+    from hermes.main import _format_escalation_info
+
+    # beyond_capability
+    lines = _format_escalation_info({
+        "matched_signals": ["permission denied"],
+        "blocker": "外部依赖或环境问题，需要人工介入",
+    })
+    text = "\n".join(lines)
+    assert "permission denied" in text
+    assert "外部依赖" in text
+
+    # regression
+    lines = _format_escalation_info({
+        "new_failures": ["c.py:3"],
+        "previously_fixed": ["b.py:2"],
+        "persistent": ["a.py:1"],
+    })
+    text = "\n".join(lines)
+    assert "c.py:3" in text
+    assert "b.py:2" in text
+    assert "a.py:1" in text
+
+    # no_progress
+    lines = _format_escalation_info({
+        "failure_counts": [2, 2],
+        "suggestion": "拆分成更小的子任务",
+    })
+    text = "\n".join(lines)
+    assert "2 → 2" in text
+    assert "拆分" in text
+
+
+def test_format_escalation_info_empty_inputs() -> None:
+    """_format_escalation_info 对 None / {} / 非dict 输入返回空列表。"""
+    from hermes.main import _format_escalation_info
+    assert _format_escalation_info(None) == []
+    assert _format_escalation_info({}) == []
+    assert _format_escalation_info(["not", "dict"]) == []  # type: ignore[arg-type]

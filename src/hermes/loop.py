@@ -324,6 +324,9 @@ class LoopRound:
     agent_reports: dict[str, str] = field(default_factory=dict)
     # 经验A：该轮对应的基线失败项快照（历史已知失败，用于 regression 判定时排除）
     baseline_failures: list[str] = field(default_factory=list)
+    # P0-1：停止规则触发时的诊断信息（matched_signals / blocker / new_failures 等）。
+    # 由 record_round 在 check_stop_rules 返回后回填，随 meta 持久化，供 CLI 展示与跨会话追溯。
+    escalation_info: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -339,6 +342,7 @@ class LoopRound:
             "tokens_used": self.tokens_used,
             "agent_reports": self.agent_reports,
             "baseline_failures": self.baseline_failures,
+            "escalation_info": self.escalation_info,
         }
 
     @classmethod
@@ -349,6 +353,7 @@ class LoopRound:
         failure_items = data.get("failure_items") or []
         agent_reports = data.get("agent_reports") or {}
         baseline_failures = data.get("baseline_failures") or []
+        escalation_info = data.get("escalation_info") or {}
         return cls(
             round_num=data.get("round_num", 0),
             timestamp=data.get("timestamp", ""),
@@ -362,6 +367,7 @@ class LoopRound:
             tokens_used=data.get("tokens_used", 0),
             agent_reports=agent_reports if isinstance(agent_reports, dict) else {},
             baseline_failures=baseline_failures if isinstance(baseline_failures, list) else [],
+            escalation_info=escalation_info if isinstance(escalation_info, dict) else {},
         )
 
 
@@ -1584,6 +1590,10 @@ def record_round(
             loop.status = LoopStatus.NEEDS_HUMAN
         else:
             loop.status = LoopStatus.RUNNING
+        # P0-1：回填诊断信息到当前轮次，随 _save_loop_meta 持久化。
+        # 修复时序矛盾：此前 round_data 已 append 到 loop.rounds 但 escalation_info 未回填，
+        # 导致 root_cause / matched_signals / blocker 永远无法持久化。
+        round_data.escalation_info = stop.get("escalation_info") or {}
 
     _save_loop_meta(loop)
     _update_state_md(loop)
