@@ -131,6 +131,58 @@
 
 **不做**：不做主动双源取数 + 误差检查（当前无第二个数据源，YAGNI）
 
+### D015: escalation_info 持久化（P0-1）
+
+**日期**: 2026-07-11
+**决策**: LoopRound 增加 `escalation_info: dict` 字段，record_round 在 check_stop_rules 返回后回填，随 meta.json 持久化。
+
+**根因（时序矛盾）**：record_round 在 `loop.rounds.append(round_data)` 之后才调用 check_stop_rules，但 escalation_info 从未回填到 round_data，_save_loop_meta 持久化的 round 缺该字段，导致 matched_signals / blocker / new_failures 等诊断信息永远无法跨会话追溯——人类看 logs 时只知道"停止了"，不知道"为什么停止"。
+
+**为什么不做 Verdict 三态**：对抗审查发现 `beyond_capability` 停止规则已用 16 个信号词 + `escalation_info.blocker` 覆盖了"外部依赖阻塞"场景。再加一套 "BLOCKED:" 前缀文本协议是第二个脆弱机制，会削弱已有的信号词机制（第一性原理：同一问题不应有两套检测路径）。
+
+**为什么不做 confidence 字段**：confidence 是主观估计，无校验手段，会变成"看起来科学但无意义"的字段（YAGNI + 反模式 8）。
+
+**展示**：main.py `_format_escalation_info` helper 在 run/continuous/resume/logs 5 处渲染持久化字段。
+**参考**: [loop.py LoopRound.escalation_info](file:///workspace/src/hermes/loop.py)、Multica 文章"准出字段 Verdict"能力
+
+### D016: loop_metrics 指标看板 + estimate_cost 历史平均护栏（P0-2）
+
+**日期**: 2026-07-11
+**决策**: 新增 `loop_metrics(name)` 聚合轮次/令牌/通过率统计 + CLI `hermes loop metrics` 命令；estimate_cost 改用历史平均，带最小样本量护栏。
+
+**为什么加指标看板**：借鉴 Multica 组织级 Loop Engineering 的"指标看板"能力。此前可观测性只有"看最后一轮"，无法回答"这个 loop 历史平均消耗多少 token / 通过率多少"。指标看板让 loop 从"黑盒单次执行"升级为"可追踪的持续过程"。
+
+**estimate_cost 护栏根因（小样本陷阱）**：直接用历史平均在样本极少时不稳定——若 loop 只跑 1 轮就因 beyond_capability 停止，历史均值要么极低（import error 早停）要么极高（builder 读很多文件），外推不如固定 50k 准确。
+- 护栏1：过滤 `tokens_used=0` 轮次（未实际执行/记录缺失会拉低均值）
+- 护栏2：有效样本 < 3 时回退固定 50k（MIN_SAMPLE=3）
+- 新增 `estimate_source` 字段标记来源（historical_avg / fallback_default），让用户知道估算是基于真实数据还是默认值
+
+**参考**: [loop.py loop_metrics](file:///workspace/src/hermes/loop.py)、Multica 文章"指标看板"能力
+
+### D017: 为什么砍掉 P1-1 Rework 语义
+
+**日期**: 2026-07-11
+**决策**: 不实现 Rework（部分回滚中间轮次）语义。
+
+**对抗审查结论**：
+1. **stop rules 依赖连续两轮比对**：regression / same_failure_twice / no_progress 都依赖 `rounds[-2]` vs `rounds[-1]` 的连续比较。Rework 删除中间轮次会破坏这个不变量，导致跨边界误判（第一性原理：状态机的转换前提不能被破坏）
+2. **resume_loop 已覆盖"重新开始"**：NEEDS_HUMAN / ERROR 状态下 resume_loop 清空 rounds + budget 重置为 IDLE，已提供"全量重启"能力。Rework 是介于"全量重启"和"继续"之间的中间态，复杂度高但收益不明确
+3. **状态机污染**：引入 Rework 需要在 LoopStatus 枚举加新状态 + 转换规则，增加状态机复杂度（反模式 8：复杂度自给自足）
+
+**替代方案**：需要部分重做时，人类审查 logs 后手动调整 LOOP.md 目标，用 resume_loop 全量重启。
+
+### D018: 为什么砍掉 P1-2 sub_agents 声明驱动
+
+**日期**: 2026-07-11
+**决策**: 不激活 LOOP_PATTERNS 中 sub_agents 声明字段的运行时读取，保持 runner.py 硬编码执行路径。
+
+**对抗审查结论**：
+1. **声明字段表达力不足**：sub_agents 声明只有 `role / agent_file / parallel / check_type`，无法表达"builder 依赖 checker 上一轮的 previous_report"这类跨轮次依赖。激活后反而不如当前硬编码灵活
+2. **aggregate_results 空列表陷阱**：`all([])` 返回 True，空 task 列表会被误判为 ALL GREEN。激活 sub_agents 前必须先修复这个陷阱，但当前硬编码路径不触发它
+3. **死字段激活的隐性成本**：sub_agents 当前是"文档性声明"（人类阅读用），激活成"运行时驱动"需要全套测试 + 边界处理，收益是"少几行硬编码"，成本收益比不合理（YAGNI）
+
+**保留**：sub_agents 字段保留为声明性文档，供人类理解 pattern 结构。
+
 ## 二、反模式清单（永远不要做的事）
 
 > 来源：文章《从Vibe Coding到Harness》第十章 + Hermes 项目实战教训
@@ -156,3 +208,4 @@
 | 2026-07-06 | v0.3.1 | _terminal_status_to_stop 统一状态映射、conftest 隔离、profile 解析器重写 |
 | 2026-07-07 | v0.4.0 | 基线对比简化版、软门禁留疤、门禁软硬区分、产物清单校验、--gated 半自动、GitHub MCP |
 | 2026-07-07 | v0.5.0 | multi-perspective pattern、产物抽检准出、反端水硬约束、MCP 双源标记（借鉴 ai-berkshire） |
+| 2026-07-11 | v0.6.0 | escalation_info 持久化（修复时序矛盾）、loop_metrics 指标看板、estimate_cost 历史平均护栏（借鉴 Multica 组织级 Loop Engineering） |
