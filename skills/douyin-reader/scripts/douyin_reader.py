@@ -236,6 +236,10 @@ def transcribe_full(video_path: str, output_dir: str, total_duration: float,
     每段时间轴偏移 = 段索引 × segment_duration，拼接成完整时间轴。
     连续 3 段失败则熔断，避免视频损坏时浪费时间。
     """
+    # duration=0 检查必须在 whisper import 之前，避免无谓依赖加载
+    if total_duration <= 0:
+        return {"error": "视频时长未知（duration=0），无法分段转写，请用 --max-duration 模式"}
+
     try:
         import whisper
     except ImportError:
