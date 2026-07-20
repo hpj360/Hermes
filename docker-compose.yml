@@ -1,0 +1,42 @@
+services:
+  hermes-kb:
+    build: .
+    image: hermes-kb:latest
+    container_name: hermes-kb
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    volumes:
+      - hermes-kb-data:/app/data
+      - ./uploads:/app/uploads:ro
+    environment:
+      # 数据库
+      KB_DB_PATH: /app/data/hermes_kb.db
+      KB_HOST: 0.0.0.0
+      KB_PORT: "8765"
+      # 检索
+      KB_TOP_K: "5"
+      KB_MIN_SCORE: "0.005"
+      # LLM Provider（按需启用）
+      KB_LLM_PROVIDER: mock
+      # KB_LLM_API_KEY: sk-xxx
+      # KB_LLM_BASE_URL: https://api.openai.com/v1
+      # KB_LLM_MODEL: gpt-4o-mini
+      # Embedding Provider
+      KB_EMBEDDING_PROVIDER: hash
+      # KB_EMBEDDING_API_KEY: sk-xxx
+      # 认证（生产环境建议启用）
+      KB_AUTH_ENABLED: "false"
+      # KB_AUTH_PASSWORD: change-me
+      # KB_JWT_SECRET: change-me-too
+      # 未成年保护
+      KB_AGE_GATE: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8765/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  hermes-kb-data:

@@ -61,6 +61,16 @@ logs/
 # Hermes runtime state
 .state/
 .cache/
+.hermes_kb/
 
 # User profile (contains personal data, do not commit)
 data/profile.json
+
+# 前端构建产物（M0 起保留 dist 以支持单进程部署）
+web/node_modules/
+web/.vite/
+
+# 临时数据库
+*.db
+*.db-wal
+*.db-shm

@@ -1,0 +1,53 @@
+"""SQLModel 数据模型。"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from uuid import uuid4
+
+from sqlalchemy import Column, Text
+from sqlmodel import Field, SQLModel
+
+
+def _gen_doc_id() -> str:
+    return f"doc_{uuid4().hex[:12]}"
+
+
+class Document(SQLModel, table=True):
+    """文档。"""
+
+    doc_id: str = Field(default_factory=_gen_doc_id, primary_key=True, max_length=64)
+    title: str = Field(index=True, max_length=200)
+    content: str = Field(default="", sa_column=Column("content", Text))
+    source_type: str = Field(default="local", max_length=32)  # local / upload / seed
+    file_type: str = Field(default="txt", max_length=16)  # txt / md / pdf
+    source_path: str | None = Field(default=None, max_length=512)
+    chunk_count: int = Field(default=0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Chunk(SQLModel, table=True):
+    """文档分片。"""
+
+    id: int | None = Field(default=None, primary_key=True)
+    doc_id: str = Field(index=True, max_length=64)
+    idx: int = Field(default=0)
+    text: str = Field(default="", sa_column=Column("text", Text))
+    char_start: int = Field(default=0)
+    char_end: int = Field(default=0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class QueryLog(SQLModel, table=True):
+    """问答日志。"""
+
+    id: int | None = Field(default=None, primary_key=True)
+    query: str = Field(max_length=2000)
+    answer: str = Field(default="", sa_column=Column("answer", Text))
+    citations: str = Field(
+        default="[]", sa_column=Column("citations", Text)
+    )  # JSON
+    model_used: str = Field(default="mock", max_length=64)
+    latency_ms: int = Field(default=0)
+    feedback: int = Field(default=0)  # 1=up / -1=down / 0=none
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
