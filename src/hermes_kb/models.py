@@ -32,6 +32,15 @@ class Document(SQLModel, table=True):
     source_path: str | None = Field(default=None, max_length=512)
     chunk_count: int = Field(default=0)
     category: str = Field(default="", max_length=32, index=True)  # M2-06：分类（单选）
+    # B1: 数据源治理字段（向后兼容，均有默认值）
+    source: str = Field(default="local", max_length=32, index=True)  # local/iba/thecocktaildb/user/ugc
+    source_id: str | None = Field(default=None, max_length=64)
+    verified: bool = Field(default=True)
+    season: str | None = Field(default=None, max_length=16)  # spring/summer/autumn/winter
+    hidden: bool = Field(default=False)
+    status: str = Field(default="published", max_length=16)  # draft/pending/published/rejected
+    image_url: str | None = Field(default=None, max_length=512)  # B 新增：外部图片 URL
+    meta: str = Field(default="{}", sa_column=Column("metadata", Text))  # B 新增：JSON 字符串（属性名避开 SQLAlchemy 保留字 metadata）
     created_at: datetime = Field(default_factory=_utcnow)
 
 

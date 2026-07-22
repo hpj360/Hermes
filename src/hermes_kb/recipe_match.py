@@ -67,13 +67,19 @@ def batch_first_chunks(
 
 
 def _load_recipes() -> list[dict[str, Any]]:
-    """从知识库加载所有 category=recipe 的配方文档（批量化，A3-2）。
+    """从知识库加载所有 category=recipe 的配方文档（批量化 + 过滤，A3-2 + B5）。
 
     单次 session 内完成 docs 查询 + first_chunk 批量查询，消除 N+1。
+    B5: 仅加载 verified=True 且 hidden=False 的配方，外部数据源同步默认
+    不进实验室匹配，需审核通过后才可见。
     """
     with get_session() as session:
         docs = session.exec(
-            select(Document).where(Document.category == "recipe")
+            select(Document).where(
+                Document.category == "recipe",
+                Document.verified == True,  # noqa: E712
+                Document.hidden == False,  # noqa: E712
+            )
         ).all()
         doc_ids = [d.doc_id for d in docs]
         first_chunks = batch_first_chunks(doc_ids, session=session)
