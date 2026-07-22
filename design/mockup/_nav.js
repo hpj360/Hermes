@@ -16,6 +16,21 @@
     { href: 'audit.html', label: '审计', page: 'audit' }
   ];
 
+  function injectFavicon() {
+    // 仅当页面尚未声明 favicon 时注入（深酒红 + 金箔酒杯 SVG）
+    if (document.querySelector('link[rel="icon"]')) return;
+    var link = document.createElement('link');
+    link.rel = 'icon';
+    link.type = 'image/svg+xml';
+    link.href =
+      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%234A0E1C'/%3E%3Cpath d='M11 8h10l-1 6a4 4 0 0 1-8 0L11 8z' fill='none' stroke='%23C9A227' stroke-width='1.6' stroke-linejoin='round'/%3E%3Cpath d='M16 18v5M12 25h8' stroke='%23C9A227' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E";
+    document.head.appendChild(link);
+    var theme = document.createElement('meta');
+    theme.name = 'theme-color';
+    theme.content = '#4A0E1C';
+    document.head.appendChild(theme);
+  }
+
   function buildNav() {
     var nav = document.createElement('nav');
     nav.className = 'navbar';
@@ -63,8 +78,9 @@
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function () { buildNav(); highlightChunk(); });
+    document.addEventListener('DOMContentLoaded', function () { injectFavicon(); buildNav(); highlightChunk(); });
   } else {
+    injectFavicon();
     buildNav();
     highlightChunk();
   }
