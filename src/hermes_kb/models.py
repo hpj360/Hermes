@@ -40,8 +40,27 @@ class Document(SQLModel, table=True):
     hidden: bool = Field(default=False)
     status: str = Field(default="published", max_length=16)  # draft/pending/published/rejected
     image_url: str | None = Field(default=None, max_length=512)  # B 新增：外部图片 URL
-    meta: str = Field(default="{}", sa_column=Column("metadata", Text))  # B 新增：JSON 字符串（属性名避开 SQLAlchemy 保留字 metadata）
+    # B 新增：JSON 字符串（存 ingredients 列表等结构化数据）。
+    # 注意：SQLAlchemy 2.0 保留 "metadata" 属性名（Declarative API 硬保留），
+    # 故 Python 字段用 `meta`，DB 列名仍为 `metadata`；通过 __init__ 别名 +
+    # 类后挂载的 `metadata` property 暴露统一对外接口。
+    meta: str = Field(default="{}", sa_column=Column("metadata", Text))
     created_at: datetime = Field(default_factory=_utcnow)
+
+    def __init__(self, **data: object) -> None:
+        # 允许 `metadata=` 构造参数，映射到实际字段 `meta`
+        if "metadata" in data:
+            data["meta"] = data.pop("metadata")
+        super().__init__(**data)
+
+
+# 类创建完成后挂载 `metadata` 只读 property（避开 SQLAlchemy 在类声明期对
+# `metadata` 保留名的检查，同时不破坏 `cls.metadata` 在建表阶段返回 MetaData）。
+def _get_metadata(self: "Document") -> str:
+    return self.meta
+
+
+Document.metadata = property(_get_metadata)  # type: ignore[assignment]
 
 
 class Chunk(SQLModel, table=True):
