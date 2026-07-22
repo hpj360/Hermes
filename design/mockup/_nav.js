@@ -7,6 +7,7 @@
     { href: 'index.html', label: '首页', page: 'home' },
     { href: 'ask.html', label: '问答', page: 'ask' },
     { href: 'lab.html', label: '实验室', page: 'lab' },
+    { href: 'recipes.html', label: '配方', page: 'recipes' },
     { href: 'docs.html', label: '文档', page: 'docs' },
     { href: 'tags.html', label: '标签', page: 'tags' },
     { href: 'history.html', label: '历史', page: 'history' },
@@ -16,13 +17,13 @@
 
   function buildNav() {
     var nav = document.createElement('nav');
-    nav.className = 'nav';
+    nav.className = 'navbar';
     var c = document.createElement('div');
-    c.className = 'container';
+    c.className = 'container nav-inner';
     var brand = document.createElement('a');
     brand.href = 'index.html';
-    brand.className = 'nav-brand';
-    brand.textContent = 'Hermes KB';
+    brand.className = 'brand';
+    brand.innerHTML = 'Hermes <span class="brand-accent">KB</span>';
     c.appendChild(brand);
     var ul = document.createElement('ul');
     ul.className = 'nav-links';

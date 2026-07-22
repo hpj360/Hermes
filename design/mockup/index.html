@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Hermes KB · 你的私人酒类知识管家</title>
-  <!-- 字体：Noto Serif SC 衬线标题 + Inter 正文 -->
+  <!-- 字体：Cormorant Garamond + Crimson Text + Noto Serif SC + JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Noto+Serif+SC:wght@500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
   <!-- 设计系统：token + 复用组件 -->
   <link rel="stylesheet" href="_tokens.css">
   <link rel="stylesheet" href="_components.css">
@@ -73,7 +73,63 @@
         <a class="btn-ghost btn-ghost-white" href="_modal-import.html">导入知识</a>
       </div>
     </div>
+    <!-- C3: 金箔精选引用（差异化亮点） -->
+    <div class="container" style="margin-top: var(--sp-8);">
+      <div class="gold-foil-card">
+        <div class="foil-title">「鸡尾酒不是发明出来的，而是被发现的。」</div>
+        <p class="foil-quote">从 1806 年《Balance and Columbian Repository》首次定义 "Cocktail" 为"烈酒、糖、水、苦精的混合"，到 IBA 守护的 100 款金标准——每一杯经典背后都有一段被引用考证的历史。</p>
+        <div class="foil-attribution">— Hermes KB 编辑部 · 引自 IBA 官方档案</div>
+      </div>
+    </div>
   </header>
+
+  <!-- C3: 今日推荐配方（杂志式卡片） -->
+  <section class="section" style="background: var(--ink-50); background-image: var(--noise-bg); background-blend-mode: overlay;">
+    <div class="container">
+      <h2 class="section-title">今日推荐 <span style="font-family: var(--font-sans); font-size: var(--fs-sm); color: var(--ink-400); font-weight: 400; margin-left: var(--sp-2);">EDITOR'S PICK</span></h2>
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--sp-6);">
+        <article class="recipe-card-magazine">
+          <div class="mag-thumb-placeholder"></div>
+          <div class="mag-body">
+            <div class="mag-kicker">IBA 经典 · 1880s</div>
+            <h3 class="mag-title">马天尼 Martini</h3>
+            <p class="mag-deck">干爽、清冽、杜松子主导。被誉为"鸡尾酒之王"，金酒与干味美思的极简对话。</p>
+            <div class="mag-meta">
+              <span class="mag-spirit">基酒：金酒</span>
+              <span class="mag-abv">ABV ~24%</span>
+              <span>难度：★☆☆</span>
+            </div>
+          </div>
+        </article>
+        <article class="recipe-card-magazine">
+          <div class="mag-thumb-placeholder"></div>
+          <div class="mag-body">
+            <div class="mag-kicker">夏日长饮 · 古巴</div>
+            <h3 class="mag-title">莫吉托 Mojito</h3>
+            <p class="mag-deck">清新、薄荷凉爽、酸甜平衡。海明威的最爱，哈瓦那阳光下的经典。</p>
+            <div class="mag-meta">
+              <span class="mag-spirit">基酒：朗姆酒</span>
+              <span class="mag-abv">ABV ~12%</span>
+              <span>难度：★☆☆</span>
+            </div>
+          </div>
+        </article>
+        <article class="recipe-card-magazine">
+          <div class="mag-thumb-placeholder"></div>
+          <div class="mag-body">
+            <div class="mag-kicker">IBA 经典 · 1919 佛罗伦萨</div>
+            <h3 class="mag-title">尼格罗尼 Negroni</h3>
+            <p class="mag-deck">等比结构，苦甜平衡。意大利伯爵的发明，一杯致敬生活的 aperitivo。</p>
+            <div class="mag-meta">
+              <span class="mag-spirit">基酒：金酒</span>
+              <span class="mag-abv">ABV ~24%</span>
+              <span>难度：★☆☆</span>
+            </div>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
 
   <!-- 头条问答区：精选问答 + 引用来源预览 -->
   <section class="section">
