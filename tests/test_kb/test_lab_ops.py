@@ -143,3 +143,27 @@ def test_match_records_missing(seeded_recipes_ops):
     stat = get_missing_stats("君度")
     assert stat is not None
     assert stat["missing_count"] >= 1
+
+
+def test_lab_dashboard_aggregation(seeded_recipes_ops):
+    """运营看板返回完整指标。"""
+    from hermes_kb.lab_dashboard import get_lab_dashboard
+    from hermes_kb.recipe_match import match_recipes
+
+    # 制造一些匹配和缺失数据
+    match_recipes({"金酒", "味美思", "橄榄"})
+    match_recipes({"金酒", "柠檬汁"})
+
+    dashboard = get_lab_dashboard()
+    assert "recipe_count" in dashboard
+    assert "weekly_match_count" in dashboard
+    assert "top_recipe" in dashboard
+    assert "top_missing" in dashboard
+    assert "substitute_coverage" in dashboard
+    assert "user_substitute_count" in dashboard
+    assert "daily_recipe" in dashboard
+    assert "season_coverage" in dashboard
+
+    assert dashboard["recipe_count"] >= 8
+    assert isinstance(dashboard["substitute_coverage"], (int, float))
+    assert 0 <= dashboard["substitute_coverage"] <= 1
