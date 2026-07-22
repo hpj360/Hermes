@@ -177,6 +177,12 @@ class TagCreateReq(BaseModel):
     color: str = Field(default="#6b7280", max_length=16)
 
 
+# B6：外部数据源同步请求
+class SyncRequest(BaseModel):
+    source: str = Field(..., description="数据源：thecocktaildb / iba_dataset / bar_assistant")
+    limit: int = Field(default=50, ge=1, le=500)
+
+
 # ---------------------------------------------------------------------------
 # 应用工厂
 # ---------------------------------------------------------------------------
@@ -911,6 +917,69 @@ def create_app() -> FastAPI:
         from hermes_kb.lab_dashboard import get_lab_dashboard
 
         return get_lab_dashboard()
+
+    # -----------------------------------------------------------------------
+    # B6: 外部数据源同步 + 配方治理
+    # -----------------------------------------------------------------------
+    @app.post("/api/lab/sync", dependencies=[Depends(require_age_gate)])
+    async def lab_sync(req: SyncRequest) -> dict[str, Any]:
+        """同步外部数据源配方/替代材料。
+
+        source 取值：
+        - thecocktaildb: 全量拉取 TheCocktailDB 配方
+        - iba_dataset: 拉取 IBA 官方金标准配方（100 款）
+        - bar_assistant: 同步 bar-assistant 替代材料关系
+        """
+        if req.source == "thecocktaildb":
+            from hermes_kb.thecocktaildb_sync import sync_thecocktaildb
+            result = sync_thecocktaildb(limit=req.limit)
+        elif req.source == "iba_dataset":
+            from hermes_kb.iba_dataset_importer import sync_iba_dataset
+            result = sync_iba_dataset()
+        elif req.source == "bar_assistant":
+            from hermes_kb.bar_assistant_sync import sync_bar_assistant_substitutes
+            result = sync_bar_assistant_substitutes()
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported source: {req.source}. Supported: thecocktaildb / iba_dataset / bar_assistant",
+            )
+        return {"source": req.source, **result}
+
+    @app.get("/api/lab/recipes", dependencies=[Depends(require_age_gate)])
+    async def lab_recipes_list(
+        source: str | None = None,
+        verified: bool | None = None,
+        hidden: bool | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """配方列表（支持按 source/verified/hidden/status 筛选）。"""
+        from hermes_kb.recipe_filter import filter_recipes
+
+        limit = max(1, min(limit, 500))
+        items = filter_recipes(
+            source=source, verified=verified, hidden=hidden, status=status, limit=limit
+        )
+        return {"items": items}
+
+    @app.post("/api/lab/recipes/{doc_id}/verify", dependencies=[Depends(require_age_gate)])
+    async def lab_verify_recipe(doc_id: str) -> dict[str, Any]:
+        """审核通过配方（verified=True, status=published）。"""
+        from hermes_kb.recipe_filter import verify_recipe
+
+        if not verify_recipe(doc_id):
+            raise HTTPException(status_code=404, detail=f"Recipe not found: {doc_id}")
+        return {"doc_id": doc_id, "status": "ok"}
+
+    @app.post("/api/lab/recipes/{doc_id}/hide", dependencies=[Depends(require_age_gate)])
+    async def lab_hide_recipe(doc_id: str, hidden: bool = True) -> dict[str, Any]:
+        """隐藏/取消隐藏配方。"""
+        from hermes_kb.recipe_filter import hide_recipe
+
+        if not hide_recipe(doc_id, hidden=hidden):
+            raise HTTPException(status_code=404, detail=f"Recipe not found: {doc_id}")
+        return {"doc_id": doc_id, "hidden": hidden}
 
     # -----------------------------------------------------------------------
     # 静态文件挂载（单进程部署）
