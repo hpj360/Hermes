@@ -1,5 +1,28 @@
 /* Hermes KB 组件样式 —— 复用组件，各页面引用 _tokens.css 后引入本文件 */
 
+/* === C2: 全局氛围背景 === */
+body {
+  background: var(--paper-bg);
+  background-image: var(--noise-bg);
+  background-blend-mode: overlay;
+  background-attachment: fixed;
+}
+/* 页面装饰：顶部金箔分隔线 */
+.page-title {
+  position: relative;
+  padding-bottom: var(--sp-3);
+}
+.page-title::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 60px;
+  height: 3px;
+  background: var(--gold-foil);
+  border-radius: var(--r-full);
+}
+
 /* === 按钮 === */
 .btn-primary, .btn-secondary, .btn-ghost, .btn-danger {
   display: inline-flex; align-items: center; gap: var(--sp-2);
@@ -370,3 +393,263 @@ html { scroll-behavior: smooth; }
 .source-tag.iba_dataset, .source-tag.iba { background: rgba(202, 138, 4, 0.12); color: var(--gold-700); }
 .source-tag.bar_assistant { background: rgba(37, 99, 235, 0.08); color: #1d4ed8; }
 .row-actions .btn-ghost { padding: 2px 8px; font-size: var(--fs-xs); }
+
+
+/* ════════════════════════════════════════════════════════════════════
+ * C2: 核心组件重构 — 金箔引用卡 + 杂志配方卡 + 氛围导航
+ * 设计宪法：frontend-design/SKILL.md（奢华精致 + 编辑杂志混合基调）
+ * 不删除已有组件，用追加/更具体选择器覆盖。
+ * ════════════════════════════════════════════════════════════════════ */
+
+/* === C2: 金箔引用卡片（差异化亮点） === */
+.citation-list {
+  /* 覆盖原有样式：金箔渐变边框 + 噪点底 + 戏剧化阴影 */
+  background: var(--gold-100);
+  background-image: var(--noise-bg);
+  background-blend-mode: overlay;
+  border: 1px solid transparent;
+  border-left: 4px solid var(--gold-500);
+  border-radius: 0 var(--r-lg) var(--r-lg) 0;
+  padding: var(--sp-4) var(--sp-6);
+  margin: var(--sp-6) 0;
+  box-shadow: var(--shadow-md);
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow var(--duration-base) var(--ease-out);
+}
+.citation-list::before {
+  /* 金箔装饰角标 */
+  content: "";
+  position: absolute;
+  top: 0; right: 0;
+  width: 60px; height: 60px;
+  background: var(--gold-foil);
+  opacity: 0.15;
+  clip-path: polygon(100% 0, 0 0, 100% 100%);
+}
+.citation-list:hover {
+  box-shadow: var(--shadow-gold);
+}
+.citation-list .cite-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-sm);
+  color: var(--gold-700);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin-bottom: var(--sp-3);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.citation-list .cite-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--gold-foil);
+  opacity: 0.5;
+}
+.citation-list .cite-num {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: var(--fs-lg);
+  background: var(--gold-foil-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  min-width: 1.75rem;
+}
+
+/* === C2: 独立金箔卡片（英雄区/精选引用） === */
+.gold-foil-card {
+  background: #fff;
+  background-image: var(--noise-bg);
+  background-blend-mode: overlay;
+  border-radius: var(--r-lg);
+  padding: var(--sp-8);
+  box-shadow: var(--shadow-drama);
+  position: relative;
+  overflow: hidden;
+}
+.gold-foil-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 2px;
+  background: var(--gold-foil);
+  border-radius: var(--r-lg);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0.7;
+}
+.gold-foil-card .foil-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-2xl);
+  background: var(--gold-foil-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: var(--sp-3);
+}
+.gold-foil-card .foil-quote {
+  font-family: var(--font-serif);
+  font-size: var(--fs-lg);
+  font-style: italic;
+  color: var(--ink-900);
+  line-height: 1.7;
+  margin-bottom: var(--sp-4);
+}
+.gold-foil-card .foil-attribution {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  color: var(--ink-400);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  border-top: 1px solid var(--ink-200);
+  padding-top: var(--sp-3);
+}
+
+/* === C2: 杂志式配方卡片 === */
+.recipe-card-magazine {
+  background: #fff;
+  border: 1px solid var(--ink-200);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--duration-base) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+  display: flex;
+  flex-direction: column;
+}
+.recipe-card-magazine:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-4px);
+}
+.recipe-card-magazine .mag-thumb {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+  background: var(--brand-gradient);
+  position: relative;
+}
+.recipe-card-magazine .mag-thumb-placeholder {
+  width: 100%;
+  height: 200px;
+  background: var(--brand-gradient);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.recipe-card-magazine .mag-thumb-placeholder::after {
+  content: "◆";
+  font-size: var(--fs-3xl);
+  color: var(--gold-500);
+  opacity: 0.6;
+}
+.recipe-card-magazine .mag-body {
+  padding: var(--sp-4) var(--sp-6) var(--sp-6);
+}
+.recipe-card-magazine .mag-kicker {
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  color: var(--gold-700);
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  margin-bottom: var(--sp-2);
+}
+.recipe-card-magazine .mag-title {
+  font-family: var(--font-serif);
+  font-size: var(--fs-xl);
+  color: var(--ink-900);
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: var(--sp-2);
+}
+.recipe-card-magazine .mag-deck {
+  font-family: var(--font-serif);
+  font-size: var(--fs-sm);
+  font-style: italic;
+  color: var(--ink-600);
+  line-height: 1.6;
+  margin-bottom: var(--sp-3);
+}
+.recipe-card-magazine .mag-meta {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--ink-100);
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  color: var(--ink-400);
+}
+.recipe-card-magazine .mag-meta .mag-spirit {
+  color: var(--brand-700);
+  font-weight: 600;
+}
+.recipe-card-magazine .mag-meta .mag-abv {
+  font-family: var(--font-mono);
+  color: var(--gold-700);
+}
+
+/* === C2: 氛围导航 === */
+.navbar {
+  /* 覆盖原有：噪点底 + 深酒红渐变 + 金箔底边 */
+  background: var(--brand-900);
+  background-image: var(--noise-bg), var(--brand-gradient);
+  background-blend-mode: overlay, normal;
+  border-bottom: 2px solid transparent;
+  border-image: var(--gold-foil) 1;
+  box-shadow: var(--shadow-md);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.navbar .nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--nav-height);
+}
+.navbar .brand {
+  font-family: var(--font-serif);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.02em;
+}
+.navbar .brand .brand-accent {
+  background: var(--gold-foil-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-style: italic;
+}
+.navbar .nav-links {
+  display: flex;
+  gap: var(--sp-6);
+}
+.navbar .nav-links a {
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  color: rgba(255, 255, 255, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: var(--sp-1) 0;
+  border-bottom: 2px solid transparent;
+  transition: color var(--duration-fast), border-color var(--duration-fast);
+}
+.navbar .nav-links a:hover,
+.navbar .nav-links a.active {
+  color: #fff;
+  border-bottom-color: var(--gold-500);
+}
+
+/* 移动端折叠（纯 CSS checkbox 技巧预留） */
+@media (max-width: 640px) {
+  .navbar .nav-links { gap: var(--sp-3); }
+  .navbar .nav-links a { font-size: var(--fs-xs); }
+}
