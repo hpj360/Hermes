@@ -10,6 +10,7 @@ SEED_RECIPES: list[dict] = [
         "title": "马天尼 Martini",
         "base_spirit": "gin",
         "difficulty": "easy",
+        "season": "autumn",
         "ingredients": ["金酒", "味美思", "橄榄"],
         "content": """# 马天尼 Martini
 
@@ -33,6 +34,7 @@ SEED_RECIPES: list[dict] = [
         "title": "莫吉托 Mojito",
         "base_spirit": "rum",
         "difficulty": "easy",
+        "season": "summer",
         "ingredients": ["朗姆酒", "青柠汁", "糖浆", "薄荷叶", "苏打水"],
         "content": """# 莫吉托 Mojito
 
@@ -58,6 +60,7 @@ SEED_RECIPES: list[dict] = [
         "title": "尼格罗尼 Negroni",
         "base_spirit": "gin",
         "difficulty": "easy",
+        "season": "autumn",
         "ingredients": ["金酒", "金巴利", "味美思", "橙皮"],
         "content": """# 尼格罗尼 Negroni
 
@@ -81,6 +84,7 @@ SEED_RECIPES: list[dict] = [
         "title": "玛格丽特 Margarita",
         "base_spirit": "tequila",
         "difficulty": "medium",
+        "season": "summer",
         "ingredients": ["龙舌兰", "君度", "青柠汁", "柠檬片"],
         "content": """# 玛格丽特 Margarita
 
@@ -105,6 +109,7 @@ SEED_RECIPES: list[dict] = [
         "title": "古典鸡尾酒 Old Fashioned",
         "base_spirit": "whiskey",
         "difficulty": "easy",
+        "season": "winter",
         "ingredients": ["威士忌", "糖浆", "苦精", "橙皮"],
         "content": """# 古典鸡尾酒 Old Fashioned
 
@@ -129,6 +134,7 @@ SEED_RECIPES: list[dict] = [
         "title": "白色佳人 White Lady",
         "base_spirit": "gin",
         "difficulty": "medium",
+        "season": "spring",
         "ingredients": ["金酒", "君度", "柠檬汁"],
         "content": """# 白色佳人 White Lady
 
@@ -151,6 +157,7 @@ SEED_RECIPES: list[dict] = [
         "title": "龙舌兰日出 Tequila Sunrise",
         "base_spirit": "tequila",
         "difficulty": "easy",
+        "season": "summer",
         "ingredients": ["龙舌兰", "橙汁", "糖浆"],
         "content": """# 龙舌兰日出 Tequila Sunrise
 
@@ -174,6 +181,7 @@ SEED_RECIPES: list[dict] = [
         "title": "血腥玛丽 Bloody Mary",
         "base_spirit": "vodka",
         "difficulty": "easy",
+        "season": "winter",
         "ingredients": ["伏特加", "番茄汁", "柠檬汁", "苦精"],
         "content": """# 血腥玛丽 Bloody Mary
 
