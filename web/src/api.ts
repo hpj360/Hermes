@@ -7,6 +7,14 @@ import type {
   DocumentItem,
   HealthStatus,
   HistoryItem,
+  LabDashboard,
+  LabDailyRecipe,
+  LabHotRecipe,
+  LabMatchResult,
+  LabRecipe,
+  LabRecipeInput,
+  LabRecipeVariant,
+  LabSyncResult,
   RAGAnswer,
   SSEEvent,
   SeedResult,
@@ -283,6 +291,160 @@ export const api = {
     return request("/api/age-gate/confirm", {
       method: "POST",
       body: JSON.stringify({ confirmed }),
+    });
+  },
+
+  // -------------------------------------------------------------------------
+  // M3-M4 实验室：18 个 /api/lab/* 端点
+  // -------------------------------------------------------------------------
+  // 1. GET /api/lab/match — 材料匹配
+  async labMatch(ingredients: string[]): Promise<LabMatchResult> {
+    const qs = ingredients.length
+      ? `?ingredients=${encodeURIComponent(ingredients.join(","))}`
+      : "";
+    return request<LabMatchResult>(`/api/lab/match${qs}`);
+  },
+
+  // 2. GET /api/lab/hot — 本周热门配方
+  async labHot(limit?: number, days?: number): Promise<{ items: LabHotRecipe[] }> {
+    const params = new URLSearchParams();
+    if (limit) params.set("limit", String(limit));
+    if (days) params.set("days", String(days));
+    const qs = params.toString();
+    return request(`/api/lab/hot${qs ? "?" + qs : ""}`);
+  },
+
+  // 3. POST /api/lab/view/{doc_id} — 记录配方查看
+  async labView(docId: string): Promise<{ doc_id: string; status: string }> {
+    return request(`/api/lab/view/${encodeURIComponent(docId)}`, { method: "POST" });
+  },
+
+  // 4. GET /api/lab/daily — 今日推荐
+  async labDaily(): Promise<LabDailyRecipe> {
+    return request<LabDailyRecipe>("/api/lab/daily");
+  },
+
+  // 5. GET /api/lab/missing-stats — 缺料统计
+  async labMissingStats(limit?: number): Promise<{
+    items: Array<{ canonical: string; missing_count: number; last_missing_at?: string | null }>;
+  }> {
+    const qs = limit ? `?limit=${limit}` : "";
+    return request(`/api/lab/missing-stats${qs}`);
+  },
+
+  // 6. POST /api/lab/substitute — 用户提交替代材料
+  async labSaveSubstitute(
+    canonical: string,
+    substitute: string
+  ): Promise<{ canonical: string; substitute: string; status: string }> {
+    return request("/api/lab/substitute", {
+      method: "POST",
+      body: JSON.stringify({ canonical, substitute }),
+    });
+  },
+
+  // 7. GET /api/lab/dashboard — 实验室仪表盘
+  async labDashboard(): Promise<LabDashboard> {
+    return request<LabDashboard>("/api/lab/dashboard");
+  },
+
+  // 8. POST /api/lab/sync — 外部数据源同步
+  async labSync(source: string, limit?: number): Promise<LabSyncResult> {
+    const body: Record<string, unknown> = { source };
+    if (limit !== undefined) body.limit = limit;
+    return request<LabSyncResult>("/api/lab/sync", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  // 9. GET /api/lab/recipes — 配方治理列表
+  async labRecipes(params?: {
+    source?: string;
+    verified?: boolean;
+    hidden?: boolean;
+    status?: string;
+    limit?: number;
+  }): Promise<{ items: LabRecipe[] }> {
+    const sp = new URLSearchParams();
+    if (params?.source) sp.set("source", params.source);
+    if (params?.verified !== undefined) sp.set("verified", String(params.verified));
+    if (params?.hidden !== undefined) sp.set("hidden", String(params.hidden));
+    if (params?.status) sp.set("status", params.status);
+    if (params?.limit !== undefined) sp.set("limit", String(params.limit));
+    const qs = sp.toString();
+    return request(`/api/lab/recipes${qs ? "?" + qs : ""}`);
+  },
+
+  // 10. POST /api/lab/recipes/{doc_id}/verify — 标记已验证
+  async labVerifyRecipe(docId: string): Promise<{ doc_id: string; status: string }> {
+    return request(`/api/lab/recipes/${encodeURIComponent(docId)}/verify`, { method: "POST" });
+  },
+
+  // 11. POST /api/lab/recipes/{doc_id}/hide?hidden= — 隐藏/取消隐藏
+  async labHideRecipe(
+    docId: string,
+    hidden: boolean
+  ): Promise<{ doc_id: string; hidden: boolean }> {
+    return request(
+      `/api/lab/recipes/${encodeURIComponent(docId)}/hide?hidden=${hidden}`,
+      { method: "POST" }
+    );
+  },
+
+  // 12. POST /api/lab/recipes — 创建 UGC 配方
+  async labCreateRecipe(data: LabRecipeInput): Promise<{ doc_id: string; status: string; title: string }> {
+    return request("/api/lab/recipes", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  // 13. PUT /api/lab/recipes/{doc_id} — 编辑（仅 draft）
+  async labUpdateRecipe(
+    docId: string,
+    data: Partial<LabRecipeInput>
+  ): Promise<{ doc_id: string; status: string }> {
+    return request(`/api/lab/recipes/${encodeURIComponent(docId)}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  },
+
+  // 14. POST /api/lab/recipes/{doc_id}/submit — 提交审核（draft→pending）
+  async labSubmitRecipe(docId: string): Promise<{ doc_id: string; status: string }> {
+    return request(`/api/lab/recipes/${encodeURIComponent(docId)}/submit`, { method: "POST" });
+  },
+
+  // 15. POST /api/lab/recipes/{doc_id}/approve — 审核通过（pending→published）
+  async labApproveRecipe(docId: string): Promise<{ doc_id: string; status: string }> {
+    return request(`/api/lab/recipes/${encodeURIComponent(docId)}/approve`, { method: "POST" });
+  },
+
+  // 16. POST /api/lab/recipes/{doc_id}/reject — 审核驳回（pending→rejected）
+  async labRejectRecipe(
+    docId: string,
+    reason?: string
+  ): Promise<{ doc_id: string; status: string; reason?: string }> {
+    return request(`/api/lab/recipes/${encodeURIComponent(docId)}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason || "" }),
+    });
+  },
+
+  // 17. GET /api/lab/recipes/{doc_id}/variants — 配方变体列表
+  async labListVariants(docId: string): Promise<{ items: LabRecipeVariant[]; count: number }> {
+    return request(`/api/lab/recipes/${encodeURIComponent(docId)}/variants`);
+  },
+
+  // 18. POST /api/lab/recipes/{doc_id}/variant — 创建变体关联
+  async labCreateVariant(
+    docId: string,
+    data: { variant_doc_id: string; variant_note: string }
+  ): Promise<{ base_doc_id: string; variant_doc_id: string; status: string }> {
+    return request(`/api/lab/recipes/${encodeURIComponent(docId)}/variant`, {
+      method: "POST",
+      body: JSON.stringify(data),
     });
   },
 };

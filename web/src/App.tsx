@@ -8,8 +8,11 @@ import { DocumentList } from "./components/DocumentList";
 import { DocumentDetailPanel } from "./components/DocumentDetailPanel";
 import { ImportDialog } from "./components/ImportDialog";
 import { TagPanel } from "./components/TagPanel";
+import { LabPanel } from "./components/LabPanel";
+import { RecipePanel } from "./components/RecipePanel";
+import { RecipeEditorPanel } from "./components/RecipeEditorPanel";
 
-type Tab = "chat" | "docs" | "detail" | "tags";
+type Tab = "chat" | "docs" | "detail" | "tags" | "lab" | "recipes" | "recipe-editor";
 
 export default function App() {
   const [ageConfirmed, setAgeConfirmed] = useState(false);
@@ -24,6 +27,8 @@ export default function App() {
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [highlightChunk, setHighlightChunk] = useState<number | undefined>(undefined);
   const [seeding, setSeeding] = useState(false);
+  // M4 实验室 / 配方治理
+  const [editingRecipeId, setEditingRecipeId] = useState<string | undefined>(undefined);
 
   // 健康检查（同时判断是否需要登录）
   const refreshHealth = async () => {
@@ -193,6 +198,26 @@ export default function App() {
           >
             🏷️ 标签管理
           </button>
+          <button
+            className={`w-full text-left px-4 py-3 text-sm border-b ${
+              tab === "lab"
+                ? "bg-brand-50 text-brand-700 font-medium"
+                : "text-gray-700 hover:bg-gray-50"
+            }`}
+            onClick={() => { setTab("lab"); setSidebarOpen(false); }}
+          >
+            🧪 实验室
+          </button>
+          <button
+            className={`w-full text-left px-4 py-3 text-sm border-b ${
+              tab === "recipes" || tab === "recipe-editor"
+                ? "bg-brand-50 text-brand-700 font-medium"
+                : "text-gray-700 hover:bg-gray-50"
+            }`}
+            onClick={() => { setTab("recipes"); setEditingRecipeId(undefined); setSidebarOpen(false); }}
+          >
+            📝 配方
+          </button>
         </nav>
 
         {/* 内容区 */}
@@ -221,6 +246,19 @@ export default function App() {
             />
           ) : tab === "tags" ? (
             <TagPanel onChange={refreshDocs} />
+          ) : tab === "lab" ? (
+            <LabPanel onJumpToDoc={jumpToDocChunk} />
+          ) : tab === "recipe-editor" ? (
+            <RecipeEditorPanel
+              docId={editingRecipeId}
+              onSaved={() => { setTab("recipes"); setEditingRecipeId(undefined); }}
+              onCancel={() => { setTab("recipes"); setEditingRecipeId(undefined); }}
+            />
+          ) : tab === "recipes" ? (
+            <RecipePanel
+              onCreateRecipe={() => { setEditingRecipeId(undefined); setTab("recipe-editor"); }}
+              onEditRecipe={(docId) => { setEditingRecipeId(docId); setTab("recipe-editor"); }}
+            />
           ) : (
             <DocumentList
               refreshKey={docRefreshKey}
