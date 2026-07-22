@@ -224,3 +224,88 @@ def test_create_variant_duplicate(base_and_variant):
     create_variant_link(base["doc_id"], variant["doc_id"], "第一次")
     ok = create_variant_link(base["doc_id"], variant["doc_id"], "第二次")
     assert ok is False
+
+
+def test_api_create_recipe(client):
+    """POST /api/lab/recipes 创建 UGC 配方。"""
+    resp = client.post("/api/lab/recipes", json={
+        "title": "API 特调",
+        "ingredients": ["金酒", "柠檬汁"],
+        "content": "# API 特调\n\n## 配方\n- 金酒 50ml\n- 柠檬汁 20ml",
+        "base_spirit": "gin",
+        "difficulty": "easy",
+        "season": "summer",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "draft"
+    assert data["doc_id"] is not None
+
+
+def test_api_recipe_lifecycle(client):
+    """UGC 配方完整生命周期：创建→提交→通过。"""
+    # 创建
+    created = client.post("/api/lab/recipes", json={
+        "title": "生命周期测试",
+        "ingredients": ["金酒"],
+        "content": "# 生命周期测试\n\n## 配方\n- 金酒 50ml",
+        "base_spirit": "gin",
+        "difficulty": "easy",
+    }).json()
+    doc_id = created["doc_id"]
+
+    # 提交
+    resp = client.post(f"/api/lab/recipes/{doc_id}/submit")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "pending"
+
+    # 通过
+    resp = client.post(f"/api/lab/recipes/{doc_id}/approve")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+
+def test_api_recipe_reject(client):
+    """POST /api/lab/recipes/{doc_id}/reject 审核驳回。"""
+    created = client.post("/api/lab/recipes", json={
+        "title": "将被驳回",
+        "ingredients": ["金酒"],
+        "content": "# 将被驳回",
+        "base_spirit": "gin",
+        "difficulty": "easy",
+    }).json()
+    client.post(f"/api/lab/recipes/{created['doc_id']}/submit")
+
+    resp = client.post(
+        f"/api/lab/recipes/{created['doc_id']}/reject",
+        json={"reason": "配方不完整"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "rejected"
+
+
+def test_api_recipe_variants(client, base_and_variant):
+    """GET /api/lab/recipes/{doc_id}/variants 查看变体。"""
+    from hermes_kb.recipe_variants import create_variant_link
+
+    base, variant = base_and_variant
+    create_variant_link(base["doc_id"], variant["doc_id"], "测试变体")
+
+    resp = client.get(f"/api/lab/recipes/{base['doc_id']}/variants")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["variant_title"] == "辛辣马天尼"
+
+
+def test_api_pending_recipes(client, base_and_variant):
+    """GET /api/lab/recipes?status=pending 查看待审核。"""
+    from hermes_kb.recipe_crud import submit_recipe
+
+    base, _ = base_and_variant
+    submit_recipe(base["doc_id"])
+
+    resp = client.get("/api/lab/recipes", params={"status": "pending"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert any(i["title"] == "原版马天尼" for i in data["items"])

@@ -982,6 +982,99 @@ def create_app() -> FastAPI:
         return {"doc_id": doc_id, "hidden": hidden}
 
     # -----------------------------------------------------------------------
+    # M4.3：UGC 调酒研究室
+    # -----------------------------------------------------------------------
+    @app.post("/api/lab/recipes", dependencies=[Depends(require_age_gate)])
+    async def lab_create_recipe(req: dict[str, Any]) -> dict[str, Any]:
+        """创建 UGC 配方（draft 状态）。"""
+        from hermes_kb.recipe_crud import create_recipe
+
+        title = (req.get("title") or "").strip()
+        content = req.get("content") or ""
+        if not title or not content.strip():
+            raise HTTPException(status_code=400, detail="title 和 content 必填")
+        ingredients = req.get("ingredients") or []
+        result = create_recipe(
+            title=title,
+            ingredients=ingredients,
+            content=content,
+            base_spirit=req.get("base_spirit", ""),
+            difficulty=req.get("difficulty", "easy"),
+            season=req.get("season"),
+        )
+        return result
+
+    @app.put("/api/lab/recipes/{doc_id}", dependencies=[Depends(require_age_gate)])
+    async def lab_update_recipe(doc_id: str, req: dict[str, Any]) -> dict[str, Any]:
+        """编辑 UGC 配方（仅 draft 状态）。"""
+        from hermes_kb.recipe_crud import update_recipe
+
+        ok = update_recipe(
+            doc_id,
+            title=req.get("title"),
+            ingredients=req.get("ingredients"),
+            content=req.get("content"),
+            season=req.get("season"),
+        )
+        if not ok:
+            raise HTTPException(status_code=400, detail="仅 draft 状态可编辑")
+        return {"doc_id": doc_id, "status": "ok"}
+
+    @app.post("/api/lab/recipes/{doc_id}/submit", dependencies=[Depends(require_age_gate)])
+    async def lab_submit_recipe(doc_id: str) -> dict[str, Any]:
+        """提交审核（draft → pending）。"""
+        from hermes_kb.recipe_crud import submit_recipe
+
+        ok = submit_recipe(doc_id)
+        if not ok:
+            raise HTTPException(status_code=400, detail="仅 draft 状态可提交")
+        return {"doc_id": doc_id, "status": "pending"}
+
+    @app.post("/api/lab/recipes/{doc_id}/approve", dependencies=[Depends(require_age_gate)])
+    async def lab_approve_recipe(doc_id: str) -> dict[str, Any]:
+        """审核通过（pending → published）。"""
+        from hermes_kb.recipe_crud import approve_recipe
+
+        ok = approve_recipe(doc_id)
+        if not ok:
+            raise HTTPException(status_code=400, detail="仅 pending 状态可审核")
+        return {"doc_id": doc_id, "status": "ok"}
+
+    @app.post("/api/lab/recipes/{doc_id}/reject", dependencies=[Depends(require_age_gate)])
+    async def lab_reject_recipe(doc_id: str, req: dict[str, Any]) -> dict[str, Any]:
+        """审核驳回（pending → rejected）。"""
+        from hermes_kb.recipe_crud import reject_recipe
+
+        reason = req.get("reason", "")
+        ok = reject_recipe(doc_id, reason=reason)
+        if not ok:
+            raise HTTPException(status_code=400, detail="仅 pending 状态可驳回")
+        return {"doc_id": doc_id, "status": "rejected", "reason": reason}
+
+    @app.get("/api/lab/recipes/{doc_id}/variants", dependencies=[Depends(require_age_gate)])
+    async def lab_recipe_variants(doc_id: str) -> dict[str, Any]:
+        """查看配方的变体列表。"""
+        from hermes_kb.recipe_variants import get_variants
+
+        items = get_variants(doc_id)
+        return {"items": items, "count": len(items)}
+
+    @app.post("/api/lab/recipes/{doc_id}/variant", dependencies=[Depends(require_age_gate)])
+    async def lab_create_variant(doc_id: str, req: dict[str, Any]) -> dict[str, Any]:
+        """创建变体（基于 doc_id 配方创作新配方并关联）。"""
+        from hermes_kb.recipe_crud import create_recipe
+        from hermes_kb.recipe_variants import create_variant_link
+
+        variant_doc_id = req.get("variant_doc_id")
+        variant_note = req.get("variant_note", "")
+        if not variant_doc_id:
+            raise HTTPException(status_code=400, detail="variant_doc_id 必填")
+        ok = create_variant_link(doc_id, variant_doc_id, variant_note)
+        if not ok:
+            raise HTTPException(status_code=400, detail="关联已存在或配方不存在")
+        return {"base_doc_id": doc_id, "variant_doc_id": variant_doc_id, "status": "ok"}
+
+    # -----------------------------------------------------------------------
     # 静态文件挂载（单进程部署）
     # -----------------------------------------------------------------------
     web_dist = Path(__file__).resolve().parent.parent.parent / "web" / "dist"
