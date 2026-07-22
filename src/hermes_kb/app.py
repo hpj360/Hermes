@@ -362,14 +362,6 @@ def create_app() -> FastAPI:
         ok = importer.delete_document(doc_id)
         if not ok:
             raise HTTPException(status_code=404, detail="文档不存在")
-        # 同步删除 tag 关联
-        with get_session() as session:
-            links = session.exec(
-                select(DocumentTag).where(DocumentTag.doc_id == doc_id)
-            ).all()
-            for link in links:
-                session.delete(link)
-            session.commit()
         return {"doc_id": doc_id, "status": "deleted"}
 
     # -----------------------------------------------------------------------
@@ -497,12 +489,6 @@ def create_app() -> FastAPI:
             tag = session.get(Tag, tag_id)
             if not tag:
                 raise HTTPException(status_code=404, detail="标签不存在")
-            # 删除关联
-            links = session.exec(
-                select(DocumentTag).where(DocumentTag.tag_id == tag_id)
-            ).all()
-            for link in links:
-                session.delete(link)
             session.delete(tag)
             session.commit()
             return {"id": tag_id, "status": "deleted"}

@@ -158,3 +158,86 @@ def test_foreign_key_pragma_enabled():
     with get_session() as session:
         result = session.execute(sa_text("PRAGMA foreign_keys")).scalar()
         assert result == 1, f"foreign_keys should be ON, got {result}"
+
+
+def test_delete_document_endpoint_cleans_all_relations(client):
+    """A2-2: DELETE /api/documents/{doc_id} 端点应通过级联清理所有关联表。"""
+    from sqlalchemy import text as sa_text
+
+    from hermes_kb.database import get_session
+    from hermes_kb.recipe_stats import increment_match_count
+
+    # 创建 doc + 关联数据
+    svc = ImportService()
+    doc_id = svc.import_text(title="端点删除测试", content="内容")["doc_id"]
+
+    with get_session() as session:
+        chunk = Chunk(doc_id=doc_id, idx=99, text="额外")
+        session.add(chunk)
+        tag = Tag(name=f"ep-tag-{doc_id[:8]}")
+        session.add(tag)
+        session.commit()
+        session.refresh(tag)
+        session.add(DocumentTag(doc_id=doc_id, tag_id=tag.id))
+        session.commit()
+
+    # 加 RecipeStats
+    increment_match_count(doc_id)
+
+    # 加 chunk_vec（用 idx=99 的额外 chunk，避免与 import_text 已插入的行冲突）
+    with get_session() as session:
+        chunk = session.exec(
+            select(Chunk).where(Chunk.doc_id == doc_id, Chunk.idx == 99)
+        ).first()
+        session.execute(sa_text(
+            "INSERT INTO chunk_vec(chunk_rowid, doc_id, vec) "
+            "VALUES (:rid, :did, '[]')"
+        ), {"rid": chunk.id, "did": doc_id})
+        session.commit()
+
+    # 调端点删除
+    resp = client.delete(f"/api/documents/{doc_id}")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "deleted"
+
+    # 验证所有关联表为空
+    with get_session() as session:
+        assert session.exec(select(Chunk).where(Chunk.doc_id == doc_id)).all() == []
+        assert session.exec(select(DocumentTag).where(DocumentTag.doc_id == doc_id)).all() == []
+        assert session.exec(select(RecipeStats).where(RecipeStats.doc_id == doc_id)).all() == []
+        vec_count = session.execute(sa_text(
+            "SELECT COUNT(*) FROM chunk_vec WHERE doc_id = :did"
+        ), {"did": doc_id}).scalar()
+        assert vec_count == 0
+        # Document 本身也应不存在
+        assert session.get(Document, doc_id) is None
+
+
+def test_delete_tag_endpoint_cleans_document_tags(client):
+    """A2-2: DELETE /api/tags/{tag_id} 端点应通过级联清理 DocumentTag。"""
+    from hermes_kb.database import get_session
+
+    svc = ImportService()
+    doc_id = svc.import_text(title="标签删除测试", content="内容")["doc_id"]
+
+    with get_session() as session:
+        tag = Tag(name=f"tg-{doc_id[:8]}")
+        session.add(tag)
+        session.commit()
+        session.refresh(tag)
+        tag_id = tag.id
+        session.add(DocumentTag(doc_id=doc_id, tag_id=tag_id))
+        session.commit()
+
+    # 调端点删除 tag
+    resp = client.delete(f"/api/tags/{tag_id}")
+    assert resp.status_code == 200
+
+    # DocumentTag 应被级联清理
+    with get_session() as session:
+        links = session.exec(
+            select(DocumentTag).where(DocumentTag.tag_id == tag_id)
+        ).all()
+        assert links == []
+        # Tag 本身也应不存在
+        assert session.get(Tag, tag_id) is None
