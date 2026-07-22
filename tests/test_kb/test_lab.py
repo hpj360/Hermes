@@ -361,3 +361,41 @@ def test_api_lab_view(seeded_recipes, client):
 
     stat = get_stats(doc_id)
     assert stat["view_count"] == 1
+
+
+def test_api_seed_recipes(client):
+    """POST /api/seed/recipes 导入 IBA 配方种子。"""
+    resp = client.post("/api/seed/recipes")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["seeded"] == 8
+    assert data["failed"] == 0
+    from hermes_kb.database import get_session
+    from hermes_kb.models import Document
+    from sqlmodel import select
+
+    with get_session() as session:
+        recipes = session.exec(
+            select(Document).where(Document.category == "recipe")
+        ).all()
+        assert len(recipes) == 8
+        titles = [d.title for d in recipes]
+        assert "马天尼 Martini" in titles
+
+
+def test_api_seed_recipes_idempotent(client):
+    """重复导入不会产生重复配方。"""
+    client.post("/api/seed/recipes")
+    resp = client.post("/api/seed/recipes")
+    assert resp.status_code == 200
+    from hermes_kb.database import get_session
+    from hermes_kb.models import Document
+    from sqlmodel import select
+
+    with get_session() as session:
+        count = len(
+            session.exec(
+                select(Document).where(Document.category == "recipe")
+            ).all()
+        )
+        assert count == 8

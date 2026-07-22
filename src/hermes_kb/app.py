@@ -694,6 +694,51 @@ def create_app() -> FastAPI:
             "items": imported,
         }
 
+    @app.post("/api/seed/recipes", dependencies=[Depends(require_auth)])
+    async def seed_recipes() -> dict[str, Any]:
+        """M3：导入 IBA 配方种子数据（幂等）。"""
+        from hermes_kb.seed_recipes import SEED_RECIPES
+
+        seeded = 0
+        failed = 0
+        items: list[dict[str, Any]] = []
+        for recipe in SEED_RECIPES:
+            with get_session() as session:
+                existing = session.exec(
+                    select(Document).where(Document.title == recipe["title"])
+                ).first()
+                if existing:
+                    items.append(
+                        {
+                            "title": recipe["title"],
+                            "status": "skipped",
+                            "doc_id": existing.doc_id,
+                        }
+                    )
+                    continue
+            try:
+                result = importer.import_text(
+                    content=recipe["content"],
+                    title=recipe["title"],
+                    source_type="seed",
+                    file_type="md",
+                )
+                if result.get("doc_id"):
+                    with get_session() as session:
+                        doc = session.get(Document, result["doc_id"])
+                        if doc:
+                            doc.category = "recipe"
+                            session.add(doc)
+                            session.commit()
+                seeded += 1
+                items.append({**result, "status": "imported"})
+            except Exception as e:
+                failed += 1
+                items.append(
+                    {"title": recipe["title"], "error": str(e), "status": "failed"}
+                )
+        return {"seeded": seeded, "failed": failed, "items": items}
+
     # -----------------------------------------------------------------------
     # 认证（M1-07）
     # -----------------------------------------------------------------------
