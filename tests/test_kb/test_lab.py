@@ -159,3 +159,82 @@ def test_seed_recipes_all_ingredients_canonical():
             assert ing in valid_names, (
                 f"配方 {recipe['title']} 的材料 {ing} 不在注册表中"
             )
+
+
+@pytest.fixture
+def seeded_recipes(tmp_db):
+    """导入种子配方的 ImportService。"""
+    from hermes_kb.rag import ImportService
+    from hermes_kb.seed_recipes import SEED_RECIPES
+
+    importer = ImportService()
+    for recipe in SEED_RECIPES:
+        importer.import_text(
+            content=recipe["content"],
+            title=recipe["title"],
+            source_type="seed",
+            file_type="md",
+        )
+        # 设置 category=recipe
+        from hermes_kb.database import get_session
+        from hermes_kb.models import Document
+        from sqlmodel import select
+
+        with get_session() as session:
+            doc = session.exec(
+                select(Document).where(Document.title == recipe["title"])
+            ).first()
+            if doc:
+                doc.category = "recipe"
+                session.add(doc)
+                session.commit()
+    return importer
+
+
+def test_match_full(seeded_recipes):
+    """材料齐全的配方进 full_match。"""
+    from hermes_kb.recipe_match import match_recipes
+
+    result = match_recipes({"金酒", "味美思", "橄榄"})
+    titles = [r["title"] for r in result["full_match"]]
+    assert "马天尼 Martini" in titles
+
+
+def test_match_partial(seeded_recipes):
+    """缺 1-2 种材料的配方进 partial_match。"""
+    from hermes_kb.recipe_match import match_recipes
+
+    result = match_recipes({"金酒", "柠檬汁"})
+    partial_titles = [r["title"] for r in result["partial_match"]]
+    assert "白色佳人 White Lady" in partial_titles
+    white_lady = next(r for r in result["partial_match"] if "白色佳人" in r["title"])
+    assert "君度" in white_lady["missing"]
+
+
+def test_match_substitute_resolves(seeded_recipes):
+    """有替代品时，缺的材料算"不缺"。"""
+    from hermes_kb.recipe_match import match_recipes
+
+    result = match_recipes({"龙舌兰", "橙味力娇酒", "青柠汁"})
+    titles = [r["title"] for r in result["full_match"]]
+    assert "玛格丽特 Margarita" in titles
+
+
+def test_match_skip_three_plus_missing(seeded_recipes):
+    """缺 3+ 种材料的配方不返回。"""
+    from hermes_kb.recipe_match import match_recipes
+
+    result = match_recipes({"金酒"})
+    all_titles = [r["title"] for r in result["full_match"]] + [
+        r["title"] for r in result["partial_match"]
+    ]
+    assert "莫吉托 Mojito" not in all_titles
+
+
+def test_match_empty_input(seeded_recipes):
+    """空材料集合返回空结果。"""
+    from hermes_kb.recipe_match import match_recipes
+
+    result = match_recipes(set())
+    assert result["full_match"] == []
+    assert result["partial_match"] == []
