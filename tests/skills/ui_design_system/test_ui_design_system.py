@@ -6,8 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 SKILL_DIR = Path(__file__).parent.parent.parent.parent / "skills" / "ui-design-system"
 SCRIPTS = SKILL_DIR / "scripts"
 TOKENS_BASE = SKILL_DIR / "tokens" / "tokens.base.json"

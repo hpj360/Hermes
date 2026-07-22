@@ -1,7 +1,6 @@
 """Tests for design-spec-skill-creator Skill"""
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 

@@ -22,7 +22,7 @@ class TestScan:
         f = tmp_path / "ui.html"
         f.write_text("<html><style>body { font-family: 'Inter', sans-serif; }</style></html>")
         out = tmp_path / "scan.json"
-        result = run_script("scan.py", "--target", str(f), "--output", str(out))
+        run_script("scan.py", "--target", str(f), "--output", str(out))
         data = json.loads(out.read_text())
         ids = [x["id"] for x in data["findings"]["anti_patterns"]]
         assert "inter-font" in ids

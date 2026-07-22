@@ -13,7 +13,7 @@ class TestRunAll:
     """测试一键验证（mock 模式）"""
 
     def test_run_all_generates_reports(self, tmp_path):
-        result = subprocess.run(
+        subprocess.run(
             [sys.executable, str(SCRIPTS / "run_all.py"),
              "--url", "http://example.invalid", "--output-dir", str(tmp_path)],
             capture_output=True, text=True, timeout=30,
@@ -27,7 +27,7 @@ class TestRunAll:
 
     def test_run_all_score_in_range(self, tmp_path):
         """总分应在 0-100 之间"""
-        result = subprocess.run(
+        subprocess.run(
             [sys.executable, str(SCRIPTS / "run_all.py"),
              "--url", "http://mock.test", "--output-dir", str(tmp_path)],
             capture_output=True, text=True, timeout=30,

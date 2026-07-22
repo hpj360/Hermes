@@ -4,8 +4,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 SKILL_DIR = Path(__file__).parent.parent.parent.parent / "skills" / "style-dictionary-sync"
 SCRIPTS = SKILL_DIR / "scripts"
 EXAMPLES = SKILL_DIR / "examples"
@@ -79,7 +77,7 @@ class TestSync:
 
     def test_css_output_format(self, tmp_path):
         import subprocess
-        result = subprocess.run(
+        subprocess.run(
             [sys.executable, str(SCRIPTS / "sync.py"),
              "--input", str(EXAMPLES / "tokens.dtcg.json"),
              "--output-dir", str(tmp_path),
@@ -92,7 +90,7 @@ class TestSync:
 
     def test_flutter_output_format(self, tmp_path):
         import subprocess
-        result = subprocess.run(
+        subprocess.run(
             [sys.executable, str(SCRIPTS / "sync.py"),
              "--input", str(EXAMPLES / "tokens.dtcg.json"),
              "--output-dir", str(tmp_path),
