@@ -238,3 +238,56 @@ def test_match_empty_input(seeded_recipes):
     result = match_recipes(set())
     assert result["full_match"] == []
     assert result["partial_match"] == []
+
+
+def test_stats_increment_match(seeded_recipes):
+    """匹配命中时 match_count +1。"""
+    from hermes_kb.recipe_stats import increment_match_count, get_stats
+    from hermes_kb.recipe_match import match_recipes
+
+    result = match_recipes({"金酒", "味美思", "橄榄"})
+    martini = next(r for r in result["full_match"] if "马天尼" in r["title"])
+    doc_id = martini["doc_id"]
+
+    increment_match_count(doc_id)
+    increment_match_count(doc_id)
+    stat = get_stats(doc_id)
+    assert stat is not None
+    assert stat["match_count"] == 2
+    assert stat["last_matched_at"] is not None
+
+
+def test_stats_increment_view(seeded_recipes):
+    """查看详情时 view_count +1。"""
+    from hermes_kb.recipe_stats import increment_view_count, get_stats
+
+    from hermes_kb.rag import ImportService
+
+    importer = ImportService()
+    result = importer.import_text(
+        content="# 测试配方\n金酒 60ml", title="测试配方", source_type="test"
+    )
+    doc_id = result["doc_id"]
+
+    increment_view_count(doc_id)
+    stat = get_stats(doc_id)
+    assert stat["view_count"] == 1
+
+
+def test_stats_hot_recipes(seeded_recipes):
+    """热门配方按 match_count 降序。"""
+    from hermes_kb.recipe_stats import increment_match_count, get_hot_recipes
+    from hermes_kb.recipe_match import match_recipes
+
+    result = match_recipes({"金酒", "味美思", "橄榄"})
+    martini = next(r for r in result["full_match"] if "马天尼" in r["title"])
+    for _ in range(3):
+        increment_match_count(martini["doc_id"])
+
+    result = match_recipes({"金酒", "金巴利", "味美思"})
+    negroni = next(r for r in result["full_match"] if "尼格罗尼" in r["title"])
+    increment_match_count(negroni["doc_id"])
+
+    hot = get_hot_recipes(limit=10, days=30)
+    assert len(hot) >= 2
+    assert hot[0]["match_count"] >= 3
