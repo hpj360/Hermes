@@ -155,3 +155,107 @@ html { scroll-behavior: smooth; }
 .nav-links a:hover { color: var(--brand-700); }
 .nav-links a.active { color: var(--brand-700); border-bottom-color: var(--gold-500); }
 .nav-actions { margin-left: auto; display: flex; gap: var(--sp-2); }
+
+
+/* === 实验室组件（M3） === */
+.material-selector {
+  background: #fff; border: 1px solid var(--ink-200);
+  border-radius: var(--r-lg); padding: var(--sp-6);
+  box-shadow: var(--shadow-sm);
+}
+.material-search { width: 100%; margin-bottom: var(--sp-4); }
+.material-category {
+  margin-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--ink-100);
+  padding-bottom: var(--sp-3);
+}
+.material-category:last-of-type { border-bottom: none; }
+.material-category summary {
+  font-family: var(--font-serif); font-size: var(--fs-sm);
+  color: var(--brand-700); cursor: pointer;
+  padding: var(--sp-1) 0;
+}
+.chip-list { display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-2) 0; }
+.chip-chip {
+  font-family: var(--font-sans); font-size: var(--fs-xs);
+  padding: 4px var(--sp-3); border-radius: var(--r-full);
+  border: 1px solid var(--ink-200); background: var(--ink-100);
+  color: var(--ink-600); cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+.chip-chip:hover { border-color: var(--brand-700); }
+.chip-chip.selected.cat-base_spirit { background: var(--brand-700); color: #fff; border-color: var(--brand-700); }
+.chip-chip.selected.cat-modifier { background: var(--gold-500); color: var(--ink-900); border-color: var(--gold-500); }
+.chip-chip.selected.cat-juice { background: var(--ink-600); color: #fff; border-color: var(--ink-600); }
+.chip-chip.selected.cat-garnish { background: var(--ink-400); color: var(--ink-900); border-color: var(--ink-400); }
+
+.selected-bar {
+  background: var(--gold-100); border-left: 3px solid var(--gold-500);
+  padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md);
+  margin: var(--sp-4) 0;
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2);
+}
+.selected-chip {
+  background: var(--gold-500); color: var(--ink-900);
+  font-size: var(--fs-xs); padding: 2px var(--sp-2);
+  border-radius: var(--r-full); cursor: pointer;
+}
+.selected-chip:hover { background: var(--gold-700); color: #fff; }
+
+.recipe-card {
+  background: #fff; border: 1px solid var(--ink-200);
+  border-radius: var(--r-lg); padding: var(--sp-4) var(--sp-5);
+  margin-bottom: var(--sp-3); box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--duration-base);
+}
+.recipe-card:hover { box-shadow: var(--shadow-md); }
+.recipe-card.full-match { border-left: 3px solid var(--brand-700); }
+.recipe-card.partial-match { border-left: 3px solid var(--gold-500); }
+.recipe-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: var(--sp-2);
+}
+.recipe-name { font-family: var(--font-serif); font-size: var(--fs-base); color: var(--ink-900); }
+.match-badge { font-size: var(--fs-xs); padding: 2px var(--sp-2); border-radius: var(--r-full); }
+.match-badge.match-full { background: var(--brand-100); color: var(--brand-700); }
+.match-badge.match-partial { background: var(--gold-100); color: var(--gold-700); }
+.recipe-ingredients { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: var(--sp-2); }
+.ing { font-size: var(--fs-xs); padding: 2px var(--sp-2); border-radius: var(--r-sm); }
+.ing.have { background: var(--brand-50); color: var(--brand-700); }
+.ing.missing { background: var(--ink-100); color: var(--ink-400); text-decoration: line-through; }
+.substitute-suggest {
+  font-size: var(--fs-xs); color: var(--gold-700);
+  margin-bottom: var(--sp-2);
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2);
+}
+.sub-chip {
+  background: var(--gold-100); color: var(--gold-700);
+  border: 1px dashed var(--gold-500);
+  padding: 2px var(--sp-2); border-radius: var(--r-sm);
+  cursor: pointer; font-size: var(--fs-xs);
+}
+.sub-chip:hover { background: var(--gold-500); color: var(--ink-900); }
+.recipe-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-top: var(--sp-2); border-top: 1px dashed var(--ink-200);
+}
+.citation-link { color: var(--brand-700); font-size: var(--fs-xs); text-decoration: none; }
+.citation-link:hover { text-decoration: underline; }
+
+/* 首页热门配方区 */
+.hot-recipes {
+  background: #fff; border: 1px solid var(--ink-200);
+  border-radius: var(--r-lg); padding: var(--sp-6);
+  box-shadow: var(--shadow-sm); margin: var(--sp-6) 0;
+}
+.hot-recipes h3 { font-family: var(--font-serif); font-size: var(--fs-lg); color: var(--brand-700); margin-bottom: var(--sp-3); }
+.hot-recipe {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--ink-100);
+  text-decoration: none; color: var(--ink-900);
+}
+.hot-recipe:last-child { border-bottom: none; }
+.hot-recipe:hover { background: var(--brand-50); }
+.hot-recipe .rank { font-family: var(--font-serif); color: var(--gold-500); font-size: var(--fs-lg); margin-right: var(--sp-3); }
+.hot-recipe .name { flex: 1; font-size: var(--fs-sm); }
+.hot-recipe .count { font-size: var(--fs-xs); color: var(--ink-400); }
