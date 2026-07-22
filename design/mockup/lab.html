@@ -182,6 +182,10 @@
 
   <script src="_nav.js"></script>
   <script>
+    // API 基址：默认同源，本地分端口调试时可在 console 设置 window.API_BASE='http://localhost:8000'
+    // 必须在使用前声明，避免 var 提升导致 fetch(undefined + path) 静默失败
+    var API_BASE = window.API_BASE || '';
+
     // M4.1: 加载今日推荐
     fetch(API_BASE + '/api/lab/daily').then(function(r){return r.json();}).then(function(d){
       if (d && d.title) {
@@ -274,9 +278,6 @@
         chip.style.display = match ? '' : 'none';
       });
     }
-
-    // API 基址：默认同源，本地分端口调试时可在 console 设置 window.API_BASE='http://localhost:8000'
-    var API_BASE = window.API_BASE || '';
 
     function doMatch() {
       var names = Object.keys(selected);

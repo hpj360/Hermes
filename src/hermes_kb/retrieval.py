@@ -16,12 +16,15 @@ import re
 from dataclasses import dataclass
 
 from sqlalchemy import text as sa_text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
 
 from hermes_kb.config import get_settings
 from hermes_kb.database import get_engine, get_session
 from hermes_kb.embedding import EmbeddingService
 from hermes_kb.models import Chunk, Document
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -154,7 +157,8 @@ class HybridRetriever:
                     ),
                     {"q": fts_query, "k": k},
                 ).fetchall()
-        except Exception:
+        except SQLAlchemyError as exc:
+            logger.warning("BM25 FTS5 query failed (query=%r): %s", fts_query, exc)
             return []
         hits: list[RetrievalHit] = []
         # FTS5 bm25() 越小越好（距离），取负值转为"越大越好"
@@ -193,10 +197,11 @@ class HybridRetriever:
                     ),
                     {"lim": scan_limit},
                 ).fetchall()
-        except Exception:
+        except SQLAlchemyError as exc:
+            logger.warning("vector scan failed: %s", exc)
             return []
         if len(rows) >= scan_limit:
-            logging.warning(
+            logger.warning(
                 "vector scan hit limit (%d); increase KB_VECTOR_SCAN_LIMIT to avoid silent truncation",
                 scan_limit,
             )
@@ -206,7 +211,7 @@ class HybridRetriever:
             doc_id = row[1]
             try:
                 vec = json.loads(row[2])
-            except Exception:
+            except (json.JSONDecodeError, TypeError):
                 continue
             sim = _cosine(qvec, vec)
             scored.append((sim, rowid, doc_id))
@@ -230,8 +235,8 @@ class HybridRetriever:
                     select(Document).where(Document.doc_id.in_(doc_ids))
                 ).all()
                 title_map = {d.doc_id: d.title for d in docs}
-        except Exception:
-            pass
+        except SQLAlchemyError as exc:
+            logger.warning("vector metadata fetch failed (rowids=%s): %s", rowids, exc)
 
         hits: list[RetrievalHit] = []
         for sim, rowid, doc_id in top:
@@ -252,7 +257,8 @@ class HybridRetriever:
             with get_session() as session:
                 d = session.get(Document, doc_id)
                 return d.title if d else doc_id
-        except Exception:
+        except SQLAlchemyError as exc:
+            logger.warning("doc title fetch failed (doc_id=%s): %s", doc_id, exc)
             return doc_id
 
     def _chunk_meta(self, rowid: int, doc_id: str) -> tuple[str, str]:
@@ -263,5 +269,6 @@ class HybridRetriever:
                 d = session.get(Document, doc_id)
                 title = d.title if d else doc_id
                 return text, title
-        except Exception:
+        except SQLAlchemyError as exc:
+            logger.warning("chunk meta fetch failed (rowid=%s, doc_id=%s): %s", rowid, doc_id, exc)
             return "", doc_id

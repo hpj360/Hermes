@@ -120,3 +120,13 @@ a:hover { color: var(--brand-500); }
 
 .container { max-width: var(--container); margin: 0 auto; padding: 0 var(--sp-6); }
 .page-title { font-family: var(--font-serif); font-size: var(--fs-2xl); margin: var(--sp-6) 0; }
+
+/* === a11y：尊重用户的减少动效偏好 === */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

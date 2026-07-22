@@ -212,6 +212,7 @@ export function ChatPanel({ refreshDocs, onJumpToDoc }: ChatPanelProps) {
             className="input flex-1 resize-none"
             rows={2}
             placeholder="输入问题，回车发送，Shift+回车换行"
+            aria-label="问题输入框"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
