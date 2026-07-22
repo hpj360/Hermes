@@ -81,6 +81,9 @@ class Settings:
     # 未成年保护（M1-08）
     age_gate_enabled: bool = field(default_factory=lambda: _env_bool("KB_AGE_GATE", True))
 
+    # 调试模式（A1-02）：True 时 500 响应保留 str(exc) 便于排查；False 时隐藏内部信息
+    debug: bool = field(default_factory=lambda: _env_bool("KB_DEBUG", False))
+
     # 查询改写（M2-02）
     query_rewrite_enabled: bool = field(default_factory=lambda: _env_bool("KB_QUERY_REWRITE", True))
     # HyDE（M2-02 可选，默认关闭，W1 末评估后决定）
