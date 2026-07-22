@@ -2,14 +2,25 @@
 @tailwind components;
 @tailwind utilities;
 
+/* C1 重构：引入 mockup 设计令牌，确保 web 与 mockup 视觉完全一致 */
+@import "../../design/mockup/_tokens.css";
+
 @layer base {
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei",
-      "Helvetica Neue", sans-serif;
+    /* C1: 去 Inter，使用 _tokens.css 的衬线杂志字体 */
+    font-family: var(--font-sans);
+    color: var(--ink-900);
+    background: var(--paper-bg);
+    line-height: 1.7;
+  }
+  h1, h2, h3, h4 {
+    font-family: var(--font-serif);
+    font-weight: 600;
+    line-height: 1.25;
   }
 }
 
@@ -18,20 +29,51 @@
     @apply inline-flex items-center justify-center px-4 py-2 rounded-md font-medium
       transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
   }
+  /* C1: btn-primary 从暖金 brand-600 改为深酒红 brand-700，与 mockup 对齐 */
   .btn-primary {
-    @apply btn bg-brand-600 text-white hover:bg-brand-700;
+    @apply btn text-white hover:opacity-90;
+    background: var(--brand-700);
+  }
+  .btn-primary:hover {
+    background: var(--brand-500);
   }
   .btn-secondary {
-    @apply btn bg-gray-100 text-gray-700 hover:bg-gray-200;
+    @apply btn text-ink-900;
+    background: var(--gold-500);
+  }
+  .btn-secondary:hover {
+    background: var(--gold-700);
+    color: #fff;
   }
   .btn-danger {
-    @apply btn bg-red-50 text-red-600 hover:bg-red-100;
+    @apply btn;
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid var(--danger);
+  }
+  .btn-danger:hover {
+    background: var(--danger);
+    color: #fff;
   }
   .input {
-    @apply w-full px-3 py-2 border border-gray-300 rounded-md
-      focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent;
+    @apply w-full rounded-md;
+    font-family: var(--font-sans);
+    font-size: var(--fs-sm);
+    padding: var(--sp-2) var(--sp-3);
+    border: 1px solid var(--ink-200);
+    background: #fff;
+    color: var(--ink-900);
+    transition: border-color var(--duration-fast);
+  }
+  .input:focus {
+    outline: none;
+    border-color: var(--brand-700);
+    box-shadow: 0 0 0 3px var(--brand-100);
   }
   .card {
-    @apply bg-white rounded-lg shadow-sm border border-gray-200;
+    background: #fff;
+    border: 1px solid var(--ink-200);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-sm);
   }
 }

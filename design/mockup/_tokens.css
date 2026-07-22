@@ -33,9 +33,14 @@
   --danger: #B3261E;
   --info: #2C6FB5;
 
-  /* === 字体 === */
-  --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
-  --font-sans: "Inter", -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  /* === 字体（C1 重构：去 Inter，全衬线杂志感） ===
+   * 设计宪法：frontend-design/SKILL.md 明确禁止 Inter/Roboto/Arial。
+   * Display: Cormorant Garamond（优雅古典英文标题）→ Noto Serif SC（中文回退）
+   * Body:    Crimson Text（经典杂志正文衬线）→ Noto Serif SC（中文回退）
+   * Mono:    JetBrains Mono（数据/代码，保留）
+   */
+  --font-serif: "Cormorant Garamond", "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+  --font-sans: "Crimson Text", "Source Serif Pro", "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
   --font-mono: "JetBrains Mono", "SF Mono", Menlo, monospace;
 
   /* === 字号 === */
@@ -68,6 +73,22 @@
   --shadow-sm: 0 1px 2px rgba(31, 28, 24, 0.06);
   --shadow-md: 0 4px 12px rgba(31, 28, 24, 0.08);
   --shadow-lg: 0 12px 32px rgba(31, 28, 24, 0.12);
+  /* C1 新增：戏剧化阴影（深酒红投影，用于金箔卡片/英雄区） */
+  --shadow-drama: 0 20px 60px rgba(74, 14, 28, 0.28), 0 8px 24px rgba(31, 28, 24, 0.12);
+  /* C1 新增：金色光晕（用于引用卡片 hover/聚焦） */
+  --shadow-gold: 0 0 0 1px rgba(201, 162, 39, 0.35), 0 4px 16px rgba(201, 162, 39, 0.22);
+
+  /* === C1 新增：氛围背景与金箔质感 === */
+  /* 噪点纹理（SVG turbulence，纯 CSS 无外部依赖，叠加在背景上营造纸质感） */
+  --noise-bg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  /* 金箔渐变（用于引用卡片边框/标题/装饰线，模拟金属质感） */
+  --gold-foil: linear-gradient(135deg, #E5D49A 0%, #C9A227 25%, #FAF3DC 50%, #C9A227 75%, #8C7016 100%);
+  /* 金箔文字（配合 background-clip: text 使用） */
+  --gold-foil-text: linear-gradient(135deg, #8C7016 0%, #C9A227 30%, #FAF3DC 50%, #C9A227 70%, #8C7016 100%);
+  /* 深酒红渐变（用于英雄区/页头氛围背景） */
+  --brand-gradient: linear-gradient(135deg, #4A0E1C 0%, #8B1A36 50%, #B8254A 100%);
+  /* 杂志底纹（噪点 + 暖白渐变，用于 body 背景） */
+  --paper-bg: linear-gradient(180deg, #F7F5F3 0%, #FFFFFF 260px);
 
   /* === 动效 === */
   --duration-fast: 150ms;
