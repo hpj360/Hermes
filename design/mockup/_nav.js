@@ -6,6 +6,7 @@
   var NAV_ITEMS = [
     { href: 'index.html', label: '首页', page: 'home' },
     { href: 'ask.html', label: '问答', page: 'ask' },
+    { href: 'lab.html', label: '实验室', page: 'lab' },
     { href: 'docs.html', label: '文档', page: 'docs' },
     { href: 'tags.html', label: '标签', page: 'tags' },
     { href: 'history.html', label: '历史', page: 'history' },

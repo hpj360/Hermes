@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>鸡尾酒实验室 · Hermes KB（低保真）</title>
+  <link rel="stylesheet" href="_shared.css">
+</head>
+<body data-page="lab">
+  <main class="page">
+    <header class="page-header">
+      <h1>鸡尾酒实验室</h1>
+      <p class="muted">选择手头的材料，发现你能调的鸡尾酒</p>
+    </header>
+
+    <section class="block">
+      <input class="input" placeholder="搜索材料... 如 金酒" type="text">
+
+      <div class="category">
+        <h3>基酒</h3>
+        <div class="chips">
+          <span class="chip">[金酒]</span>
+          <span class="chip">[威士忌]</span>
+          <span class="chip">[朗姆酒]</span>
+          <span class="chip">[龙舌兰]</span>
+          <span class="chip">[白兰地]</span>
+          <span class="chip">[伏特加]</span>
+        </div>
+      </div>
+
+      <div class="category">
+        <h3>辅料</h3>
+        <div class="chips">
+          <span class="chip">[味美思]</span>
+          <span class="chip">[金巴利]</span>
+          <span class="chip">[糖浆]</span>
+          <span class="chip">[君度]</span>
+          <span class="chip">[苦精]</span>
+          <span class="chip">[汤力水]</span>
+          <span class="chip">[苏打水]</span>
+        </div>
+      </div>
+
+      <div class="category">
+        <h3>果汁</h3>
+        <div class="chips">
+          <span class="chip">[柠檬汁]</span>
+          <span class="chip">[青柠汁]</span>
+          <span class="chip">[橙汁]</span>
+          <span class="chip">[蔓越莓汁]</span>
+        </div>
+      </div>
+
+      <div class="category">
+        <h3>装饰</h3>
+        <div class="chips">
+          <span class="chip">[橄榄]</span>
+          <span class="chip">[柠檬片]</span>
+          <span class="chip">[薄荷叶]</span>
+          <span class="chip">[樱桃]</span>
+        </div>
+      </div>
+
+      <div class="selected-bar">
+        已选：[金酒 ×] [味美思 ×] [橄榄 ×] <a href="#" class="link">清空</a>
+      </div>
+
+      <button class="btn-primary">[匹配配方 →]</button>
+    </section>
+
+    <section class="block">
+      <h2>现在就能做 (1)</h2>
+      <div class="card">
+        <strong>马天尼 Martini</strong> <span class="badge">材料齐全</span>
+        <div class="ingredients">
+          [✓ 金酒 60ml] [✓ 干味美思 10ml] [✓ 橄榄 1 颗]
+        </div>
+        <div class="footer">
+          <a href="doc-detail.html?chunk=42" class="link">[42] 引用 IBA 百科</a>
+          <a href="ask.html?q=马天尼的做法" class="link">[基于此配方提问]</a>
+        </div>
+      </div>
+
+      <h2>差一种就能做 (1)</h2>
+      <div class="card">
+        <strong>白色佳人 White Lady</strong> <span class="badge">缺 1 种</span>
+        <div class="ingredients">
+          [✓ 金酒 40ml] [✗ 君度 15ml] [✓ 柠檬汁 20ml]
+        </div>
+        <div class="substitute">
+          可替代：[橙味力娇酒 +] [干库拉索 +]
+        </div>
+        <div class="footer">
+          <a href="doc-detail.html?chunk=58" class="link">[58] 引用 IBA 百科</a>
+          <a href="ask.html?q=白色佳人的做法" class="link">[基于此配方提问]</a>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
