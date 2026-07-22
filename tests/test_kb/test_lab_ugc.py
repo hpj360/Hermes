@@ -160,3 +160,67 @@ def test_update_recipe(tmp_db):
         content="# 再改",
     )
     assert ok2 is False
+
+
+@pytest.fixture
+def base_and_variant(tmp_db):
+    """创建一个原配方和一个变体。"""
+    from hermes_kb.recipe_crud import create_recipe
+
+    base = create_recipe(
+        title="原版马天尼",
+        ingredients=["金酒", "味美思", "橄榄"],
+        content="# 原版马天尼\n\n## 配方\n- 金酒 60ml\n- 味美思 10ml\n- 橄榄 1颗",
+        base_spirit="gin",
+        difficulty="easy",
+    )
+    variant = create_recipe(
+        title="辛辣马天尼",
+        ingredients=["金酒", "味美思", "苦精"],
+        content="# 辛辣马天尼\n\n## 配方\n- 金酒 60ml\n- 味美思 10ml\n- 苦精 2滴",
+        base_spirit="gin",
+        difficulty="medium",
+    )
+    return base, variant
+
+
+def test_create_variant_link(base_and_variant):
+    """创建变体关联。"""
+    from hermes_kb.recipe_variants import create_variant_link, get_variants
+
+    base, variant = base_and_variant
+    ok = create_variant_link(
+        base_doc_id=base["doc_id"],
+        variant_doc_id=variant["doc_id"],
+        variant_note="增加苦精的辛辣版",
+    )
+    assert ok is True
+
+    variants = get_variants(base["doc_id"])
+    assert len(variants) == 1
+    assert variants[0]["variant_doc_id"] == variant["doc_id"]
+    assert variants[0]["variant_note"] == "增加苦精的辛辣版"
+    assert variants[0]["variant_title"] == "辛辣马天尼"
+
+
+def test_get_base_recipe(base_and_variant):
+    """查询变体的原配方。"""
+    from hermes_kb.recipe_variants import create_variant_link, get_base_recipe
+
+    base, variant = base_and_variant
+    create_variant_link(base["doc_id"], variant["doc_id"], "测试")
+
+    base_info = get_base_recipe(variant["doc_id"])
+    assert base_info is not None
+    assert base_info["base_doc_id"] == base["doc_id"]
+    assert base_info["base_title"] == "原版马天尼"
+
+
+def test_create_variant_duplicate(base_and_variant):
+    """重复创建变体关联返回 False。"""
+    from hermes_kb.recipe_variants import create_variant_link
+
+    base, variant = base_and_variant
+    create_variant_link(base["doc_id"], variant["doc_id"], "第一次")
+    ok = create_variant_link(base["doc_id"], variant["doc_id"], "第二次")
+    assert ok is False
