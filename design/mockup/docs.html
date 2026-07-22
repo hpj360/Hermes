@@ -50,6 +50,19 @@
         <option value="base">鸡尾酒基酒</option>
         <option value="guide">入门指南</option>
       </select>
+      <select class="select filter-source" id="filter-source">
+        <option value="">全部来源</option>
+        <option value="local">本地</option>
+        <option value="iba_dataset">IBA 金标准</option>
+        <option value="thecocktaildb">TheCocktailDB</option>
+        <option value="bar_assistant">bar-assistant</option>
+        <option value="user">用户投稿</option>
+      </select>
+      <select class="select filter-verified" id="filter-verified">
+        <option value="">全部状态</option>
+        <option value="true">已审核</option>
+        <option value="false">待审核</option>
+      </select>
       <input class="input" id="filter-search" type="search" placeholder="搜索文档标题或正文…">
       <button class="btn-ghost" id="filter-clear">清除</button>
       <span class="filter-count">共 <span class="num">5</span> 篇</span>

@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>配方治理 · Hermes KB</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="_tokens.css">
+  <link rel="stylesheet" href="_components.css">
+  <style>
+    body { background: linear-gradient(180deg, var(--ink-50) 0%, #fff 260px); }
+    .recipes-main { max-width: var(--container); margin: 0 auto; padding: var(--sp-8) var(--sp-6) var(--sp-16); min-height: calc(100vh - var(--nav-height)); }
+    .page-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: var(--sp-6); border-bottom: 1px solid var(--ink-200); padding-bottom: var(--sp-4); }
+    .page-head h1 { font-size: var(--fs-2xl); color: var(--brand-700); font-family: var(--font-serif); }
+    .page-head .meta { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--ink-400); }
+    .filter-bar { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin: var(--sp-6) 0 var(--sp-4); }
+    .filter-bar .select { width: auto; min-width: 140px; }
+    .filter-count { margin-left: auto; font-family: var(--font-serif); color: var(--gold-700); font-size: var(--fs-sm); }
+    .filter-count .num { font-size: var(--fs-xl); color: var(--gold-500); font-weight: 600; }
+    .recipe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--sp-4); }
+    .recipe-card { background: #fff; border: 1px solid var(--ink-200); border-radius: var(--r-lg); padding: var(--sp-4); box-shadow: var(--shadow-sm); transition: box-shadow var(--duration-base), transform var(--duration-fast); display: flex; flex-direction: column; gap: var(--sp-2); }
+    .recipe-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+    .recipe-card.hidden-recipe { opacity: 0.55; }
+    .recipe-card-head { display: flex; gap: var(--sp-3); align-items: flex-start; }
+    .recipe-card-thumb { flex-shrink: 0; }
+    .recipe-card-body { flex: 1; min-width: 0; }
+    .recipe-card-title { font-family: var(--font-serif); font-size: var(--fs-lg); color: var(--ink-900); font-weight: 600; margin: 0 0 var(--sp-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .recipe-card-meta { display: flex; gap: var(--sp-2); flex-wrap: wrap; align-items: center; }
+    .recipe-card-actions { display: flex; gap: var(--sp-2); padding-top: var(--sp-2); border-top: 1px dashed var(--ink-100); }
+    .recipe-card-actions .btn-ghost { padding: 4px 10px; font-size: var(--fs-xs); }
+    .empty-state { text-align: center; padding: var(--sp-16) var(--sp-6); color: var(--ink-400); }
+    .empty-state .icon { font-size: var(--fs-3xl); margin-bottom: var(--sp-3); }
+    @media (max-width: 640px) { .recipe-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <nav class="navbar">
+    <div class="container nav-inner">
+      <a href="index.html" class="brand">Hermes <span class="brand-accent">KB</span></a>
+      <div class="nav-links">
+        <a href="index.html">首页</a>
+        <a href="lab.html">调酒实验室</a>
+        <a href="docs.html">文档库</a>
+        <a href="recipes.html" class="active">配方治理</a>
+        <a href="dashboard.html">仪表盘</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="recipes-main">
+    <div class="page-head">
+      <h1>配方治理</h1>
+      <span class="meta">外部数据源 / 审核 / 隐藏</span>
+    </div>
+
+    <div class="filter-bar">
+      <select class="select" id="filter-source">
+        <option value="">全部来源</option>
+        <option value="local">本地</option>
+        <option value="iba_dataset">IBA 金标准</option>
+        <option value="thecocktaildb">TheCocktailDB</option>
+        <option value="user">用户投稿</option>
+      </select>
+      <select class="select" id="filter-verified">
+        <option value="">全部状态</option>
+        <option value="true">已审核</option>
+        <option value="false">待审核</option>
+      </select>
+      <select class="select" id="filter-hidden">
+        <option value="">全部可见性</option>
+        <option value="false">仅可见</option>
+        <option value="true">仅隐藏</option>
+      </select>
+      <input class="input" id="filter-search" type="search" placeholder="搜索配方名…" style="width:200px;">
+      <button class="btn-ghost" id="filter-clear">清除</button>
+      <span class="filter-count">共 <span class="num" id="recipe-count">0</span> 款</span>
+      <a class="btn-primary" href="dashboard.html">前往同步</a>
+    </div>
+
+    <div class="recipe-grid" id="recipe-grid">
+      <!-- JS 动态填充 -->
+    </div>
+
+    <div class="empty-state" id="empty-state" hidden>
+      <div class="icon">◆</div>
+      <div>暂无配方，请先在仪表盘同步外部数据源</div>
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      var grid = document.getElementById('recipe-grid');
+      var emptyState = document.getElementById('empty-state');
+      var countEl = document.getElementById('recipe-count');
+      var state = { source: '', verified: '', hidden: '', search: '' };
+
+      async function loadRecipes() {
+        var params = new URLSearchParams();
+        if (state.source) params.set('source', state.source);
+        if (state.verified) params.set('verified', state.verified);
+        if (state.hidden) params.set('hidden', state.hidden);
+        params.set('limit', '200');
+        try {
+          var resp = await fetch('/api/lab/recipes?' + params.toString());
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          var data = await resp.json();
+          render(data.items || []);
+        } catch (e) {
+          grid.innerHTML = '<div class="empty-state"><div class="icon">⚠</div><div>加载失败：' + e.message + '</div></div>';
+          emptyState.hidden = true;
+        }
+      }
+
+      function render(items) {
+        var filtered = state.search
+          ? items.filter(function (r) { return (r.title || '').toLowerCase().indexOf(state.search.toLowerCase()) >= 0; })
+          : items;
+        countEl.textContent = filtered.length;
+        if (filtered.length === 0) {
+          grid.innerHTML = '';
+          emptyState.hidden = false;
+          return;
+        }
+        emptyState.hidden = true;
+        grid.innerHTML = filtered.map(function (r) {
+          var thumb = r.image_url
+            ? '<img class="recipe-thumb" src="' + r.image_url + '" alt="" loading="lazy">'
+            : '<span class="recipe-thumb-placeholder">◆</span>';
+          var verifiedBadge = r.verified
+            ? '<span class="verified-badge yes">✓ 已审核</span>'
+            : '<span class="verified-badge no">待审核</span>';
+          var sourceTag = '<span class="source-tag ' + (r.source || 'local') + '">' + (r.source || 'local') + '</span>';
+          var hiddenNote = r.hidden ? '<span class="verified-badge no">隐藏</span>' : '';
+          return '<div class="recipe-card' + (r.hidden ? ' hidden-recipe' : '') + '" data-doc-id="' + r.doc_id + '">'
+            + '<div class="recipe-card-head">'
+            + '<div class="recipe-card-thumb">' + thumb + '</div>'
+            + '<div class="recipe-card-body">'
+            + '<h3 class="recipe-card-title">' + escapeHtml(r.title) + '</h3>'
+            + '<div class="recipe-card-meta">' + sourceTag + verifiedBadge + hiddenNote + '</div>'
+            + '</div></div>'
+            + '<div class="recipe-card-actions">'
+            + (r.verified ? '' : '<button class="btn-ghost" data-action="verify">审核通过</button>')
+            + '<button class="btn-ghost" data-action="toggle-hide">' + (r.hidden ? '取消隐藏' : '隐藏') + '</button>'
+            + '</div></div>';
+        }).join('');
+      }
+
+      function escapeHtml(s) {
+        return String(s || '').replace(/[&<>"']/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+      }
+
+      grid.addEventListener('click', async function (e) {
+        var btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        var card = btn.closest('.recipe-card');
+        var docId = card.getAttribute('data-doc-id');
+        var action = btn.getAttribute('data-action');
+        btn.disabled = true;
+        var original = btn.textContent;
+        btn.textContent = '处理中…';
+        try {
+          var url, method = 'POST';
+          if (action === 'verify') {
+            url = '/api/lab/recipes/' + encodeURIComponent(docId) + '/verify';
+          } else if (action === 'toggle-hide') {
+            var currentlyHidden = card.classList.contains('hidden-recipe');
+            url = '/api/lab/recipes/' + encodeURIComponent(docId) + '/hide?hidden=' + (!currentlyHidden);
+          }
+          var resp = await fetch(url, { method: method });
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          await loadRecipes();
+        } catch (e) {
+          alert('操作失败：' + e.message);
+          btn.disabled = false;
+          btn.textContent = original;
+        }
+      });
+
+      ['source', 'verified', 'hidden'].forEach(function (key) {
+        document.getElementById('filter-' + key).addEventListener('change', function (e) {
+          state[key] = e.target.value;
+          loadRecipes();
+        });
+      });
+      document.getElementById('filter-search').addEventListener('input', function (e) {
+        state.search = e.target.value;
+        loadRecipes();
+      });
+      document.getElementById('filter-clear').addEventListener('click', function () {
+        state = { source: '', verified: '', hidden: '', search: '' };
+        document.getElementById('filter-source').value = '';
+        document.getElementById('filter-verified').value = '';
+        document.getElementById('filter-hidden').value = '';
+        document.getElementById('filter-search').value = '';
+        loadRecipes();
+      });
+
+      loadRecipes();
+    })();
+  </script>
+</body>
+</html>

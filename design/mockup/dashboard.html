@@ -135,6 +135,50 @@
           <div class="lab-sub" id="labSeasonCoverage"></div>
         </div>
       </div>
+
+        <!-- B7: 数据源同步面板（接 /api/lab/sync） -->
+        <div class="lab-sync-panel">
+          <div class="lab-sync-head">
+            <span class="lab-sync-title">数据源同步</span>
+            <span class="lab-sync-hint" id="labSyncHint">点击拉取外部配方 / 替代材料</span>
+          </div>
+          <div class="lab-sync-actions">
+            <button class="btn-primary lab-sync-btn" data-source="thecocktaildb">
+              <span class="sync-icon">◆</span> TheCocktailDB
+              <small>~600 款配方</small>
+            </button>
+            <button class="btn-primary lab-sync-btn" data-source="iba_dataset">
+              <span class="sync-icon">★</span> IBA 金标准
+              <small>100 款官方配方</small>
+            </button>
+            <button class="btn-ghost lab-sync-btn" data-source="bar_assistant">
+              <span class="sync-icon">◯</span> bar-assistant
+              <small>替代材料关系</small>
+            </button>
+          </div>
+          <div class="lab-sync-result" id="labSyncResult" hidden>
+            <div class="sync-result-row">
+              <span class="sync-result-label">数据源</span>
+              <span class="sync-result-val" id="syncResultSource">-</span>
+            </div>
+            <div class="sync-result-row">
+              <span class="sync-result-label">新增</span>
+              <span class="sync-result-val success" id="syncResultImported">0</span>
+            </div>
+            <div class="sync-result-row">
+              <span class="sync-result-label">跳过</span>
+              <span class="sync-result-val" id="syncResultSkipped">0</span>
+            </div>
+            <div class="sync-result-row">
+              <span class="sync-result-label">失败</span>
+              <span class="sync-result-val warn" id="syncResultFailed">0</span>
+            </div>
+            <div class="sync-result-row" id="syncUnknownRow" hidden>
+              <span class="sync-result-label">未归一化</span>
+              <span class="sync-result-val warn" id="syncResultUnknown">-</span>
+            </div>
+          </div>
+        </div>
     </section>
 
     <!-- Token 用量：7 日柱状图（周五峰值） + 汇总卡 + 模型分布 -->
@@ -186,5 +230,56 @@
       document.getElementById('labSeasonCoverage').textContent = '季节覆盖 ' + Math.round(d.season_coverage * 100) + '%';
     }).catch(function(){});
   </script>
+    <script>
+      // B7: 数据源同步逻辑
+      (function () {
+        var buttons = document.querySelectorAll('.lab-sync-btn');
+        var resultBox = document.getElementById('labSyncResult');
+        var hint = document.getElementById('labSyncHint');
+        if (!buttons.length) return;
+
+        buttons.forEach(function (btn) {
+          btn.addEventListener('click', async function () {
+            var source = btn.getAttribute('data-source');
+            btn.disabled = true;
+            var originalHTML = btn.innerHTML;
+            btn.innerHTML = '<span class="sync-icon">⏳</span> 同步中…';
+            hint.textContent = '正在拉取 ' + source + '，请稍候…';
+            try {
+              var resp = await fetch('/api/lab/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ source: source, limit: 50 })
+              });
+              if (!resp.ok) {
+                var err = await resp.json().catch(function () { return { detail: resp.statusText }; });
+                throw new Error(err.detail || 'HTTP ' + resp.status);
+              }
+              var data = await resp.json();
+              resultBox.hidden = false;
+              document.getElementById('syncResultSource').textContent = data.source || source;
+              document.getElementById('syncResultImported').textContent = data.imported || 0;
+              document.getElementById('syncResultSkipped').textContent = data.skipped || 0;
+              document.getElementById('syncResultFailed').textContent = data.failed || 0;
+              var unknown = data.unknown_ingredients || [];
+              var unknownRow = document.getElementById('syncUnknownRow');
+              if (unknown.length > 0) {
+                unknownRow.hidden = false;
+                document.getElementById('syncResultUnknown').textContent = unknown.slice(0, 8).join('、') + (unknown.length > 8 ? ' 等 ' + unknown.length + ' 项' : '');
+              } else {
+                unknownRow.hidden = true;
+              }
+              hint.textContent = '同步完成：新增 ' + (data.imported || 0) + ' 条';
+            } catch (e) {
+              hint.textContent = '同步失败：' + e.message;
+              resultBox.hidden = true;
+            } finally {
+              btn.disabled = false;
+              btn.innerHTML = originalHTML;
+            }
+          });
+        });
+      })();
+    </script>
 </body>
 </html>

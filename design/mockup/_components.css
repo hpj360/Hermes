@@ -335,3 +335,38 @@ html { scroll-behavior: smooth; }
 .lab-metric .lab-num { font-family: var(--font-serif); font-size: var(--fs-xl); color: var(--ink-900); }
 .lab-metric .lab-sub { font-size: var(--fs-xs); color: var(--brand-700); margin-top: var(--sp-1); }
 .lab-metric.alert .lab-num { color: var(--gold-700); }
+
+/* === B7: 数据源同步面板 === */
+.lab-sync-panel { margin-top: var(--sp-4); padding: var(--sp-4); background: var(--ink-50); border: 1px dashed var(--ink-200); border-radius: var(--r-md); }
+.lab-sync-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: var(--sp-3); }
+.lab-sync-title { font-family: var(--font-serif); font-size: var(--fs-base); color: var(--brand-700); font-weight: 600; }
+.lab-sync-hint { font-size: var(--fs-xs); color: var(--ink-400); }
+.lab-sync-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-2); }
+.lab-sync-btn { display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); padding: var(--sp-3) var(--sp-2); font-size: var(--fs-sm); }
+.lab-sync-btn .sync-icon { font-size: var(--fs-lg); color: var(--gold-500); }
+.lab-sync-btn small { font-size: var(--fs-xs); color: var(--ink-400); font-weight: 400; }
+.lab-sync-btn:disabled { opacity: 0.6; cursor: wait; }
+.lab-sync-result { margin-top: var(--sp-3); padding: var(--sp-3); background: #fff; border: 1px solid var(--ink-200); border-radius: var(--r-sm); }
+.sync-result-row { display: flex; justify-content: space-between; align-items: baseline; padding: var(--sp-1) 0; border-bottom: 1px dashed var(--ink-100); }
+.sync-result-row:last-child { border-bottom: none; }
+.sync-result-label { font-size: var(--fs-xs); color: var(--ink-400); text-transform: uppercase; letter-spacing: 0.04em; }
+.sync-result-val { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--ink-900); font-weight: 600; }
+.sync-result-val.success { color: var(--success); }
+.sync-result-val.warn { color: var(--warn, #c2410c); }
+@media (max-width: 640px) {
+  .lab-sync-actions { grid-template-columns: 1fr; }
+}
+
+/* === B7: 配方筛选器（docs.html） === */
+.filter-source { min-width: 150px; }
+.filter-verified { min-width: 120px; }
+.recipe-thumb { width: 40px; height: 40px; border-radius: var(--r-sm); object-fit: cover; background: var(--ink-100); }
+.recipe-thumb-placeholder { width: 40px; height: 40px; border-radius: var(--r-sm); background: linear-gradient(135deg, var(--ink-100), var(--ink-200)); display: inline-flex; align-items: center; justify-content: center; color: var(--ink-400); font-size: var(--fs-lg); }
+.verified-badge { display: inline-flex; align-items: center; gap: 2px; padding: 1px 6px; border-radius: var(--r-full); font-size: var(--fs-xs); font-weight: 500; }
+.verified-badge.yes { background: rgba(16, 185, 129, 0.12); color: var(--success); }
+.verified-badge.no { background: rgba(234, 88, 12, 0.12); color: var(--warn, #c2410c); }
+.source-tag { display: inline-block; padding: 1px 6px; border-radius: var(--r-sm); font-size: var(--fs-xs); background: var(--ink-100); color: var(--ink-600); }
+.source-tag.thecocktaildb { background: rgba(220, 38, 38, 0.08); color: #b91c1c; }
+.source-tag.iba_dataset, .source-tag.iba { background: rgba(202, 138, 4, 0.12); color: var(--gold-700); }
+.source-tag.bar_assistant { background: rgba(37, 99, 235, 0.08); color: #1d4ed8; }
+.row-actions .btn-ghost { padding: 2px 8px; font-size: var(--fs-xs); }
