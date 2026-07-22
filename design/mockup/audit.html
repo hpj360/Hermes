@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>审计日志 · Hermes KB</title>
+  <!-- Google Fonts：衬线杂志感 + Inter 正文 + Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="_tokens.css">
+  <link rel="stylesheet" href="_components.css">
+  <style>
+    /* === 审计页专属：筛选栏 + 表格 + 分页 === */
+    .filter-bar { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin: var(--sp-6) 0 var(--sp-4); }
+    .filter-bar .select, .filter-bar .input { width: auto; min-width: 140px; }
+    .filter-bar .input[type="datetime-local"] { width: 200px; }
+    .filter-bar .spacer { margin-left: auto; }
+    .audit-cell-user { font-family: var(--font-serif); color: var(--ink-900); }
+    .audit-cell-target { color: var(--brand-700); }
+    .audit-cell-detail { color: var(--ink-600); max-width: 320px; }
+    .audit-cell-ip { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--ink-400); }
+    .audit-cell-time { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--ink-600); white-space: nowrap; }
+    /* 分页：金色高亮当前页 */
+    .pagination { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-6); justify-content: flex-end; }
+    .pagination .page-info { margin-right: auto; font-size: var(--fs-sm); color: var(--ink-400); }
+    .pagination .page-info .num { font-family: var(--font-serif); color: var(--gold-500); font-weight: 600; }
+    .pagination button { min-width: 32px; height: 32px; padding: 0 var(--sp-2); border: 1px solid var(--ink-200); background: #fff; border-radius: var(--r-sm); cursor: pointer; font-size: var(--fs-sm); color: var(--ink-600); transition: all var(--duration-fast); }
+    .pagination button:hover:not(:disabled):not(.active) { border-color: var(--brand-700); color: var(--brand-700); }
+    .pagination button.active { background: var(--brand-700); color: #fff; border-color: var(--brand-700); }
+    .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+  </style>
+</head>
+<body data-page="audit">
+  <script src="_nav.js"></script>
+  <div class="container">
+    <h1 class="page-title">审计日志</h1>
+
+    <!-- 顶部筛选栏：操作类型 / 起止时间 / 用户 / 重置 + 筛选 + 右上导出 CSV -->
+    <div class="filter-bar">
+      <select class="select" id="filter-action">
+        <option value="">全部操作</option>
+        <option value="import">导入</option>
+        <option value="delete">删除</option>
+        <option value="qa">问答</option>
+        <option value="tag">标签</option>
+        <option value="login">登录</option>
+      </select>
+      <input class="input" type="datetime-local" id="filter-start" value="2024-03-01T00:00">
+      <input class="input" type="datetime-local" id="filter-end" value="2024-03-31T23:59">
+      <input class="input" type="text" id="filter-user" placeholder="用户名 / 邮箱" style="width:180px;">
+      <button class="btn-ghost" id="filter-reset">重置</button>
+      <button class="btn-primary" id="filter-apply">筛选</button>
+      <span class="spacer"></span>
+      <button class="btn-secondary" id="export-csv">↓ 导出 CSV</button>
+    </div>
+
+    <!-- 审计表格：时间 / 操作类型 / 用户 / 目标 / 详情 / IP -->
+    <table class="table">
+      <thead>
+        <tr>
+          <th>时间</th><th>操作类型</th><th>用户</th><th>目标</th><th>详情</th><th>IP</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- 行 1：管理员登录 -->
+        <tr>
+          <td class="audit-cell-time">2024-03-20 14:32:08</td>
+          <td><span class="tag tag-ink">登录</span></td>
+          <td class="audit-cell-user">admin@hermes.io</td>
+          <td class="audit-cell-target">控制台</td>
+          <td class="audit-cell-detail">管理员从 Chrome 122 登录系统</td>
+          <td class="audit-cell-ip">203.0.113.42</td>
+        </tr>
+        <!-- 行 2：文档导入成功 -->
+        <tr>
+          <td class="audit-cell-time">2024-03-20 10:15:33</td>
+          <td><span class="tag tag-info">导入</span></td>
+          <td class="audit-cell-user">editor@hermes.io</td>
+          <td class="audit-cell-target">朗姆酒与龙舌兰百科</td>
+          <td class="audit-cell-detail">Markdown 导入成功，生成 14 个分片</td>
+          <td class="audit-cell-ip">198.51.100.7</td>
+        </tr>
+        <!-- 行 3：导入失败 -->
+        <tr>
+          <td class="audit-cell-time">2024-03-19 16:48:11</td>
+          <td><span class="tag tag-info">导入</span></td>
+          <td class="audit-cell-user">editor@hermes.io</td>
+          <td class="audit-cell-target">伏特加生产指南.pdf</td>
+          <td class="audit-cell-detail">PDF 解析失败：文件加密无法读取</td>
+          <td class="audit-cell-ip">198.51.100.7</td>
+        </tr>
+        <!-- 行 4：用户问答 -->
+        <tr>
+          <td class="audit-cell-time">2024-03-19 11:22:54</td>
+          <td><span class="tag tag-gold">问答</span></td>
+          <td class="audit-cell-user">guest@hermes.io</td>
+          <td class="audit-cell-target">苏格兰单一麦芽的烟熏味来源</td>
+          <td class="audit-cell-detail">返回 3 条引用，平均置信度 0.86</td>
+          <td class="audit-cell-ip">192.0.2.88</td>
+        </tr>
+        <!-- 行 5：创建标签 -->
+        <tr>
+          <td class="audit-cell-time">2024-03-18 09:40:02</td>
+          <td><span class="tag tag-success">标签</span></td>
+          <td class="audit-cell-user">admin@hermes.io</td>
+          <td class="audit-cell-target">单一麦芽</td>
+          <td class="audit-cell-detail">新建标签，颜色 #8B1A36（酒红）</td>
+          <td class="audit-cell-ip">203.0.113.42</td>
+        </tr>
+        <!-- 行 6：删除文档 -->
+        <tr>
+          <td class="audit-cell-time">2024-03-17 18:05:47</td>
+          <td><span class="tag tag-danger">删除</span></td>
+          <td class="audit-cell-user">admin@hermes.io</td>
+          <td class="audit-cell-target">草稿：伏特加简史（旧版）</td>
+          <td class="audit-cell-detail">删除文档及关联的 8 个分片、2 条历史</td>
+          <td class="audit-cell-ip">203.0.113.42</td>
+        </tr>
+        <!-- 行 7：编辑器登录 -->
+        <tr>
+          <td class="audit-cell-time">2024-03-17 08:12:19</td>
+          <td><span class="tag tag-ink">登录</span></td>
+          <td class="audit-cell-user">editor@hermes.io</td>
+          <td class="audit-cell-target">控制台</td>
+          <td class="audit-cell-detail">编辑登录，会话有效期 8 小时</td>
+          <td class="audit-cell-ip">198.51.100.7</td>
+        </tr>
+        <!-- 行 8：访客问答 -->
+        <tr>
+          <td class="audit-cell-time">2024-03-16 21:33:41</td>
+          <td><span class="tag tag-gold">问答</span></td>
+          <td class="audit-cell-user">guest@hermes.io</td>
+          <td class="audit-cell-target">波本和苏格兰威士忌的区别</td>
+          <td class="audit-cell-detail">返回 2 条引用，平均置信度 0.91</td>
+          <td class="audit-cell-ip">192.0.2.88</td>
+        </tr>
+        <!-- 行 9：删除标签关联 -->
+        <tr>
+          <td class="audit-cell-time">2024-03-16 15:20:09</td>
+          <td><span class="tag tag-danger">删除</span></td>
+          <td class="audit-cell-user">admin@hermes.io</td>
+          <td class="audit-cell-target">「入门指南」标签</td>
+          <td class="audit-cell-detail">解除与「中国白酒百科」的关联</td>
+          <td class="audit-cell-ip">203.0.113.42</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- 分页控件：上一页(disabled) + 1(active) + 2 + 3 + 下一页 + 第 1/3 页 · 共 27 条 -->
+    <div class="pagination">
+      <span class="page-info">第 <span class="num">1</span>/3 页 · 共 <span class="num">27</span> 条</span>
+      <button disabled>← 上一页</button>
+      <button class="active">1</button>
+      <button>2</button>
+      <button>3</button>
+      <button>下一页 →</button>
+    </div>
+  </div>
+</body>
+</html>

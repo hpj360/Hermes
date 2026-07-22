@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>数据导出 · Hermes KB</title>
+  <!-- Google Fonts：衬线杂志感 + Inter 正文 + Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="_tokens.css">
+  <link rel="stylesheet" href="_components.css">
+  <style>
+    /* === 导出页专属：三卡 grid + 历史区 === */
+    .intro { color: var(--ink-600); font-size: var(--fs-sm); margin: var(--sp-4) 0 var(--sp-6); max-width: 720px; line-height: 1.7; }
+    .export-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-6); margin-bottom: var(--sp-8); }
+    .export-card { display: flex; flex-direction: column; }
+    .export-card .icon { font-size: var(--fs-3xl); margin-bottom: var(--sp-3); }
+    .export-card .card-title { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+    .export-card .desc { color: var(--ink-600); font-size: var(--fs-sm); line-height: 1.7; margin: var(--sp-2) 0 var(--sp-4); flex: 1; }
+    .export-card .row { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-4); flex-wrap: wrap; }
+    .export-card .select { width: auto; flex: 1; min-width: 120px; }
+    .export-card .btn-primary { align-self: flex-start; }
+    /* 灰显卡片：BibTeX 即将推出 */
+    .export-card.disabled { opacity: 0.5; pointer-events: none; }
+    /* 历史区：表格样式复用 .table */
+    .history-title { font-family: var(--font-serif); font-size: var(--fs-xl); margin: var(--sp-8) 0 var(--sp-4); }
+    .history-cell-time { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--ink-600); }
+    .history-cell-size { color: var(--gold-700); font-size: var(--fs-sm); }
+    .history-cell-format { font-family: var(--font-serif); }
+  </style>
+</head>
+<body data-page="export">
+  <script src="_nav.js"></script>
+  <div class="container">
+    <h1 class="page-title">数据导出</h1>
+    <!-- 说明：导出知识库内容用于备份 / 迁移 / 引用 -->
+    <p class="intro">将 Hermes KB 中的文档、分片、标签与历史问答导出为机器可读格式，便于备份、迁移至其他系统，或在学术写作中作为 BibTeX 引用来源。</p>
+
+    <!-- 三张导出卡片 grid -->
+    <div class="export-grid">
+      <!-- 卡片 1：全量 JSON 导出 -->
+      <div class="card export-card">
+        <div class="icon">📦</div>
+        <div class="card-title">全量 JSON 导出</div>
+        <p class="desc">完整导出知识库全部文档、向量分片、标签体系及问答历史，适合整体备份与跨系统迁移。</p>
+        <div class="row">
+          <span class="tag tag-outline">预估大小 4.2 MB</span>
+        </div>
+        <button class="btn-primary">↓ 导出 JSON</button>
+      </div>
+
+      <!-- 卡片 2：单文档导出 -->
+      <div class="card export-card">
+        <div class="icon">📄</div>
+        <div class="card-title">单文档导出</div>
+        <p class="desc">选择单篇文档，按需导出为 Markdown 或 JSON 格式，保留分片结构与标签元数据。</p>
+        <div class="row">
+          <select class="select" id="export-doc">
+            <option value="1">金酒百科</option>
+            <option value="2">威士忌百科</option>
+            <option value="3">葡萄酒百科</option>
+            <option value="4">中国白酒百科</option>
+            <option value="5">朗姆酒与龙舌兰百科</option>
+          </select>
+          <select class="select" id="export-format">
+            <option value="md">Markdown</option>
+            <option value="json">JSON</option>
+          </select>
+        </div>
+        <button class="btn-primary">↓ 导出文档</button>
+      </div>
+
+      <!-- 卡片 3：BibTeX 引用导出（即将推出，整体灰显） -->
+      <div class="card export-card disabled">
+        <div class="icon">📚</div>
+        <div class="card-title">BibTeX 引用导出 <span class="tag tag-gold">即将推出 · M3 支持</span></div>
+        <p class="desc">为知识库中的每篇文档生成标准 BibTeX 条目，支持在 LaTeX 与学术写作中直接引用。</p>
+        <div class="row">
+          <span class="tag tag-outline">输出格式 .bib</span>
+        </div>
+        <button class="btn-primary" disabled>↓ 导出 BibTeX</button>
+      </div>
+    </div>
+
+    <!-- 导出历史：3 条记录 -->
+    <h2 class="history-title">导出历史</h2>
+    <table class="table">
+      <thead>
+        <tr><th>时间</th><th>格式</th><th>大小</th><th>下载</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="history-cell-time">2024-03-20 14:05:18</td>
+          <td class="history-cell-format">全量 JSON</td>
+          <td class="history-cell-size">4.2 MB</td>
+          <td><a href="#">hermes-kb-20240320.json ↓</a></td>
+        </tr>
+        <tr>
+          <td class="history-cell-time">2024-03-18 09:30:42</td>
+          <td class="history-cell-format">单文档 Markdown</td>
+          <td class="history-cell-size">86 KB</td>
+          <td><a href="#">whisky-encyclopedia.md ↓</a></td>
+        </tr>
+        <tr>
+          <td class="history-cell-time">2024-03-15 17:12:09</td>
+          <td class="history-cell-format">单文档 JSON</td>
+          <td class="history-cell-size">142 KB</td>
+          <td><a href="#">wine-encyclopedia.json ↓</a></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

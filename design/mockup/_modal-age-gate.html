@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hermes KB · 年龄门</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="_tokens.css">
+  <link rel="stylesheet" href="_components.css">
+  <style>
+    .demo-wrap { padding: var(--sp-12) 0; text-align: center; }
+    /* 年龄门：深酒红渐变 + 暗金描边，体现严肃合规感 */
+    .modal-age-gate {
+      background: linear-gradient(160deg, var(--brand-900), var(--brand-700));
+      border: 1px solid var(--gold-700);
+      color: #fff; max-width: 460px; text-align: center;
+    }
+    .modal-age-gate .modal-title { color: var(--gold-100); font-size: var(--fs-xl); }
+    .modal-age-gate .age-body { font-size: var(--fs-sm); color: rgba(255,255,255,0.85); line-height: 1.75; margin-bottom: var(--sp-6); }
+    .modal-age-gate .age-body strong { color: var(--gold-500); }
+    .modal-age-gate .age-actions { display: flex; gap: var(--sp-3); margin-bottom: var(--sp-6); }
+    .modal-age-gate .btn-ghost { color: rgba(255,255,255,0.8); border-color: rgba(255,255,255,0.4); flex: 1; justify-content: center; }
+    .modal-age-gate .btn-ghost:hover { color: #fff; border-color: #fff; }
+    .modal-age-gate .btn-primary { flex: 1; justify-content: center; }
+    .modal-age-gate .age-foot { font-size: var(--fs-xs); color: rgba(255,255,255,0.55); border-top: 1px solid rgba(255,255,255,0.12); padding-top: var(--sp-4); line-height: 1.7; }
+    .modal-age-gate .age-foot .warn { color: var(--gold-300); }
+    .modal-age-gate .seal { font-family: var(--font-serif); font-size: var(--fs-3xl); color: var(--gold-500); margin-bottom: var(--sp-2); letter-spacing: 0.1em; }
+  </style>
+</head>
+<body data-page="modal-age-gate">
+  <div class="container demo-wrap">
+    <button class="btn-primary" id="openAgeGate">显示年龄门</button>
+  </div>
+
+  <div class="modal-overlay" id="ageGateOverlay">
+    <div class="modal modal-age-gate" role="dialog" aria-modal="true" aria-labelledby="ageGateTitle">
+      <div class="seal" aria-hidden="true">18+</div>
+      <h2 class="modal-title" id="ageGateTitle">进入前请确认您的年龄</h2>
+      <p class="age-body">
+        Hermes KB 收录的内容涉及酒类知识与品鉴文化，依据相关法规，本站仅向<strong>年满 18 周岁</strong>的访问者开放。请确认您已达到法定饮酒年龄后继续。
+      </p>
+      <div class="age-actions">
+        <button class="btn-ghost" id="underAgeBtn">我未满 18 岁</button>
+        <button class="btn-primary" id="overAgeBtn">我已年满 18 岁</button>
+      </div>
+      <div class="age-foot">
+        合规声明：本站不售卖酒类商品，内容仅供学习与记录用途。<br>
+        <span class="warn">饮酒有害健康，请理性饮酒。</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="_nav.js"></script>
+  <script>
+    var overlay = document.getElementById('ageGateOverlay');
+    document.getElementById('openAgeGate').addEventListener('click', function () { overlay.classList.add('active'); });
+    document.getElementById('overAgeBtn').addEventListener('click', function () { overlay.classList.remove('active'); });
+    document.getElementById('underAgeBtn').addEventListener('click', function () { window.location.href = 'https://www.baidu.com'; });
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.classList.remove('active'); });
+  </script>
+</body>
+</html>

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>仪表盘 · Hermes KB</title>
+  <!-- Google Fonts：衬线杂志感 + Inter 正文 + Mono 数据 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="_tokens.css">
+  <link rel="stylesheet" href="_components.css">
+  <style>
+    /* === 仪表盘专属：指标卡 + 飞轮环形图 + Token 柱状图（纯 CSS，无外部库） === */
+    body { background: linear-gradient(180deg, var(--ink-50) 0%, #fff 260px); }
+    .dash-main { max-width: var(--container); margin: 0 auto; padding: var(--sp-8) var(--sp-6) var(--sp-16); min-height: calc(100vh - var(--nav-height)); }
+    .page-kicker { font-size: var(--fs-xs); letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold-700); margin-bottom: var(--sp-2); }
+    .page-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: var(--sp-6); border-bottom: 1px solid var(--ink-200); padding-bottom: var(--sp-4); }
+    .page-head h1 { font-size: var(--fs-2xl); color: var(--brand-700); }
+    .page-head .meta { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--ink-400); }
+    .section-title { font-family: var(--font-serif); font-size: var(--fs-xl); color: var(--ink-900); margin: var(--sp-8) 0 var(--sp-4); display: flex; align-items: center; gap: var(--sp-3); }
+    .section-title::before { content: ""; width: 4px; height: 1.1em; background: var(--gold-500); border-radius: var(--r-sm); }
+    .section-title .hint { font-family: var(--font-sans); font-size: var(--fs-xs); color: var(--ink-400); font-weight: 400; }
+    /* 顶部 4 指标卡 */
+    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-4); }
+    .metric { background: #fff; border: 1px solid var(--ink-200); border-radius: var(--r-lg); padding: var(--sp-6); box-shadow: var(--shadow-sm); transition: box-shadow var(--duration-base), transform var(--duration-fast); }
+    .metric:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+    .metric .label { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-400); }
+    .metric .num { font-family: var(--font-serif); font-size: var(--fs-3xl); font-weight: 700; color: var(--brand-700); line-height: 1.1; margin: var(--sp-2) 0; }
+    .metric .trend { font-size: var(--fs-xs); color: var(--success); }
+    /* 飞轮健康度：纯 CSS conic-gradient 环形图 + 右侧 2x2 维度 */
+    .flywheel { display: flex; gap: var(--sp-12); align-items: center; background: #fff; border: 1px solid var(--ink-200); border-radius: var(--r-lg); padding: var(--sp-8); box-shadow: var(--shadow-sm); flex-wrap: wrap; }
+    .flywheel-ring { width: 200px; height: 200px; border-radius: 50%; background: conic-gradient(var(--brand-700) 0 74%, var(--ink-200) 0 100%); display: grid; place-items: center; flex-shrink: 0; box-shadow: var(--shadow-md); }
+    .ring-inner { width: 148px; height: 148px; border-radius: 50%; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    .ring-num { font-family: var(--font-serif); font-size: var(--fs-3xl); font-weight: 700; color: var(--brand-700); line-height: 1; }
+    .ring-unit { font-size: var(--fs-xs); color: var(--ink-400); margin-top: var(--sp-1); }
+    .dims { flex: 1; min-width: 280px; display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-6); }
+    .dim .dim-head { display: flex; justify-content: space-between; font-size: var(--fs-sm); margin-bottom: var(--sp-2); }
+    .dim .dim-head .pct { font-family: var(--font-mono); color: var(--gold-700); }
+    .bar-track { height: 8px; background: var(--ink-100); border-radius: var(--r-full); overflow: hidden; }
+    .bar-fill { height: 100%; background: linear-gradient(90deg, var(--brand-700), var(--gold-500)); border-radius: var(--r-full); }
+    /* Token 用量：7 日柱状图（div + height%） + 汇总卡 */
+    .token-row { display: grid; grid-template-columns: 1.4fr 1fr; gap: var(--sp-4); }
+    .chart-card, .sum-card { background: #fff; border: 1px solid var(--ink-200); border-radius: var(--r-lg); padding: var(--sp-6); box-shadow: var(--shadow-sm); }
+    .chart { display: flex; align-items: flex-end; gap: var(--sp-2); height: 180px; padding: var(--sp-3) 0 var(--sp-2); border-bottom: 1px solid var(--ink-200); }
+    .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); height: 100%; justify-content: flex-end; }
+    .bar-col .bar { width: 64%; background: linear-gradient(180deg, var(--gold-500), var(--brand-700)); border-radius: var(--r-sm) var(--r-sm) 0 0; }
+    .bar-col.peak .bar { background: linear-gradient(180deg, var(--highlight), var(--gold-500)); }
+    .bar-col .day { font-size: var(--fs-xs); color: var(--ink-400); }
+    .bar-col .val { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--ink-600); }
+    .chart-note { font-size: var(--fs-xs); color: var(--ink-400); margin-top: var(--sp-2); }
+    .sum-card .sum-row { display: flex; justify-content: space-between; align-items: baseline; padding: var(--sp-3) 0; border-bottom: 1px solid var(--ink-100); }
+    .sum-card .sum-row:last-of-type { border-bottom: none; }
+    .sum-card .sum-label { font-size: var(--fs-sm); color: var(--ink-400); }
+    .sum-card .sum-val { font-family: var(--font-serif); font-size: var(--fs-xl); color: var(--brand-700); font-weight: 600; }
+    .model-chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-3); }
+    .footnote { font-size: var(--fs-xs); color: var(--ink-400); margin-top: var(--sp-8); text-align: center; }
+    /* 入场动效：指标卡错位淡入 + 柱状图自下而上生长（纯 CSS，无 JS） */
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes growBar { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+    .metric { animation: fadeUp 600ms var(--ease-out) both; }
+    .metric:nth-child(2) { animation-delay: 80ms; }
+    .metric:nth-child(3) { animation-delay: 160ms; }
+    .metric:nth-child(4) { animation-delay: 240ms; }
+    .bar-col .bar { transform-origin: bottom; animation: growBar 800ms var(--ease-out) both; }
+    .bar-col:nth-child(1) .bar { animation-delay: 120ms; }
+    .bar-col:nth-child(2) .bar { animation-delay: 180ms; }
+    .bar-col:nth-child(3) .bar { animation-delay: 240ms; }
+    .bar-col:nth-child(4) .bar { animation-delay: 300ms; }
+    .bar-col:nth-child(5) .bar { animation-delay: 360ms; }
+    .bar-col:nth-child(6) .bar { animation-delay: 420ms; }
+    .bar-col:nth-child(7) .bar { animation-delay: 480ms; }
+    /* 响应式：窄屏指标卡降为 2 列、Token 区堆叠、飞轮居中 */
+    @media (max-width: 880px) {
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .token-row { grid-template-columns: 1fr; }
+      .flywheel { flex-direction: column; gap: var(--sp-6); }
+    }
+  </style>
+</head>
+<body data-page="dashboard">
+  <main class="dash-main">
+    <div class="page-kicker">Dashboard · 仪表盘</div>
+    <div class="page-head">
+      <h1 class="serif">知识库概览</h1>
+      <span class="meta">数据更新于 2026-07-22 08:00</span>
+    </div>
+
+    <!-- 顶部 4 指标卡：衬线大数字 + 趋势箭头 -->
+    <div class="metrics">
+      <div class="metric"><div class="label">文档总数</div><div class="num">47</div><div class="trend">▲ 12% 较上周</div></div>
+      <div class="metric"><div class="label">分片总数</div><div class="num">312</div><div class="trend">▲ 8% 较上周</div></div>
+      <div class="metric"><div class="label">本周问答</div><div class="num">42</div><div class="trend">▲ 5% 较上周</div></div>
+      <div class="metric"><div class="label">平均置信度</div><div class="num">0.87</div><div class="trend">▲ 0.03 较上周</div></div>
+    </div>
+
+    <!-- 飞轮健康度：conic-gradient 环形图（74/100） + 2x2 维度进度条 -->
+    <h2 class="section-title">飞轮健康度 <span class="hint">· 综合得分 74 / 100</span></h2>
+    <div class="flywheel">
+      <div class="flywheel-ring"><div class="ring-inner"><span class="ring-num">74</span><span class="ring-unit">综合得分 / 100</span></div></div>
+      <div class="dims">
+        <div class="dim"><div class="dim-head"><span>内容输入</span><span class="pct">60%</span></div><div class="bar-track"><div class="bar-fill" style="width:60%"></div></div></div>
+        <div class="dim"><div class="dim-head"><span>检索质量</span><span class="pct">85%</span></div><div class="bar-track"><div class="bar-fill" style="width:85%"></div></div></div>
+        <div class="dim"><div class="dim-head"><span>引用密度</span><span class="pct">72%</span></div><div class="bar-track"><div class="bar-fill" style="width:72%"></div></div></div>
+        <div class="dim"><div class="dim-head"><span>用户活跃</span><span class="pct">78%</span></div><div class="bar-track"><div class="bar-fill" style="width:78%"></div></div></div>
+      </div>
+    </div>
+
+    <!-- Token 用量：7 日柱状图（周五峰值） + 汇总卡 + 模型分布 -->
+    <h2 class="section-title">Token 用量 <span class="hint">· 近 7 日</span></h2>
+    <div class="token-row">
+      <div class="chart-card">
+        <div class="chart">
+          <div class="bar-col"><span class="val">12k</span><div class="bar" style="height:45%"></div><span class="day">一</span></div>
+          <div class="bar-col"><span class="val">16k</span><div class="bar" style="height:60%"></div><span class="day">二</span></div>
+          <div class="bar-col"><span class="val">10k</span><div class="bar" style="height:38%"></div><span class="day">三</span></div>
+          <div class="bar-col"><span class="val">19k</span><div class="bar" style="height:72%"></div><span class="day">四</span></div>
+          <div class="bar-col peak"><span class="val">26k</span><div class="bar" style="height:100%"></div><span class="day">五</span></div>
+          <div class="bar-col"><span class="val">13k</span><div class="bar" style="height:50%"></div><span class="day">六</span></div>
+          <div class="bar-col"><span class="val">8k</span><div class="bar" style="height:30%"></div><span class="day">日</span></div>
+        </div>
+        <p class="chart-note">周五达峰值 26k，与导入新文档高峰期吻合。</p>
+      </div>
+      <div class="sum-card">
+        <div class="sum-row"><span class="sum-label">本周总量</span><span class="sum-val">128,450</span></div>
+        <div class="sum-row"><span class="sum-label">预估成本</span><span class="sum-val">¥1.28</span></div>
+        <div class="sum-row"><span class="sum-label">模型分布</span><span class="sum-val" style="font-size:var(--fs-sm)">4 个模型</span></div>
+        <div class="model-chips">
+          <span class="tag tag-brand">Mock LLM 58%</span>
+          <span class="tag tag-info">GPT-4o 24%</span>
+          <span class="tag tag-gold">Claude 12%</span>
+          <span class="tag tag-ink">DeepSeek 6%</span>
+        </div>
+      </div>
+    </div>
+    <p class="footnote">Hermes KB · 所有图表为纯 CSS / conic-gradient 渲染，无外部图表库依赖。</p>
+  </main>
+  <script src="_nav.js"></script>
+</body>
+</html>

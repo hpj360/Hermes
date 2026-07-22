@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hermes KB · 导入文档</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="_tokens.css">
+  <link rel="stylesheet" href="_components.css">
+  <style>
+    .demo-wrap { padding: var(--sp-12) 0; text-align: center; }
+    .modal-import { max-width: 600px; padding: var(--sp-6); }
+    .modal-import .modal-title { margin-bottom: var(--sp-4); }
+    .tab-list { display: flex; gap: var(--sp-1); border-bottom: 1px solid var(--ink-200); margin-bottom: var(--sp-4); }
+    .tab-list button { background: transparent; border: none; padding: var(--sp-2) var(--sp-4); font-family: var(--font-sans); font-size: var(--fs-sm); color: var(--ink-600); cursor: pointer; border-bottom: 2px solid transparent; transition: all var(--duration-fast); }
+    .tab-list button:hover { color: var(--brand-700); }
+    .tab-list button.active { color: var(--brand-700); border-bottom-color: var(--gold-500); font-weight: 500; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .field { margin-bottom: var(--sp-3); }
+    .field-label { display: block; font-size: var(--fs-xs); color: var(--ink-600); margin-bottom: var(--sp-2); text-transform: uppercase; letter-spacing: 0.04em; }
+    .chip-row { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+    .chip { display: inline-flex; align-items: center; gap: var(--sp-1); font-size: var(--fs-xs); padding: var(--sp-1) var(--sp-3); border-radius: var(--r-full); border: 1px solid var(--ink-200); background: #fff; color: var(--ink-600); cursor: pointer; transition: all var(--duration-fast); }
+    .chip:hover { border-color: var(--brand-200); }
+    .chip.selected { background: var(--brand-700); color: #fff; border-color: var(--brand-700); }
+    .textarea { min-height: 140px; font-family: var(--font-mono); font-size: var(--fs-sm); }
+    .word-count { text-align: right; font-size: var(--fs-xs); color: var(--ink-400); margin-top: var(--sp-1); }
+    .dropzone { border: 2px dashed var(--ink-200); border-radius: var(--r-md); padding: var(--sp-8) var(--sp-4); text-align: center; color: var(--ink-400); cursor: pointer; transition: all var(--duration-fast); }
+    .dropzone:hover { border-color: var(--brand-200); background: var(--brand-50); }
+    .dropzone .dz-icon { font-size: var(--fs-2xl); margin-bottom: var(--sp-2); }
+    .dropzone .dz-text { font-size: var(--fs-sm); }
+    .dropzone .dz-text strong { color: var(--brand-700); }
+    .dropzone .dz-hint { font-size: var(--fs-xs); color: var(--ink-400); margin-top: var(--sp-1); }
+    .file-queue { margin-top: var(--sp-3); }
+    .file-item { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--ink-100); border-radius: var(--r-md); margin-bottom: var(--sp-2); background: #fff; }
+    .file-item .f-name { flex: 1; font-size: var(--fs-sm); color: var(--ink-900); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-item .f-size { font-size: var(--fs-xs); color: var(--ink-400); font-family: var(--font-mono); }
+    .file-item .f-del { background: transparent; border: none; color: var(--ink-400); cursor: pointer; padding: var(--sp-1); font-size: var(--fs-base); line-height: 1; }
+    .file-item .f-del:hover { color: var(--danger); }
+    .progress-block { margin-top: var(--sp-4); }
+    .progress-bar { height: 8px; background: var(--ink-100); border-radius: var(--r-full); overflow: hidden; }
+    .progress-bar .fill { height: 100%; background: linear-gradient(90deg, var(--brand-700), var(--gold-500)); width: 0%; transition: width 200ms linear; }
+    .progress-meta { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--ink-600); margin-top: var(--sp-2); }
+    .fail-list { margin-top: var(--sp-3); }
+    .fail-item { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--danger); padding: var(--sp-1) 0; }
+    .fail-item .fail-name { flex: 1; }
+    .modal-foot { display: flex; justify-content: flex-end; gap: var(--sp-3); margin-top: var(--sp-6); border-top: 1px solid var(--ink-100); padding-top: var(--sp-4); }
+  </style>
+</head>
+<body data-page="modal-import">
+  <div class="container demo-wrap">
+    <button class="btn-primary" id="openImport">显示导入框</button>
+  </div>
+
+  <div class="modal-overlay" id="importOverlay">
+    <div class="modal modal-import" role="dialog" aria-modal="true" aria-labelledby="importTitle">
+      <h2 class="modal-title" id="importTitle">导入文档</h2>
+
+      <div class="tab-list" role="tablist">
+        <button class="active" data-tab="paste" role="tab">粘贴文本</button>
+        <button data-tab="upload" role="tab">上传文件</button>
+        <button data-tab="batch" role="tab">批量上传</button>
+      </div>
+
+      <!-- Tab 1：粘贴文本 -->
+      <div class="tab-panel active" id="panel-paste">
+        <div class="field">
+          <label class="field-label" for="catSel">分类</label>
+          <select class="select" id="catSel">
+            <option>葡萄酒</option><option>威士忌</option><option>清酒</option><option>白兰地</option><option>其他</option>
+          </select>
+        </div>
+        <div class="field">
+          <span class="field-label">标签</span>
+          <div class="chip-row">
+            <span class="chip selected">品鉴笔记</span>
+            <span class="chip">产区</span>
+            <span class="chip selected">陈年</span>
+            <span class="chip">酒庄</span>
+            <span class="chip">入门</span>
+            <span class="chip">收藏</span>
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="pasteArea">正文</label>
+          <textarea class="textarea" id="pasteArea" placeholder="粘贴 Markdown 或纯文本…"></textarea>
+          <div class="word-count"><span id="wordCount">0</span> 字</div>
+        </div>
+      </div>
+
+      <!-- Tab 2：上传文件 -->
+      <div class="tab-panel" id="panel-upload">
+        <div class="dropzone" id="dropzoneSingle">
+          <div class="dz-icon">⬆</div>
+          <div class="dz-text">拖拽 .md/.txt 文件到此处或<strong>点击选择</strong></div>
+          <div class="dz-hint">单文件上传，最大 5MB</div>
+        </div>
+        <div class="file-queue" id="queueSingle">
+          <div class="file-item">
+            <span class="f-name">勃艮第产区指南.md</span>
+            <span class="f-size">2.3 KB</span>
+            <span class="tag tag-success">已就绪</span>
+            <button class="f-del" aria-label="删除">×</button>
+          </div>
+          <div class="file-item">
+            <span class="f-name">威士忌入门笔记.txt</span>
+            <span class="f-size">1.1 KB</span>
+            <span class="tag tag-success">已就绪</span>
+            <button class="f-del" aria-label="删除">×</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 3：批量上传 -->
+      <div class="tab-panel" id="panel-batch">
+        <div class="dropzone" id="dropzoneBatch">
+          <div class="dz-icon">⬆</div>
+          <div class="dz-text">拖拽多个 .md/.txt 文件到此处或<strong>点击选择</strong></div>
+          <div class="dz-hint">支持批量选择，单次最多 50 个文件</div>
+        </div>
+        <div class="progress-block">
+          <div class="progress-bar"><div class="fill" id="progFill"></div></div>
+          <div class="progress-meta">
+            <span id="progFile">正在导入：清酒品鉴季刊.md</span>
+            <span id="progPct">0%</span>
+          </div>
+        </div>
+        <div class="fail-list">
+          <div class="fail-item"><span class="tag tag-danger">失败</span><span class="fail-name">未命名草稿.md — 文件为空</span></div>
+          <div class="fail-item"><span class="tag tag-danger">失败</span><span class="fail-name">bad-encoding.txt — 编码不支持</span></div>
+        </div>
+      </div>
+
+      <div class="modal-foot">
+        <button class="btn-ghost" id="cancelImport">取消</button>
+        <button class="btn-primary" id="startImport">开始导入</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="_nav.js"></script>
+  <script>
+    var overlay = document.getElementById('importOverlay');
+    document.getElementById('openImport').addEventListener('click', function () { overlay.classList.add('active'); });
+    document.getElementById('cancelImport').addEventListener('click', function () { overlay.classList.remove('active'); });
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.classList.remove('active'); });
+
+    // === Tab 切换 ===
+    var tabs = document.querySelectorAll('.tab-list button');
+    tabs.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        tabs.forEach(function (t) { t.classList.remove('active'); });
+        document.querySelectorAll('.tab-panel').forEach(function (p) { p.classList.remove('active'); });
+        btn.classList.add('active');
+        document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+      });
+    });
+
+    // === chip 多选 ===
+    document.querySelectorAll('.chip').forEach(function (c) {
+      c.addEventListener('click', function () { c.classList.toggle('selected'); });
+    });
+
+    // === 字数统计 ===
+    var paste = document.getElementById('pasteArea');
+    paste.addEventListener('input', function () { document.getElementById('wordCount').textContent = paste.value.length; });
+
+    // === 文件队列删除 ===
+    document.querySelectorAll('.f-del').forEach(function (btn) {
+      btn.addEventListener('click', function () { btn.closest('.file-item').remove(); });
+    });
+
+    // === 模拟进度条动画 ===
+    var progFill = document.getElementById('progFill');
+    var progPct = document.getElementById('progPct');
+    var progFile = document.getElementById('progFile');
+    var pct = 0, timer = null;
+    var files = ['清酒品鉴季刊.md', '日本酒造地图.txt', 'Sherry入门.md', '波尔多列级庄.md'];
+    function startProgress() {
+      pct = 0; progFill.style.width = '0%';
+      timer = setInterval(function () {
+        pct += 4;
+        if (pct > 100) pct = 100;
+        progFill.style.width = pct + '%';
+        progPct.textContent = Math.round(pct) + '%';
+        progFile.textContent = '正在导入：' + files[Math.floor(pct / 25) % files.length];
+        if (pct >= 100) { clearInterval(timer); progFile.textContent = '导入完成'; }
+      }, 200);
+    }
+    document.getElementById('startImport').addEventListener('click', function () {
+      var activeTab = document.querySelector('.tab-list button.active').dataset.tab;
+      if (activeTab === 'batch') startProgress();
+    });
+  </script>
+</body>
+</html>

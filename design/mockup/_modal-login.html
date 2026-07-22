@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hermes KB · 登录</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="_tokens.css">
+  <link rel="stylesheet" href="_components.css">
+  <style>
+    .demo-wrap { padding: var(--sp-12) 0; text-align: center; }
+    .modal-login .modal-title { text-align: center; }
+    .modal-login .brand-mark { display: block; text-align: center; font-family: var(--font-serif); font-size: var(--fs-lg); color: var(--brand-700); font-weight: 700; margin-bottom: var(--sp-2); letter-spacing: 0.02em; }
+    .modal-login .field { margin-bottom: var(--sp-4); }
+    .modal-login .field-label { display: block; font-size: var(--fs-xs); color: var(--ink-600); margin-bottom: var(--sp-2); text-transform: uppercase; letter-spacing: 0.04em; }
+    .modal-login .input { font-size: var(--fs-base); }
+    .modal-login .row { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-4); }
+    .modal-login .remember { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); color: var(--ink-600); cursor: pointer; }
+    .modal-login .remember input { accent-color: var(--brand-700); }
+    .modal-login .forgot { font-size: var(--fs-xs); color: var(--ink-400); }
+    .modal-login .btn-primary { width: 100%; justify-content: center; padding: var(--sp-3) var(--sp-4); }
+    .modal-login .error { display: none; background: #FBF1F4; color: var(--danger); border: 1px solid var(--brand-200); font-size: var(--fs-xs); padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md); margin-bottom: var(--sp-4); }
+    .modal-login .error.show { display: block; }
+    .modal-login .foot { font-size: var(--fs-xs); color: var(--ink-400); text-align: center; border-top: 1px solid var(--ink-100); padding-top: var(--sp-4); margin-top: var(--sp-6); line-height: 1.7; }
+  </style>
+</head>
+<body data-page="modal-login">
+  <div class="container demo-wrap">
+    <button class="btn-primary" id="openLogin">显示登录框</button>
+  </div>
+
+  <div class="modal-overlay" id="loginOverlay">
+    <div class="modal modal-login" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+      <span class="brand-mark">Hermes KB</span>
+      <h2 class="modal-title" id="loginTitle">登录 Hermes KB</h2>
+      <div class="error" id="loginError">密码错误，请重试。</div>
+      <div class="field">
+        <label class="field-label" for="pwdInput">访问密码</label>
+        <input class="input" id="pwdInput" type="password" placeholder="请输入访问密码" autocomplete="current-password">
+      </div>
+      <div class="row">
+        <label class="remember"><input type="checkbox" id="rememberMe" checked> 记住我</label>
+        <a class="forgot" href="#">忘记密码？</a>
+      </div>
+      <button class="btn-primary" id="loginSubmit">登录</button>
+      <div class="foot">本站为单用户私人知识库，非多租户服务。<br>如需访问凭证，请联系管理员。</div>
+    </div>
+  </div>
+
+  <script src="_nav.js"></script>
+  <script>
+    var overlay = document.getElementById('loginOverlay');
+    document.getElementById('openLogin').addEventListener('click', function () { overlay.classList.add('active'); });
+    document.getElementById('loginSubmit').addEventListener('click', function () {
+      var err = document.getElementById('loginError');
+      err.classList.add('show');
+    });
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) { overlay.classList.remove('active'); document.getElementById('loginError').classList.remove('show'); } });
+    document.getElementById('pwdInput').addEventListener('input', function () { document.getElementById('loginError').classList.remove('show'); });
+  </script>
+</body>
+</html>
