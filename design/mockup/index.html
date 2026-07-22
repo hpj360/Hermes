@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hermes KB · 你的私人酒类知识管家</title>
+  <!-- 字体：Noto Serif SC 衬线标题 + Inter 正文 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&display=swap" rel="stylesheet">
+  <!-- 设计系统：token + 复用组件 -->
+  <link rel="stylesheet" href="_tokens.css">
+  <link rel="stylesheet" href="_components.css">
+  <style>
+    /* === 首页专属样式 === */
+    .hero {
+      background: linear-gradient(135deg, var(--brand-900), var(--brand-700)),
+                  url('https://picsum.photos/seed/hermes-winecellar/1600/600') center/cover;
+      background-blend-mode: multiply;
+      color: #fff;
+      padding: var(--sp-16) 0;
+    }
+    .hero .container { max-width: 720px; }
+    .hero h1 { font-size: var(--fs-hero); color: #fff; margin-bottom: var(--sp-4); letter-spacing: 0.02em; }
+    .hero .gold-accent { color: var(--gold-500); }
+    .hero .subtitle { font-size: var(--fs-lg); color: var(--gold-100); margin-bottom: var(--sp-8); line-height: 1.6; }
+    .hero-cta { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
+    .btn-ghost-white { background: transparent; color: #fff; border-color: rgba(255,255,255,0.5); }
+    .btn-ghost-white:hover { background: rgba(255,255,255,0.12); color: #fff; border-color: #fff; }
+
+    section.section { padding: var(--sp-16) 0; }
+    .section-title {
+      font-family: var(--font-serif); font-size: var(--fs-2xl);
+      margin-bottom: var(--sp-6); display: flex; align-items: center; gap: var(--sp-3);
+    }
+    .section-title::before { content: ''; width: 4px; height: 1.1em; background: var(--gold-500); display: inline-block; }
+
+    /* 头条问答 */
+    .featured-qa { background: #fff; border-radius: var(--r-lg); padding: var(--sp-8); box-shadow: var(--shadow-md); border: 1px solid var(--ink-200); }
+    .featured-qa .qa-q { font-family: var(--font-serif); font-size: var(--fs-xl); font-weight: 700; color: var(--ink-900); margin-bottom: var(--sp-3); }
+    .featured-qa .qa-q .q-mark { color: var(--gold-500); margin-right: var(--sp-2); }
+    .featured-qa .qa-a { font-size: var(--fs-base); color: var(--ink-600); line-height: 1.75; }
+
+    /* 热门文档卡片网格 */
+    .docs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--sp-4); }
+    .docs-grid .card { display: flex; flex-direction: column; }
+    .docs-grid .card .doc-tag { margin-bottom: var(--sp-2); align-self: flex-start; }
+    .docs-grid .card .card-summary { font-size: var(--fs-sm); color: var(--ink-600); flex: 1; margin: var(--sp-2) 0 var(--sp-3); line-height: 1.6; }
+    .docs-grid .card .card-link { font-size: var(--fs-sm); color: var(--brand-700); font-weight: 500; }
+
+    /* 分类圆形入口 */
+    .cats-grid { display: flex; gap: var(--sp-6); flex-wrap: wrap; justify-content: center; }
+    .cat-circle { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); text-decoration: none; }
+    .cat-circle .circle {
+      width: 108px; height: 108px; border-radius: var(--r-full);
+      border: 2px solid var(--gold-500); background: var(--brand-50);
+      display: flex; align-items: center; justify-content: center; text-align: center;
+      font-family: var(--font-serif); font-size: var(--fs-base); color: var(--brand-700); font-weight: 600;
+      transition: transform var(--duration-base) var(--ease-out), box-shadow var(--duration-base);
+    }
+    .cat-circle:hover .circle { transform: scale(1.08); box-shadow: var(--shadow-md); background: #fff; }
+    .cat-circle .cat-label { font-size: var(--fs-xs); color: var(--ink-400); text-transform: uppercase; letter-spacing: 0.04em; }
+  </style>
+</head>
+<body data-page="home">
+  <!-- Hero 区：深酒红渐变 + 酒窖头图 + 衬线主标题 + 双 CTA -->
+  <header class="hero">
+    <div class="container">
+      <h1>你的<span class="gold-accent">私人</span>酒类知识管家</h1>
+      <p class="subtitle">从金酒到白酒，从产区到品鉴——把全世界酒类文献收进一个可问答的知识库。</p>
+      <div class="hero-cta">
+        <a class="btn-secondary" href="ask.html">开始提问 →</a>
+        <a class="btn-ghost btn-ghost-white" href="_modal-import.html">导入知识</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- 头条问答区：精选问答 + 引用来源预览 -->
+  <section class="section">
+    <div class="container">
+      <h2 class="section-title">头条问答</h2>
+      <div class="featured-qa">
+        <p class="qa-q"><span class="q-mark">Q.</span>单一麦芽威士忌与调和威士忌的核心差别是什么？</p>
+        <p class="qa-a">单一麦芽威士忌必须来自同一家酒厂，原料仅为麦芽、水和酵母，并以壶式蒸馏器二次蒸馏，风格更聚焦酒厂个性；调和威士忌则由多家酒厂的麦芽与谷物威士忌勾调而成，追求平衡与稳定，产量更大、入口更柔顺。两者在法规定义、风味表达与定价定位上均有明显区隔。</p>
+        <div class="citation-list">
+          <div class="cite-title">引用来源 · 3 条</div>
+          <div class="citation-item">
+            <span class="cite-num">1</span>
+            <a class="cite-snippet" href="doc-detail.html?chunk=3">《威士忌百科》第 3 段：单一麦芽的法定定义与原料要求</a>
+          </div>
+          <div class="citation-item">
+            <span class="cite-num">2</span>
+            <a class="cite-snippet" href="doc-detail.html?chunk=3">《威士忌百科》第 3 段：调和工艺与跨酒厂勾调传统</a>
+          </div>
+          <div class="citation-item">
+            <span class="cite-num">3</span>
+            <a class="cite-snippet" href="doc-detail.html?chunk=3">《威士忌百科》第 3 段：风味表达与市场定位差异</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 热门文档区：5 张文档卡片 grid -->
+  <section class="section" style="background: var(--ink-100);">
+    <div class="container">
+      <h2 class="section-title">热门文档</h2>
+      <div class="docs-grid">
+        <article class="card">
+          <span class="tag tag-gold doc-tag">烈酒</span>
+          <h3 class="card-title">金酒百科</h3>
+          <p class="card-summary">从杜松子到现代工艺，梳理金酒的植物配方、蒸馏方式与伦敦干型等主流风格。</p>
+          <a class="card-link" href="doc-detail.html">查看详情 →</a>
+        </article>
+        <article class="card">
+          <span class="tag tag-brand doc-tag">威士忌</span>
+          <h3 class="card-title">威士忌百科</h3>
+          <p class="card-summary">覆盖苏格兰、爱尔兰、美国与日本四大产区，解析麦芽、谷物与调和威士忌的工艺谱系。</p>
+          <a class="card-link" href="doc-detail.html">查看详情 →</a>
+        </article>
+        <article class="card">
+          <span class="tag tag-info doc-tag">葡萄酒</span>
+          <h3 class="card-title">葡萄酒百科</h3>
+          <p class="card-summary">从旧世界到新世界，讲述葡萄品种、风土、年份与酿造工艺如何共同塑造一杯酒。</p>
+          <a class="card-link" href="doc-detail.html">查看详情 →</a>
+        </article>
+        <article class="card">
+          <span class="tag tag-warning doc-tag">中国白酒</span>
+          <h3 class="card-title">中国白酒百科</h3>
+          <p class="card-summary">浓清酱米兼五大香型全览，解读大曲、麸曲与发酵容器对风味骨架的决定性影响。</p>
+          <a class="card-link" href="doc-detail.html">查看详情 →</a>
+        </article>
+        <article class="card">
+          <span class="tag tag-danger doc-tag">烈酒</span>
+          <h3 class="card-title">朗姆酒与龙舌兰百科</h3>
+          <p class="card-summary">甘蔗与龙舌兰两条烈酒脉络：朗姆的糖蜜发酵、龙舌兰的植物采摘与熟成分级体系。</p>
+          <a class="card-link" href="doc-detail.html">查看详情 →</a>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- 分类入口区：7 个圆形入口 -->
+  <section class="section">
+    <div class="container">
+      <h2 class="section-title">按分类浏览</h2>
+      <div class="cats-grid">
+        <a class="cat-circle" href="docs.html?cat=spirits"><span class="circle">烈酒</span><span class="cat-label">Spirits</span></a>
+        <a class="cat-circle" href="docs.html?cat=whisky"><span class="circle">威士忌</span><span class="cat-label">Whisky</span></a>
+        <a class="cat-circle" href="docs.html?cat=wine"><span class="circle">葡萄酒</span><span class="cat-label">Wine</span></a>
+        <a class="cat-circle" href="docs.html?cat=baijiu"><span class="circle">中国白酒</span><span class="cat-label">Baijiu</span></a>
+        <a class="cat-circle" href="docs.html?cat=cocktail"><span class="circle">鸡尾酒</span><span class="cat-label">Cocktail</span></a>
+        <a class="cat-circle" href="docs.html?cat=brewed"><span class="circle">酿造酒</span><span class="cat-label">Brewed</span></a>
+        <a class="cat-circle" href="docs.html?cat=history"><span class="circle">历史与文化</span><span class="cat-label">Culture</span></a>
+      </div>
+    </div>
+  </section>
+
+  <!-- 共享导航注入 + chunk 高亮逻辑 -->
+  <script src="_nav.js"></script>
+</body>
+</html>

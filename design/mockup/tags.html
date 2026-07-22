@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>标签管理 · Hermes KB</title>
+  <!-- Google Fonts：衬线杂志感 + Inter 正文 + Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="_tokens.css">
+  <link rel="stylesheet" href="_components.css">
+  <style>
+    /* === 标签管理页专属 === */
+    .intro { color: var(--ink-600); font-size: var(--fs-sm); margin: var(--sp-4) 0 var(--sp-6); max-width: 720px; line-height: 1.7; }
+    .create-card { margin-bottom: var(--sp-8); }
+    .create-card .row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+    .create-card .input { flex: 1; min-width: 200px; }
+    /* 8 色 swatch 圆点：点击切换 selected，选中带描边 + ✓ */
+    .swatches { display: flex; gap: var(--sp-2); margin: var(--sp-3) 0; }
+    .swatch {
+      width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+      border: 2px solid transparent; position: relative;
+      transition: transform var(--duration-fast) var(--ease-out);
+    }
+    .swatch:hover { transform: scale(1.1); }
+    .swatch.selected { border-color: var(--ink-900); box-shadow: 0 0 0 2px #fff inset; }
+    .swatch.selected::after {
+      content: '✓'; color: #fff; font-size: 14px; font-weight: 700;
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    }
+    /* 标签列表行：圆点 + 衬线名 + 金色关联数 + 操作 */
+    .tag-row { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--ink-100); }
+    .tag-row:last-child { border-bottom: none; }
+    .tag-row:hover { background: var(--ink-50); }
+    .tag-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
+    .tag-name { font-family: var(--font-serif); font-size: var(--fs-base); color: var(--ink-900); min-width: 160px; }
+    .tag-count { color: var(--gold-700); font-size: var(--fs-sm); }
+    .tag-count .num { font-family: var(--font-serif); color: var(--gold-500); font-size: var(--fs-lg); font-weight: 600; }
+    .tag-actions { margin-left: auto; display: flex; gap: var(--sp-2); }
+  </style>
+</head>
+<body data-page="tags">
+  <script src="_nav.js"></script>
+  <div class="container">
+    <h1 class="page-title">标签管理</h1>
+    <!-- 说明：标签是跨分类的灵活组织工具 -->
+    <p class="intro">标签是跨分类的灵活组织工具，一篇文档可以同时拥有多个标签。用标签串联起烈酒、威士忌、葡萄酒、中国白酒等不同分类下的相关文档，便于在问答与检索中按主题快速聚焦。</p>
+
+    <!-- 创建标签区：名称输入 + 8 色预设 swatch + 创建按钮 -->
+    <div class="card create-card">
+      <div class="card-title">创建新标签</div>
+      <div class="row">
+        <input class="input" id="tag-name" type="text" placeholder="标签名称，如「单一麦芽」">
+      </div>
+      <!-- 8 色预设：酒红 / 暗金 / 酒绿 / 琥珀 / 靛蓝 / 莓红 / 橡木 / 墨黑 -->
+      <div class="swatches" id="swatches">
+        <span class="swatch selected" data-color="#8B1A36" style="background:#8B1A36" title="酒红"></span>
+        <span class="swatch" data-color="#C9A227" style="background:#C9A227" title="暗金"></span>
+        <span class="swatch" data-color="#2E7D5B" style="background:#2E7D5B" title="酒绿"></span>
+        <span class="swatch" data-color="#C77A1A" style="background:#C77A1A" title="琥珀"></span>
+        <span class="swatch" data-color="#2C6FB5" style="background:#2C6FB5" title="靛蓝"></span>
+        <span class="swatch" data-color="#B8254A" style="background:#B8254A" title="莓红"></span>
+        <span class="swatch" data-color="#7A5A3A" style="background:#7A5A3A" title="橡木"></span>
+        <span class="swatch" data-color="#1F1C18" style="background:#1F1C18" title="墨黑"></span>
+      </div>
+      <div class="row">
+        <button class="btn-primary" id="tag-create">创建标签</button>
+      </div>
+    </div>
+
+    <!-- 标签列表：5 个真实标签 -->
+    <h2 class="page-title" style="font-size: var(--fs-xl);">已有标签</h2>
+    <div class="card">
+      <!-- 标签 1：苏格兰威士忌 -->
+      <div class="tag-row">
+        <span class="tag-dot" style="background:#8B1A36"></span>
+        <span class="tag-name">苏格兰威士忌</span>
+        <span class="tag-count">关联 <span class="num">3</span> 篇文档</span>
+        <span class="tag-actions">
+          <button class="btn-ghost">编辑</button>
+          <button class="btn-danger" onclick="confirmDelete('苏格兰威士忌')">删除</button>
+        </span>
+      </div>
+      <!-- 标签 2：波本 -->
+      <div class="tag-row">
+        <span class="tag-dot" style="background:#C9A227"></span>
+        <span class="tag-name">波本</span>
+        <span class="tag-count">关联 <span class="num">2</span> 篇文档</span>
+        <span class="tag-actions">
+          <button class="btn-ghost">编辑</button>
+          <button class="btn-danger" onclick="confirmDelete('波本')">删除</button>
+        </span>
+      </div>
+      <!-- 标签 3：红葡萄 -->
+      <div class="tag-row">
+        <span class="tag-dot" style="background:#B8254A"></span>
+        <span class="tag-name">红葡萄</span>
+        <span class="tag-count">关联 <span class="num">4</span> 篇文档</span>
+        <span class="tag-actions">
+          <button class="btn-ghost">编辑</button>
+          <button class="btn-danger" onclick="confirmDelete('红葡萄')">删除</button>
+        </span>
+      </div>
+      <!-- 标签 4：鸡尾酒基酒 -->
+      <div class="tag-row">
+        <span class="tag-dot" style="background:#2E7D5B"></span>
+        <span class="tag-name">鸡尾酒基酒</span>
+        <span class="tag-count">关联 <span class="num">5</span> 篇文档</span>
+        <span class="tag-actions">
+          <button class="btn-ghost">编辑</button>
+          <button class="btn-danger" onclick="confirmDelete('鸡尾酒基酒')">删除</button>
+        </span>
+      </div>
+      <!-- 标签 5：入门指南 -->
+      <div class="tag-row">
+        <span class="tag-dot" style="background:#1F1C18"></span>
+        <span class="tag-name">入门指南</span>
+        <span class="tag-count">关联 <span class="num">6</span> 篇文档</span>
+        <span class="tag-actions">
+          <button class="btn-ghost">编辑</button>
+          <button class="btn-danger" onclick="confirmDelete('入门指南')">删除</button>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /* === 内联：颜色选择切换 === */
+    (function () {
+      var swatches = document.querySelectorAll('.swatch');
+      swatches.forEach(function (s) {
+        s.addEventListener('click', function () {
+          swatches.forEach(function (x) { x.classList.remove('selected'); });
+          s.classList.add('selected');
+        });
+      });
+    })();
+
+    /* === 删除二次确认：原生 confirm() === */
+    function confirmDelete(name) {
+      if (confirm('确定要删除标签「' + name + '」吗？该操作将解除与所有文档的关联。')) {
+        // 演示：仅记录，不实际删除
+        console.log('删除标签：', name);
+      }
+    }
+  </script>
+</body>
+</html>

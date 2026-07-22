@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>问答 · Hermes KB</title>
+  <!-- 字体：Noto Serif SC（衬线标题） + Inter（无衬线正文） -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="_tokens.css">
+  <link rel="stylesheet" href="_components.css">
+  <style>
+    /* 问答页专属布局：流式对话 + 固定底部输入 */
+    .ask-main { max-width: 880px; margin: 0 auto; padding: var(--sp-8) var(--sp-6) 140px; min-height: calc(100vh - var(--nav-height)); }
+    /* 空状态引导 */
+    .ask-empty { text-align: center; padding: var(--sp-16) var(--sp-6); }
+    .ask-empty h1 { font-size: var(--fs-2xl); color: var(--brand-700); margin-bottom: var(--sp-2); }
+    .ask-empty .sub { color: var(--ink-400); font-size: var(--fs-sm); margin-bottom: var(--sp-8); }
+    .example-list { display: flex; flex-direction: column; gap: var(--sp-3); max-width: 560px; margin: 0 auto; }
+    .example-list .btn-ghost { justify-content: flex-start; padding: var(--sp-3) var(--sp-4); text-align: left; }
+    /* 对话区 */
+    .conv { display: none; flex-direction: column; gap: var(--sp-6); }
+    .conv.show { display: flex; }
+    .msg-user { align-self: flex-end; max-width: 80%; background: var(--brand-100); color: var(--ink-900); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-lg) var(--r-lg) var(--r-sm) var(--r-lg); }
+    .msg-ai { align-self: flex-start; width: 100%; background: #fff; border: 1px solid var(--ink-200); border-radius: var(--r-lg); padding: var(--sp-6); box-shadow: var(--shadow-sm); }
+    .msg-ai .ai-label { font-family: var(--font-serif); color: var(--brand-700); font-size: var(--fs-sm); margin-bottom: var(--sp-2); }
+    .msg-ai p { margin-bottom: var(--sp-3); color: var(--ink-900); }
+    /* 反馈区 */
+    .feedback { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px dashed var(--ink-200); }
+    .feedback button { background: transparent; border: 1px solid var(--ink-200); border-radius: var(--r-full); padding: 4px var(--sp-3); font-size: var(--fs-xs); color: var(--ink-600); cursor: pointer; }
+    .feedback button:hover { border-color: var(--brand-700); color: var(--brand-700); }
+    /* 底部输入区 */
+    .ask-input-bar { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid var(--ink-200); padding: var(--sp-3) var(--sp-6); box-shadow: 0 -2px 12px rgba(31,28,24,0.05); z-index: 40; }
+    .ask-input-bar .row { max-width: 880px; margin: 0 auto; display: flex; gap: var(--sp-3); align-items: flex-end; }
+    .ask-input-bar .textarea { min-height: 48px; max-height: 140px; }
+    .ask-input-bar .hint { font-size: var(--fs-xs); color: var(--ink-400); margin-top: var(--sp-1); text-align: right; }
+  </style>
+</head>
+<body data-page="ask">
+  <main class="ask-main">
+    <!-- 空状态引导：初始可见 -->
+    <section class="ask-empty" id="emptyState">
+      <h1 class="serif">向 Hermes KB 提问</h1>
+      <p class="sub">关于威士忌、葡萄酒、金酒、鸡尾酒的一切，问我便是。</p>
+      <div class="example-list">
+        <button class="btn-ghost" onclick="fillExample(this.textContent)">波本威士忌和苏格兰威士忌有什么区别？</button>
+        <button class="btn-ghost" onclick="fillExample(this.textContent)">如何品鉴红葡萄酒？</button>
+        <button class="btn-ghost" onclick="fillExample(this.textContent)">金酒可以调制哪些经典鸡尾酒？</button>
+      </div>
+    </section>
+
+    <!-- 对话区：发送后显示（静态原型，含一条模拟问答） -->
+    <section class="conv" id="conv">
+      <!-- 用户问题气泡：右对齐，brand-100 背景 -->
+      <div class="msg-user" id="userBubble"></div>
+      <!-- AI 答案区：左对齐，白底。流式感说明：实际 SSE 逐字写入此处，此处为静态展示 -->
+      <div class="msg-ai">
+        <div class="ai-label">Hermes KB</div>
+        <p>波本威士忌与苏格兰威士忌的差异主要体现在原料、产地与风味三个维度：</p>
+        <p><strong>原料</strong>——波本必须以至少 51% 玉米为基底，辅以黑麦、麦芽；苏格兰威士忌则以麦芽为主，单一麦芽版本仅用发芽大麦。</p>
+        <p><strong>产地</strong>——波本产于美国（虽非强制但 95% 产自肯塔基）；苏格兰威士忌须在苏格兰蒸馏并陈年不少于三年。</p>
+        <p><strong>风味</strong>——波本因新橡木桶陈酿，常带香草、焦糖与橡木甜；苏格兰威士忌多用旧桶，泥煤味、海盐与干果香更显著。</p>
+        <!-- 引用列表：3 条，brand-700 编号，可点击跳转 doc-detail.html?chunk=N -->
+        <div class="citation-list">
+          <div class="cite-title">引用来源</div>
+          <div class="citation-item">
+            <span class="cite-num">1</span>
+            <span class="cite-snippet"><a href="doc-detail.html?chunk=12">《波本威士忌定义与法规》——美国联邦法规 27 CFR §5.22 第 (i) 款关于玉米比例的硬性约束。</a></span>
+          </div>
+          <div class="citation-item">
+            <span class="cite-num">2</span>
+            <span class="cite-snippet"><a href="doc-detail.html?chunk=7">《苏格兰威士忌法规 2009》——苏格兰陈年下限与地理标志保护的权威说明。</a></span>
+          </div>
+          <div class="citation-item">
+            <span class="cite-num">3</span>
+            <span class="cite-snippet"><a href="doc-detail.html?chunk=23">《橡木桶陈酿风味图谱》——新桶与旧桶对酯类、醛类析出的对比研究。</a></span>
+          </div>
+        </div>
+        <!-- 反馈区：有用 / 无用 + 低置信标记（部分答案显示） -->
+        <div class="feedback">
+          <button onclick="alert('感谢反馈')">👍 有用</button>
+          <button onclick="alert('感谢反馈')">👎 无用</button>
+          <span class="low-confidence">· 低置信</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 底部输入区：固定底部 -->
+  <div class="ask-input-bar">
+    <div class="row">
+      <textarea class="textarea" id="askInput" placeholder="输入你的问题……" rows="1"></textarea>
+      <button class="btn-primary" onclick="sendQuestion()">发送</button>
+    </div>
+    <div class="hint">回车发送</div>
+  </div>
+
+  <script>
+    /* 内联脚本：示例填充 + 空状态→对话区切换（静态原型，无真实 SSE） */
+    function fillExample(text) {
+      document.getElementById('askInput').value = text;
+      document.getElementById('askInput').focus();
+    }
+    /* 点击发送：切换空状态→对话区，并把输入填入用户气泡
+     * 流式感说明：实际产品中此处应建立 EventSource 逐字写入 .msg-ai，
+     * 现为静态原型，直接展示预设问答。 */
+    function sendQuestion() {
+      var input = document.getElementById('askInput');
+      var q = input.value.trim();
+      if (!q) return;
+      document.getElementById('userBubble').textContent = q;
+      document.getElementById('emptyState').style.display = 'none';
+      document.getElementById('conv').classList.add('show');
+      input.value = '';
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    }
+    /* 回车发送（Shift+Enter 换行） */
+    document.getElementById('askInput').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuestion(); }
+    });
+  </script>
+  <script src="_nav.js"></script>
+</body>
+</html>

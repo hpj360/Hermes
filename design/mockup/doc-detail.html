@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>威士忌分类与品鉴指南 — Hermes KB</title>
+  <!-- Google Fonts：衬线（标题）+ 无衬线（正文） -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="_tokens.css">
+  <link rel="stylesheet" href="_components.css">
+  <style>
+    /* === 详情页双栏布局 === */
+    .doc-layout { display: flex; gap: var(--sp-8); max-width: var(--container); margin: 0 auto; padding: var(--sp-6) var(--sp-6) var(--sp-12); align-items: flex-start; }
+    .doc-toc { width: var(--sidebar); flex: 0 0 var(--sidebar); position: sticky; top: calc(var(--nav-height) + var(--sp-4)); }
+    .doc-toc .doc-title { font-family: var(--font-serif); font-size: var(--fs-xl); color: var(--ink-900); margin-bottom: var(--sp-3); line-height: 1.3; }
+    .doc-meta { font-size: var(--fs-xs); color: var(--ink-400); margin-bottom: var(--sp-4); }
+    .doc-meta .meta-line { padding: 2px 0; }
+    .doc-meta .meta-line strong { color: var(--ink-600); font-weight: 500; }
+    /* 章节目录：active 项用 gold-500 左边框 + brand-700 文字色 */
+    .toc-list { list-style: none; border-left: 1px solid var(--ink-200); padding-left: 0; }
+    .toc-list li a { display: block; font-size: var(--fs-sm); color: var(--ink-600); padding: var(--sp-2) var(--sp-3); border-left: 2px solid transparent; margin-left: -1px; transition: all var(--duration-fast); }
+    .toc-list li a.active { color: var(--brand-700); border-left-color: var(--gold-500); font-weight: 500; background: var(--brand-50); }
+    .toc-list li a:hover { color: var(--brand-700); }
+    /* 右侧全文区 */
+    .doc-content { flex: 1; min-width: 0; }
+    .doc-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; align-items: center; margin-bottom: var(--sp-6); padding-bottom: var(--sp-4); border-bottom: 1px solid var(--ink-200); }
+    .doc-actions .actions-hint { font-size: var(--fs-xs); color: var(--ink-400); margin-left: auto; }
+    .doc-content section { margin-bottom: var(--sp-8); scroll-margin-top: calc(var(--nav-height) + var(--sp-4)); }
+    .doc-content h2 { font-family: var(--font-serif); font-size: var(--fs-2xl); color: var(--ink-900); margin-bottom: var(--sp-3); padding-bottom: var(--sp-2); border-bottom: 2px solid var(--gold-300); display: flex; align-items: center; gap: var(--sp-3); }
+    .doc-content p { font-size: var(--fs-base); color: var(--ink-600); margin-bottom: var(--sp-3); line-height: 1.85; }
+    .doc-content p strong { color: var(--ink-900); }
+    .doc-content em { color: var(--brand-700); font-style: normal; }
+    .chunk-num { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--gold-700); background: var(--gold-100); padding: 2px var(--sp-2); border-radius: var(--r-full); }
+  </style>
+</head>
+<body data-page="docs">
+  <!-- 双栏布局：左目录 + 右全文（顶部导航由 _nav.js 注入） -->
+  <div class="doc-layout">
+
+    <!-- 左：文档元信息 + 章节目录（scrollspy active 跟随） -->
+    <aside class="doc-toc">
+      <h1 class="doc-title">威士忌分类与品鉴指南</h1>
+      <div class="doc-meta">
+        <div class="meta-line"><span class="tag tag-gold">烈酒 · 威士忌</span></div>
+        <div class="meta-line">创建：<strong>2026-07-15</strong></div>
+        <div class="meta-line">分片数：<strong>5 chunks</strong></div>
+        <div class="meta-line">阅读时长：<strong>约 6 分钟</strong></div>
+        <div class="meta-line">来源：<strong>手动录入</strong></div>
+      </div>
+      <ul class="toc-list" id="tocList">
+        <li><a href="#chunk-1" data-target="chunk-1">苏格兰威士忌</a></li>
+        <li><a href="#chunk-3" data-target="chunk-3">美国波本威士忌</a></li>
+        <li><a href="#chunk-5" data-target="chunk-5">爱尔兰威士忌</a></li>
+        <li><a href="#chunk-7" data-target="chunk-7">日本威士忌</a></li>
+        <li><a href="#chunk-9" data-target="chunk-9">加拿大威士忌</a></li>
+      </ul>
+    </aside>
+
+    <!-- 右：全文区 -->
+    <main class="doc-content">
+      <!-- 操作按钮区 -->
+      <div class="doc-actions">
+        <a class="btn-primary" href="ask.html">基于此文档提问</a>
+        <a class="btn-ghost" href="#">下载 MD</a>
+        <a class="btn-ghost" href="#">编辑元信息</a>
+        <a class="btn-danger" href="#">删除</a>
+        <span class="actions-hint">引用 [3] 可跳转至波本分片</span>
+      </div>
+
+      <!-- chunk-1：苏格兰 -->
+      <section id="chunk-1">
+        <h2>苏格兰威士忌 <span class="chunk-num">chunk #1</span></h2>
+        <p>苏格兰威士忌（Scotch Whisky）须在苏格兰境内蒸馏并陈酿至少 <strong>3 年</strong>，装瓶酒精度不低于 <strong>40%</strong>。按工艺分为单一麦芽（Single Malt）与调和（Blended）两大主流。</p>
+        <p>单一麦芽以 100% 发芽大麦为原料，铜壶蒸馏器双重蒸馏，风味依产区而异：<em>斯佩塞</em>（Speyside）花果香甜、<em>岛屿区</em>海风碘味、<em>艾雷岛</em>（Islay）标志性的烟熏泥煤。</p>
+      </section>
+
+      <!-- chunk-3：波本（引用跳转高亮目标） -->
+      <section id="chunk-3">
+        <h2>美国波本威士忌 <span class="chunk-num">chunk #3</span></h2>
+        <p><strong>波本威士忌 Bourbon</strong>：谷物料中玉米占比 <strong>≥51%</strong>，必须使用<strong>全新碳化橡木桶</strong>陈酿，无法规最低年份（若标注 <em>straight</em> 须陈酿 ≥2 年）。</p>
+        <p>新橡木桶赋予波本标志性的<strong>甜润香草感</strong>、焦糖、椰子与肉桂气息，口感饱满圆润。肯塔基州为其核心产区，石灰岩过滤的软水成就了其醇厚甘甜的代表性风格。</p>
+      </section>
+
+      <!-- chunk-5：爱尔兰 -->
+      <section id="chunk-5">
+        <h2>爱尔兰威士忌 <span class="chunk-num">chunk #5</span></h2>
+        <p>爱尔兰威士忌（Irish Whiskey）传统采用未发芽大麦与麦芽混合，以<strong>三次蒸馏</strong>工艺为主，口感较苏格兰更轻柔顺滑，少有泥煤烟熏。</p>
+        <p>风味以青苹果、蜂蜜、香草与轻盈谷物为主，入口清爽顺滑，是入门威士忌饮家最常见的起点选择。</p>
+      </section>
+
+      <!-- chunk-7：日本 -->
+      <section id="chunk-7">
+        <h2>日本威士忌 <span class="chunk-num">chunk #7</span></h2>
+        <p>日本威士忌工艺源自苏格兰，但以极致精致与平衡著称。采用铜壶蒸馏配多种橡木桶（<em>水楢木 Mizunara</em> 为主）陈酿，追求细腻层次。</p>
+        <p>水楢桶带来独特的檀香、寺庙香与东方香料气息，余韵悠长。山崎、余市、轻井泽等代表酒厂奠定了日威在国际上的崇高地位。</p>
+      </section>
+
+      <!-- chunk-9：加拿大 + 品鉴要点 -->
+      <section id="chunk-9">
+        <h2>加拿大威士忌 <span class="chunk-num">chunk #9</span></h2>
+        <p>加拿大威士忌（Canadian Whisky）常以黑麦为主调，允许添加少量其他谷物调和，须在木桶陈酿<strong>至少 3 年</strong>。风格轻盈、顺滑、略带黑麦香料感。</p>
+        <p><strong>品鉴要点</strong>：观色（琥珀深浅暗示桶龄）→ 闻香（前调果香、后调木质）→ 入口（酒体轻重与油脂感）→ 余韵（长短与回甘）。建议室温纯饮，加少量纯净水可释放更多花果香气。</p>
+      </section>
+    </main>
+  </div>
+
+  <!-- scrollspy：IntersectionObserver 监听章节进入视口，同步左目录 active -->
+  <script>
+    (function () {
+      var sections = document.querySelectorAll('.doc-content section[id]');
+      var links = document.querySelectorAll('#tocList a[data-target]');
+      var linkMap = {};
+      links.forEach(function (a) { linkMap[a.dataset.target] = a; });
+
+      // 顶部偏移导航高度，底部 -55% 使当前章节更早判定为 active
+      var observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            links.forEach(function (a) { a.classList.remove('active'); });
+            var active = linkMap[entry.target.id];
+            if (active) active.classList.add('active');
+          }
+        });
+      }, { rootMargin: '-60px 0px -55% 0px', threshold: 0 });
+
+      sections.forEach(function (s) { observer.observe(s); });
+      // 默认激活首章
+      if (links[0]) links[0].classList.add('active');
+    })();
+  </script>
+  <!-- 共享导航 + chunk 高亮逻辑（解析 ?chunk=N 跳转高亮） -->
+  <script src="_nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档库 · Hermes KB</title>
+  <!-- Google Fonts：衬线杂志感 + Inter 正文 + Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="_tokens.css">
+  <link rel="stylesheet" href="_components.css">
+  <style>
+    /* === 文档库页专属：筛选栏与表格细节 === */
+    .filter-bar { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin: var(--sp-6) 0 var(--sp-4); }
+    .filter-bar .select { width: auto; min-width: 140px; }
+    .filter-bar .input { width: 240px; }
+    /* 右侧统计：金色衬线，杂志感数字 */
+    .filter-count { margin-left: auto; font-family: var(--font-serif); color: var(--gold-700); font-size: var(--fs-sm); display: inline-flex; align-items: baseline; gap: var(--sp-1); }
+    .filter-count .num { font-size: var(--fs-xl); color: var(--gold-500); font-weight: 600; }
+    .doc-title-link { font-family: var(--font-serif); color: var(--ink-900); font-size: var(--fs-base); }
+    .doc-title-link:hover { color: var(--brand-700); }
+    .tag + .tag { margin-left: 4px; }
+    .row-actions { display: flex; gap: var(--sp-2); }
+    .table td .meta { color: var(--ink-400); font-size: var(--fs-xs); }
+  </style>
+</head>
+<body data-page="docs">
+  <script src="_nav.js"></script>
+  <div class="container">
+    <h1 class="page-title">文档库</h1>
+
+    <!-- 顶部筛选栏：分类 / 标签 / 搜索 / 清除 + 右侧统计 + 导入按钮 -->
+    <div class="filter-bar">
+      <select class="select" id="filter-category">
+        <option value="">全部分类</option>
+        <option value="spirits">烈酒</option>
+        <option value="whisky">威士忌</option>
+        <option value="wine">葡萄酒</option>
+        <option value="baijiu">中国白酒</option>
+        <option value="cocktail">鸡尾酒</option>
+        <option value="brew">酿造酒</option>
+        <option value="culture">历史与文化</option>
+      </select>
+      <select class="select" id="filter-tag">
+        <option value="">全部标签</option>
+        <option value="scotch">苏格兰威士忌</option>
+        <option value="bourbon">波本</option>
+        <option value="red">红葡萄</option>
+        <option value="base">鸡尾酒基酒</option>
+        <option value="guide">入门指南</option>
+      </select>
+      <input class="input" id="filter-search" type="search" placeholder="搜索文档标题或正文…">
+      <button class="btn-ghost" id="filter-clear">清除</button>
+      <span class="filter-count">共 <span class="num">5</span> 篇</span>
+      <a class="btn-primary" href="_modal-import.html">导入文档</a>
+    </div>
+
+    <!-- 文档表格：标题 / 分类 / 标签 / 来源 / 分片数 / 创建时间 / 操作 -->
+    <table class="table" id="doc-table">
+      <thead>
+        <tr>
+          <th>标题</th><th>分类</th><th>标签</th><th>来源</th><th>分片数</th><th>创建时间</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="doc-tbody">
+        <!-- 行 1：金酒百科（烈酒，12 分片） -->
+        <tr>
+          <td><a class="doc-title-link" href="doc-detail.html?id=1">金酒百科</a></td>
+          <td><span class="tag tag-gold">烈酒</span></td>
+          <td><span class="tag tag-gold">鸡尾酒基酒</span><span class="tag tag-ink">入门指南</span></td>
+          <td>Hermes 编辑部</td>
+          <td>12</td>
+          <td>2024-03-12</td>
+          <td class="row-actions"><a class="btn-ghost" href="doc-detail.html?id=1">查看</a></td>
+        </tr>
+        <!-- 行 2：威士忌百科（威士忌，18 分片） -->
+        <tr>
+          <td><a class="doc-title-link" href="doc-detail.html?id=2">威士忌百科</a></td>
+          <td><span class="tag tag-ink">威士忌</span></td>
+          <td><span class="tag tag-gold">苏格兰威士忌</span><span class="tag tag-gold">波本</span></td>
+          <td>Hermes 编辑部</td>
+          <td>18</td>
+          <td>2024-03-14</td>
+          <td class="row-actions"><a class="btn-ghost" href="doc-detail.html?id=2">查看</a></td>
+        </tr>
+        <!-- 行 3：葡萄酒百科（葡萄酒，15 分片） -->
+        <tr>
+          <td><a class="doc-title-link" href="doc-detail.html?id=3">葡萄酒百科</a></td>
+          <td><span class="tag tag-brand">葡萄酒</span></td>
+          <td><span class="tag tag-brand">红葡萄</span><span class="tag tag-ink">入门指南</span></td>
+          <td>Hermes 编辑部</td>
+          <td>15</td>
+          <td>2024-03-16</td>
+          <td class="row-actions"><a class="btn-ghost" href="doc-detail.html?id=3">查看</a></td>
+        </tr>
+        <!-- 行 4：中国白酒百科（中国白酒，20 分片） -->
+        <tr>
+          <td><a class="doc-title-link" href="doc-detail.html?id=4">中国白酒百科</a></td>
+          <td><span class="tag tag-ink">中国白酒</span></td>
+          <td><span class="tag tag-gold">入门指南</span></td>
+          <td>Hermes 编辑部</td>
+          <td>20</td>
+          <td>2024-03-18</td>
+          <td class="row-actions"><a class="btn-ghost" href="doc-detail.html?id=4">查看</a></td>
+        </tr>
+        <!-- 行 5：朗姆酒与龙舌兰百科（烈酒，14 分片） -->
+        <tr>
+          <td><a class="doc-title-link" href="doc-detail.html?id=5">朗姆酒与龙舌兰百科</a></td>
+          <td><span class="tag tag-gold">烈酒</span></td>
+          <td><span class="tag tag-gold">鸡尾酒基酒</span></td>
+          <td>Hermes 编辑部</td>
+          <td>14</td>
+          <td>2024-03-20</td>
+          <td class="row-actions"><a class="btn-ghost" href="doc-detail.html?id=5">查看</a></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- 空状态：搜索无结果时显示（默认隐藏） -->
+    <div class="empty-state" id="empty-state" style="display:none;">
+      <div class="empty-icon">📭</div>
+      <div class="empty-text">未找到匹配的文档，试试调整筛选条件。</div>
+    </div>
+  </div>
+
+  <script>
+    /* === 内联：简易搜索演示，无匹配时切换到空状态 === */
+    (function () {
+      var search = document.getElementById('filter-search');
+      var tbody = document.getElementById('doc-tbody');
+      var empty = document.getElementById('empty-state');
+      var table = document.getElementById('doc-table');
+      function apply() {
+        var kw = (search.value || '').trim().toLowerCase();
+        var visible = 0;
+        tbody.querySelectorAll('tr').forEach(function (tr) {
+          var show = !kw || tr.textContent.toLowerCase().indexOf(kw) >= 0;
+          tr.style.display = show ? '' : 'none';
+          if (show) visible++;
+        });
+        table.style.display = visible ? '' : 'none';
+        empty.style.display = visible ? 'none' : '';
+      }
+      search.addEventListener('input', apply);
+      document.getElementById('filter-clear').addEventListener('click', function () {
+        search.value = ''; apply();
+      });
+    })();
+  </script>
+</body>
+</html>
