@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from hermes_kb.database import get_session
@@ -90,7 +91,11 @@ def get_substitutes(canonical: str) -> list[str]:
 
 
 def add_user_substitute(canonical: str, substitute: str) -> None:
-    """添加 L2 用户自定义替代关系。"""
+    """添加 L2 用户自定义替代关系。
+
+    P1-5: DB 层 UniqueConstraint(canonical, substitute) 兜底，
+    select-then-insert 的 TOCTOU race 由 IntegrityError 兜住。
+    """
     canonical = canonical.strip()
     substitute = substitute.strip()
     if not canonical or not substitute:
@@ -109,7 +114,11 @@ def add_user_substitute(canonical: str, substitute: str) -> None:
                 canonical=canonical, substitute=substitute, source="user"
             )
         )
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError:
+            # 并发写入时唯一约束兜底：重复记录视为已存在
+            session.rollback()
 
 
 def remove_user_substitute(canonical: str, substitute: str) -> None:

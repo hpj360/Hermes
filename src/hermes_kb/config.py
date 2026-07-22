@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import functools
 import os
+import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -32,7 +34,17 @@ def _env_bool(key: str, default: bool) -> bool:
     v = os.environ.get(key)
     if v is None:
         return default
-    return v.strip().lower() in ("1", "true", "yes", "on")
+    raw = v.strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off", ""):
+        return False
+    # P1-7: 非识别值（如 "disable" / "enable" / "y"）显式报错，
+    # 避免用户误以为 "disable" 是关闭（实际静默为 False）。
+    raise ValueError(
+        f"Invalid boolean value for {key}: {v!r}. "
+        f"Expected one of: 1/true/yes/on (True), 0/false/no/off/'' (False)."
+    )
 
 
 @dataclass
@@ -134,25 +146,40 @@ class Settings:
 
 
 _SETTINGS: Settings | None = None
+_SETTINGS_LOCK = threading.Lock()
+
+
+@functools.lru_cache(maxsize=1)
+def _create_settings() -> Settings:
+    """线程安全的单例创建（lru_cache 内部加锁，避免多 worker 竞态）。"""
+    return Settings()
 
 
 def get_settings() -> Settings:
-    global _SETTINGS
-    if _SETTINGS is None:
-        _SETTINGS = Settings()
-    return _SETTINGS
+    """获取全局配置单例（线程安全）。
+
+    P1-3: 用 lru_cache 保护单例创建，消除多 worker 下的竞态。
+    测试期 override 优先于缓存实例。
+    """
+    override = _SETTINGS
+    if override is not None:
+        return override
+    return _create_settings()
 
 
 def reset_settings() -> None:
-    """测试用：重置单例。"""
+    """测试用：重置单例（清除 override + 清空 lru_cache）。"""
     global _SETTINGS
-    _SETTINGS = None
+    with _SETTINGS_LOCK:
+        _SETTINGS = None
+    _create_settings.cache_clear()
 
 
 def override_settings(**kwargs) -> Settings:
-    """测试用：覆盖部分配置。"""
-    s = get_settings()
-    new = replace(s, **kwargs)
+    """测试用：覆盖部分配置（线程安全）。"""
     global _SETTINGS
-    _SETTINGS = new
+    base = get_settings()
+    new = replace(base, **kwargs)
+    with _SETTINGS_LOCK:
+        _SETTINGS = new
     return new

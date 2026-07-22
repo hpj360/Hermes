@@ -201,7 +201,9 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=True,
+        # P1-4: CORS 规范禁止 "*" + allow_credentials=True 同时出现（浏览器会拒绝）。
+        # 通配符时关闭 credentials，具体 origin 列表时才开启。
+        allow_credentials="*" not in settings.cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )

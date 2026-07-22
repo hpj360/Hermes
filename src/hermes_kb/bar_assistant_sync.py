@@ -5,12 +5,16 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+import httpx
 from sqlmodel import select
 
 from hermes_kb.database import get_session
 from hermes_kb.models import IngredientSubstitute
+
+_logger = logging.getLogger(__name__)
 
 # bar-assistant 仓库基础 URL（用于真实拉取）
 BAR_ASSISTANT_REPO = "karlomikus/bar-assistant"
@@ -64,7 +68,8 @@ def sync_bar_assistant_substitutes(
                 ))
                 session.commit()
                 imported += 1
-        except Exception:
+        except Exception as e:
+            _logger.warning("bar-assistant substitute import failed for %s: %s", item, e)
             failed += 1
 
     return {"imported": imported, "skipped": skipped, "failed": failed}
@@ -77,8 +82,6 @@ def _fetch_remote_data() -> list[dict[str, str]]:
     若网络不可用或解析失败，返回空列表。
     """
     try:
-        import httpx
-
         # bar-assistant 的成分数据通常在 database/seed 目录
         # 这里尝试拉取成分替代关系
         url = f"{BAR_ASSISTANT_RAW_BASE}/database/seed/ingredients.json"
@@ -98,5 +101,6 @@ def _fetch_remote_data() -> list[dict[str, str]]:
                 if canonical and sub:
                     data.append({"canonical": canonical, "substitute": sub})
         return data
-    except Exception:
+    except (httpx.HTTPError, ValueError, KeyError, TypeError, OSError) as e:
+        _logger.warning("bar-assistant remote data fetch failed: %s", e)
         return []

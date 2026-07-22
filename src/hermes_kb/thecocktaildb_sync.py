@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
@@ -20,6 +21,8 @@ from hermes_kb.database import get_session
 from hermes_kb.ingredients import canonicalize
 from hermes_kb.models import Document
 from hermes_kb.rag import ImportService
+
+_logger = logging.getLogger(__name__)
 
 # TheCocktailDB 英文材料名 → 中文标准名映射（80+）
 _INGREDIENT_OVERRIDES: dict[str, str] = {
@@ -273,7 +276,8 @@ def sync_thecocktaildb(
             resp = httpx.get(url, timeout=30)
             resp.raise_for_status()
             data = resp.json()
-        except Exception:
+        except (httpx.HTTPError, ValueError, OSError) as e:
+            _logger.warning("thecocktaildb fetch failed for letter %s: %s", letter, e)
             failed += 1
             continue
 
@@ -315,7 +319,8 @@ def sync_thecocktaildb(
                     imported += 1
                 else:
                     failed += 1
-            except Exception:
+            except Exception as e:
+                _logger.warning("thecocktaildb drink import failed: %s", e)
                 failed += 1
 
     return {

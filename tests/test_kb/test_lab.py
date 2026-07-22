@@ -125,6 +125,51 @@ def test_substitutes_remove_user(tmp_db):
     assert "橙味力娇酒" in get_substitutes("君度")
 
 
+def test_substitute_unique_constraint(tmp_db):
+    """P1-5: (canonical, substitute) 唯一约束应拒绝重复插入。"""
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+    from hermes_kb.models import IngredientSubstitute
+    from hermes_kb.database import get_session
+
+    with get_session() as session:
+        session.add(IngredientSubstitute(canonical="君度", substitute="自制橙皮酒"))
+        session.commit()
+
+    # 重复插入应触发 IntegrityError
+    with get_session() as session:
+        session.add(IngredientSubstitute(canonical="君度", substitute="自制橙皮酒"))
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+def test_add_user_substitute_duplicate_no_error(tmp_db):
+    """P1-5: add_user_substitute 重复调用不报错（IntegrityError 兜底）。"""
+    from hermes_kb.substitutes import add_user_substitute, get_substitutes
+    from hermes_kb.models import IngredientSubstitute
+    from hermes_kb.database import get_session
+
+    add_user_substitute("君度", "自制橙皮酒")
+    # 重复调用应静默返回，不抛 IntegrityError
+    add_user_substitute("君度", "自制橙皮酒")
+
+    # DB 中仅一条记录
+    with get_session() as session:
+        from sqlmodel import select
+
+        rows = session.exec(
+            select(IngredientSubstitute).where(
+                IngredientSubstitute.canonical == "君度",
+                IngredientSubstitute.substitute == "自制橙皮酒",
+            )
+        ).all()
+        assert len(rows) == 1
+
+    # 合并查询仍正确
+    subs = get_substitutes("君度")
+    assert "自制橙皮酒" in subs
+
+
 def test_seed_recipes_structure():
     """种子配方数据结构完整。"""
     from hermes_kb.seed_recipes import SEED_RECIPES

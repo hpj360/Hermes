@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Column, ForeignKey, Text
+from sqlalchemy import Column, ForeignKey, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -145,6 +145,10 @@ class RecipeStats(SQLModel, table=True):
 class IngredientSubstitute(SQLModel, table=True):
     """M3：材料替代关系（L2 用户自定义 + L1 预置镜像）。"""
 
+    __table_args__ = (
+        UniqueConstraint("canonical", "substitute", name="uq_ingredient_substitute"),
+    )
+
     id: int | None = Field(default=None, primary_key=True)
     canonical: str = Field(index=True, max_length=64)  # 原材料标准名
     substitute: str = Field(max_length=64)  # 替代材料名
@@ -164,7 +168,13 @@ class RecipeVariant(SQLModel, table=True):
     """M4.3：配方变体关联。"""
 
     id: int | None = Field(default=None, primary_key=True)
-    base_doc_id: str = Field(index=True, max_length=64)  # 原配方
-    variant_doc_id: str = Field(index=True, max_length=64)  # 变体配方
+    base_doc_id: str = Field(
+        max_length=64,
+        sa_column=Column("base_doc_id", Text, ForeignKey("document.doc_id", ondelete="CASCADE"), index=True),
+    )  # 原配方
+    variant_doc_id: str = Field(
+        max_length=64,
+        sa_column=Column("variant_doc_id", Text, ForeignKey("document.doc_id", ondelete="CASCADE"), index=True),
+    )  # 变体配方
     variant_note: str = Field(default="", max_length=200)  # 变体说明
     created_at: datetime = Field(default_factory=_utcnow)

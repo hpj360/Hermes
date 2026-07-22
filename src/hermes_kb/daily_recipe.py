@@ -9,7 +9,7 @@ A3-2: _seasonal_pool 与随机分支改用 batch_first_chunks 批量获取 first
 from __future__ import annotations
 
 import random
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlmodel import select
@@ -21,9 +21,18 @@ from hermes_kb.recipe_stats import get_hot_recipes
 from hermes_kb.seed_recipes import SEED_RECIPES
 
 
+def _today_utc() -> date:
+    """统一的 UTC 当前日期（替代 date.today() 的本地时区依赖）。
+
+    跨时区部署（Docker 默认 UTC vs 北京时间）下保证"换日"时机一致，
+    也让 daily_recipe 的随机种子可预测、可重复。
+    """
+    return datetime.now(timezone.utc).date()
+
+
 def _current_season() -> str:
     """根据当前月份返回季节。"""
-    month = date.today().month
+    month = _today_utc().month
     if month in (3, 4, 5):
         return "spring"
     if month in (6, 7, 8):
@@ -74,7 +83,7 @@ def daily_recipe() -> dict[str, Any] | None:
         reason: "season" | "hot" | "random"
         若知识库无配方返回 None。
     """
-    today_seed = int(date.today().toordinal())
+    today_seed = int(_today_utc().toordinal())
     rng = random.Random(today_seed)
 
     roll = rng.random()

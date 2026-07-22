@@ -6,22 +6,31 @@ from sqlmodel import select
 
 
 def test_recipe_variant_model(tmp_db):
-    """RecipeVariant 表可创建并写入。"""
-    from hermes_kb.models import RecipeVariant
+    """RecipeVariant 表可创建并写入（FK 约束要求 doc 必须存在）。"""
+    from hermes_kb.models import Document, RecipeVariant
     from hermes_kb.database import get_session
 
     with get_session() as session:
+        # FK 约束要求 base/variant doc 必须先存在
+        base_doc = Document(title="原版", content="内容")
+        variant_doc = Document(title="变体", content="内容")
+        session.add(base_doc)
+        session.add(variant_doc)
+        session.commit()
+        session.refresh(base_doc)
+        session.refresh(variant_doc)
+
         v = RecipeVariant(
-            base_doc_id="doc_base001",
-            variant_doc_id="doc_variant001",
+            base_doc_id=base_doc.doc_id,
+            variant_doc_id=variant_doc.doc_id,
             variant_note="辛辣版，增加苦精",
         )
         session.add(v)
         session.commit()
         session.refresh(v)
         assert v.id is not None
-        assert v.base_doc_id == "doc_base001"
-        assert v.variant_doc_id == "doc_variant001"
+        assert v.base_doc_id == base_doc.doc_id
+        assert v.variant_doc_id == variant_doc.doc_id
         assert v.variant_note == "辛辣版，增加苦精"
         assert v.created_at is not None
 
@@ -309,3 +318,58 @@ def test_api_pending_recipes(client, base_and_variant):
     assert resp.status_code == 200
     data = resp.json()
     assert any(i["title"] == "原版马天尼" for i in data["items"])
+
+
+def test_recipe_variant_cascade_on_delete(base_and_variant):
+    """P0-2: 删除 base 配方后，RecipeVariant 关联应级联删除（不留孤儿）。"""
+    from hermes_kb.recipe_variants import create_variant_link
+    from hermes_kb.models import Document, RecipeVariant
+    from hermes_kb.database import get_session
+
+    base, variant = base_and_variant
+    create_variant_link(base["doc_id"], variant["doc_id"], "测试级联")
+
+    with get_session() as session:
+        # 确认关联已建立
+        links_before = session.exec(
+            select(RecipeVariant).where(RecipeVariant.base_doc_id == base["doc_id"])
+        ).all()
+        assert len(links_before) == 1
+
+        # 删除 base Document
+        doc = session.get(Document, base["doc_id"])
+        session.delete(doc)
+        session.commit()
+
+        # RecipeVariant 应被级联删除（不留孤儿）
+        links_after = session.exec(
+            select(RecipeVariant).where(RecipeVariant.base_doc_id == base["doc_id"])
+        ).all()
+        assert len(links_after) == 0
+
+
+def test_recipe_variant_cascade_on_delete_variant(base_and_variant):
+    """P0-2: 删除 variant 配方后，RecipeVariant 关联也应级联删除。"""
+    from hermes_kb.recipe_variants import create_variant_link
+    from hermes_kb.models import Document, RecipeVariant
+    from hermes_kb.database import get_session
+
+    base, variant = base_and_variant
+    create_variant_link(base["doc_id"], variant["doc_id"], "测试级联")
+
+    with get_session() as session:
+        links_before = session.exec(
+            select(RecipeVariant).where(RecipeVariant.variant_doc_id == variant["doc_id"])
+        ).all()
+        assert len(links_before) == 1
+
+        # 删除 variant Document
+        doc = session.get(Document, variant["doc_id"])
+        session.delete(doc)
+        session.commit()
+
+        # RecipeVariant 应被级联删除
+        links_after = session.exec(
+            select(RecipeVariant).where(RecipeVariant.variant_doc_id == variant["doc_id"])
+        ).all()
+        assert len(links_after) == 0

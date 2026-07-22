@@ -9,13 +9,17 @@ IBA 金标准配方 verified=True，直接进实验室匹配。
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+import httpx
 from sqlmodel import select
 
 from hermes_kb.database import get_session
 from hermes_kb.models import Document
 from hermes_kb.rag import ImportService
+
+_logger = logging.getLogger(__name__)
 
 # IBA dataset 仓库 URL
 IBA_REPO = "lmc2179/iba_dataset_json"
@@ -181,7 +185,8 @@ def sync_iba_dataset(data: list[dict[str, Any]] | None = None) -> dict[str, Any]
                 imported += 1
             else:
                 failed += 1
-        except Exception:
+        except Exception as e:
+            _logger.warning("IBA recipe import failed for item: %s", e)
             failed += 1
 
     return {
@@ -198,11 +203,10 @@ def _fetch_remote_data() -> list[dict[str, Any]]:
     若网络不可用，返回空列表。
     """
     try:
-        import httpx
-
         url = f"{IBA_RAW_BASE}/recipes.json"
         resp = httpx.get(url, timeout=15)
         resp.raise_for_status()
         return resp.json()
-    except Exception:
+    except (httpx.HTTPError, ValueError, OSError) as e:
+        _logger.warning("IBA dataset remote fetch failed: %s", e)
         return []
