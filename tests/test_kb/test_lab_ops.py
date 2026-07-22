@@ -214,3 +214,52 @@ def test_api_lab_dashboard(seeded_recipes_ops, client):
     assert data["recipe_count"] >= 8
     assert "substitute_coverage" in data
     assert "daily_recipe" in data
+
+
+def test_weekly_match_count_semantics(seeded_recipes_ops):
+    """A4-1: weekly_match_count 应为本周新增匹配数，不是累计值。"""
+    from hermes_kb.recipe_stats import increment_match_count
+    from hermes_kb.lab_dashboard import get_lab_dashboard
+    from hermes_kb.database import get_session
+    from hermes_kb.models import Document
+    from sqlmodel import select
+
+    # seeded_recipes_ops 是 ImportService，从 DB 取前 2 个 recipe 的 doc_id
+    with get_session() as session:
+        docs = session.exec(
+            select(Document).where(Document.category == "recipe").limit(2)
+        ).all()
+    doc_ids = [d.doc_id for d in docs]
+    assert len(doc_ids) >= 2, "种子配方不足 2 个，无法完成测试"
+
+    # 第一周：配方 A 匹配 5 次，配方 B 匹配 3 次
+    for _ in range(5):
+        increment_match_count(doc_ids[0])
+    for _ in range(3):
+        increment_match_count(doc_ids[1])
+
+    dash = get_lab_dashboard()
+    # weekly_match_count 应是 8（5+3），不是累计
+    assert dash["weekly_match_count"] == 8
+    # total_match_count 应等于 weekly（因为还没重置过）
+    assert dash["total_match_count"] == 8
+
+    # 模拟周切换：重置 weekly
+    from hermes_kb.recipe_stats import reset_weekly_stats
+    reset_weekly_stats()
+
+    dash = get_lab_dashboard()
+    # 重置后 weekly 应为 0
+    assert dash["weekly_match_count"] == 0
+    # total 仍保留 8（累计）
+    assert dash["total_match_count"] == 8
+
+    # 第二周：配方 A 再匹配 2 次
+    for _ in range(2):
+        increment_match_count(doc_ids[0])
+
+    dash = get_lab_dashboard()
+    # weekly 应是 2（新周新增）
+    assert dash["weekly_match_count"] == 2
+    # total 应是 10（5+3+2）
+    assert dash["total_match_count"] == 10

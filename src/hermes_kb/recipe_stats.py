@@ -16,16 +16,20 @@ from hermes_kb.models import Document, RecipeStats, Chunk
 
 
 def increment_match_count(doc_id: str) -> None:
-    """匹配命中时 match_count +1，更新 last_matched_at。"""
+    """匹配命中时 match_count +1，weekly_match_count +1，更新 last_matched_at。"""
     with get_session() as session:
         stat = session.get(RecipeStats, doc_id)
         now = datetime.now(timezone.utc)
         if stat:
             stat.match_count += 1
+            stat.weekly_match_count += 1
             stat.last_matched_at = now
         else:
             stat = RecipeStats(
-                doc_id=doc_id, match_count=1, last_matched_at=now
+                doc_id=doc_id,
+                match_count=1,
+                weekly_match_count=1,
+                last_matched_at=now,
             )
         session.add(stat)
         session.commit()
@@ -97,3 +101,15 @@ def get_hot_recipes(limit: int = 3, days: int = 30) -> list[dict[str, Any]]:
                 }
             )
         return results
+
+
+def reset_weekly_stats() -> None:
+    """重置所有 RecipeStats 的 weekly_match_count 为 0。
+
+    供定时任务调用（每周一 0 点）。累计 match_count 保留不变。
+    """
+    with get_session() as session:
+        rows = session.exec(select(RecipeStats)).all()
+        for stat in rows:
+            stat.weekly_match_count = 0
+        session.commit()

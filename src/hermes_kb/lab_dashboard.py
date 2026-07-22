@@ -4,7 +4,6 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlmodel import func, select
@@ -29,11 +28,15 @@ def get_lab_dashboard() -> dict[str, Any]:
             )
         ).one()
 
-        # 本周匹配数（近 7 天）
-        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        # 本周匹配数（近 7 天新增的匹配数，A4-1 修正后语义）
         weekly_match = session.exec(
+            select(func.sum(RecipeStats.weekly_match_count))
+        ).one() or 0
+
+        # 累计匹配数（保留原 sum 语义）
+        total_match = session.exec(
             select(func.sum(RecipeStats.match_count)).where(
-                RecipeStats.last_matched_at >= cutoff
+                RecipeStats.match_count > 0
             )
         ).one() or 0
 
@@ -72,6 +75,7 @@ def get_lab_dashboard() -> dict[str, Any]:
     return {
         "recipe_count": recipe_count,
         "weekly_match_count": weekly_match,
+        "total_match_count": total_match,
         "top_recipe": top_recipe,
         "top_missing": top_missing,
         "substitute_coverage": round(substitute_coverage, 2),

@@ -96,8 +96,9 @@ class RecipeStats(SQLModel, table=True):
     """M3：配方使用统计。"""
 
     doc_id: str = Field(primary_key=True, max_length=64)
-    match_count: int = Field(default=0)  # 被匹配命中次数
+    match_count: int = Field(default=0)  # 被匹配命中次数（累计）
     view_count: int = Field(default=0)  # 被点击查看次数
+    weekly_match_count: int = Field(default=0)  # A4-1: 本周新增匹配数
     last_matched_at: datetime | None = Field(default=None)
     last_viewed_at: datetime | None = Field(default=None)
 
