@@ -261,6 +261,8 @@ def match_recipes(user_ingredients: set[str]) -> list[RecipeMatch]:
 
 ## 7. API 端点
 
+### 7.1 配方匹配
+
 ```
 GET /api/lab/match?ingredients=gin,vermouth
 ```
@@ -301,6 +303,26 @@ GET /api/lab/match?ingredients=gin,vermouth
 }
 ```
 
+### 7.2 热门配方
+
+```
+GET /api/lab/hot?limit=3&days=30
+```
+
+响应：
+
+```json
+{
+  "items": [
+    {"title": "马天尼 Martini", "doc_id": "recipe-martini", "chunk_rowid": 42, "match_count": 128, "last_matched_at": "2026-07-21T10:30:00Z"},
+    {"title": "莫吉托 Mojito", "doc_id": "recipe-mojito", "chunk_rowid": 58, "match_count": 96, "last_matched_at": "2026-07-21T09:15:00Z"},
+    {"title": "尼格罗尼 Negroni", "doc_id": "recipe-negroni", "chunk_rowid": 71, "match_count": 84, "last_matched_at": "2026-07-20T22:00:00Z"}
+  ]
+}
+```
+
+排序规则：`match_count` 降序，`last_matched_at` 在 `days` 参数范围内（默认 30 天，避免历史陈旧）。
+
 ## 8. 交付物清单
 
 ### 8.1 文件清单
@@ -311,12 +333,15 @@ GET /api/lab/match?ingredients=gin,vermouth
 | `src/hermes_kb/substitutes.py` | 新建 | 三层替代关系表 + 合并查询 |
 | `src/hermes_kb/recipe_match.py` | 新建 | 匹配算法 |
 | `src/hermes_kb/seed_recipes.py` | 新建 | IBA 80 款配方种子数据 |
-| `src/hermes_kb/api.py` | 修改 | 新增 `GET /api/lab/match` |
+| `src/hermes_kb/recipe_stats.py` | 新建 | 配方使用统计（match_count/view_count） |
+| `src/hermes_kb/db.py` | 修改 | 新增 `recipe_stats` + `ingredient_substitutes` 表 |
+| `src/hermes_kb/api.py` | 修改 | 新增 `GET /api/lab/match` + `GET /api/lab/hot` |
 | `design/mockup/lab.html` | 新建 | 高保真设计稿 |
 | `design/prototype/lab.html` | 新建 | 低保真原型 |
 | `design/mockup/_components.css` | 修改 | 追加实验室组件样式 |
 | `design/mockup/_nav.js` | 修改 | 导航新增 lab 入口 |
-| `tests/test_lab.py` | 新建 | 匹配算法 + API 测试 |
+| `design/mockup/index.html` | 修改 | 首页分类入口区增加 Top 3 热门配方 |
+| `tests/test_lab.py` | 新建 | 匹配算法 + API + 统计测试 |
 
 ### 8.2 实现顺序
 
@@ -346,3 +371,176 @@ GET /api/lab/match?ingredients=gin,vermouth
 | 材料别名覆盖不全 | L2 用户自定义补充，M4 L3 外部同步 |
 | 替代关系主观争议 | 预置表基于 IBA 官方 + 主流调酒教材，标注来源 |
 | 匹配算法性能 | 80 款配方 O(n) 遍历可接受，无需索引 |
+
+## 11. 后续数据源规划
+
+实验室数据采用三层叠加架构（对应 §2.4 的 L1/L2/L3），按里程碑梯度开放：
+
+### 11.1 数据源梯度
+
+| 层 | 里程碑 | 数据源 | 内容 | 接入方式 |
+|---|---|---|---|---|
+| L1 预置 | M3 | IBA 官方 80 款 | 经典配方 + 基础替代关系 | `seed_recipes.py` 启动时导入 |
+| L2 用户自定义 | M3 | 用户本地 | 自定义替代关系、私人配方笔记 | SQLite `ingredient_substitutes` 表 + 文档导入 |
+| L3a 外部 API | M4 | TheCocktailDB（开源免费） | 200+ 配方扩充、材料图片 | 定时同步任务，`/api/lab/sync` |
+| L3b ima 知识库 | M4 | ima（用户提供 Key） | 专业酒类配方、品鉴笔记 | ima adapter，按需拉取 |
+| L4 UGC | M5 | 社区贡献 | 用户创作配方、改良变体 | 配方编辑器 + 审核流程 |
+| L5 商业合作 | M5+ | 品牌方 | 品牌赞助配方、新品发布 | 合作接口，标注"商业内容" |
+
+### 11.2 数据源接入契约
+
+所有数据源统一通过"配方文档"格式入库（§2.1），在 frontmatter 增加来源标记：
+
+```yaml
+---
+title: 莫吉托 Mojito
+category: recipe
+source: iba          # iba | user | thecocktaildb | ima | ugc | brand
+source_id: "iba-042"
+verified: true        # 是否经过审核
+tags: [recipe, rum-base, summer]
+---
+```
+
+**L3 同步机制**（M4）：
+- 定时任务：每日 03:00 增量同步 TheCocktailDB 新配方
+- 手动触发：管理后台"同步外部数据源"按钮
+- 去重：按 `source + source_id` 唯一约束
+- 审核：L3 同步的配方 `verified=false`，用户报告问题后人工审核
+
+### 11.3 数据源治理
+
+| 治理项 | 规则 |
+|---|---|
+| 优先级 | L1 > L2 > L3 > L4 > L5（同款配方多来源时，高优先级覆盖低优先级） |
+| 冲突处理 | 配方内容冲突时保留 L1 IBA 官方版本，其他来源存为"变体" |
+| 下架机制 | 用户可隐藏任意来源的配方（不影响知识库数据，仅影响实验室展示） |
+| 数据回流 | 用户匹配行为匿名统计，用于优化热门排序（见 §12.4） |
+
+## 12. 自动运营机制
+
+实验室不只是静态查询工具，需有"活起来"的运营层。按里程碑梯度建设：
+
+### 12.1 运营机制梯度
+
+| 机制 | M3 | M4 | M5 |
+|---|---|---|---|
+| 配方使用统计 | ✅ 计数 | ✅ 排行 | ✅ 趋势分析 |
+| 热门推荐 | ✅ Top 3 | ✅ 首页轮播 | ✅ 个性化 |
+| 每日推荐 | — | ✅ 季节+随机 | ✅ 智能推荐 |
+| 缺材料反馈 | — | ✅ 统计+优化替代表 | ✅ 自动学习 |
+| 运营看板 | — | ✅ dashboard 扩展 | ✅ 完整指标 |
+
+### 12.2 配方使用统计（M3）
+
+每次配方被匹配或查看，记录到 `recipe_stats` 表：
+
+```sql
+CREATE TABLE recipe_stats (
+    doc_id TEXT PRIMARY KEY,
+    match_count INTEGER DEFAULT 0,    -- 被匹配命中次数
+    view_count INTEGER DEFAULT 0,     -- 被点击查看次数
+    last_matched_at TEXT,             -- 最近命中时间
+    last_viewed_at TEXT               -- 最近查看时间
+);
+```
+
+**统计时机**：
+- 匹配命中：`/api/lab/match` 返回结果时，对 `full_match` + `partial_match` 的配方 `match_count + 1`
+- 查看详情：用户点配方卡 [N] 引用跳转时，`view_count + 1`
+
+### 12.3 热门推荐（M3）
+
+实验室入口（首页 `index.html` 的分类入口区）展示 Top 3 热门配方：
+
+```html
+<div class="hot-recipes">
+  <h3>本周热门配方</h3>
+  <a href="doc-detail.html?chunk=42" class="hot-recipe">1. 马天尼 · 命中 128 次</a>
+  <a href="doc-detail.html?chunk=58" class="hot-recipe">2. 莫吉托 · 命中 96 次</a>
+  <a href="doc-detail.html?chunk=71" class="hot-recipe">3. 尼格罗尼 · 命中 84 次</a>
+</div>
+```
+
+**排序规则**：`match_count` 降序，取前 3，`last_matched_at` 在 30 天内（避免历史数据陈旧）。
+
+### 12.4 缺材料反馈循环（M4）
+
+统计哪些材料最常"缺"，反向优化替代关系表：
+
+```sql
+CREATE TABLE missing_ingredient_stats (
+    canonical TEXT,
+    missing_count INTEGER DEFAULT 0,
+    last_missing_at TEXT,
+    PRIMARY KEY (canonical)
+);
+```
+
+**运营动作**：
+- 每周生成"高频缺失材料榜"，提示运营补充这些材料的替代关系
+- 当某材料 `missing_count > 50` 且无预置替代时，在管理后台告警
+- 用户点替代 chip `+` 加入的材料，若不在预置替代表，提示"是否保存为自定义替代？"
+
+### 12.5 每日推荐（M4）
+
+基于季节 + 热门 + 随机的每日推荐配方：
+
+```python
+def daily_recipe() -> Recipe:
+    """每日推荐：季节权重 60% + 热门权重 30% + 随机 10%"""
+    season = current_season()  # spring/summer/autumn/winter
+    seasonal_pool = recipes_with_tag(f"{season}-recipe")
+    hot_pool = top_n_recipes(20)
+    # 季节池非空则 60% 概率从中选，否则回退热门池
+    # 最终 10% 概率从全库随机
+```
+
+**季节标签**（配方 frontmatter）：
+- `spring-recipe`：清新花香（吉姆雷特、白色佳人）
+- `summer-recipe`：清爽冰凉（莫吉托、龙舌兰日出）
+- `autumn-recipe`：温暖醇厚（古典鸡尾酒、曼哈顿）
+- `winter-recipe`：热烈浓烈（热红酒、爱尔兰咖啡）
+
+### 12.6 运营看板扩展（M4）
+
+`dashboard.html` 增加"实验室健康度"卡片组：
+
+```
+┌─────────────────────────────────────┐
+│ 实验室运营                           │
+├─────────────────────────────────────┤
+│ 配方总数：80    │ 本周匹配：1,240 次  │
+│ Top 配方：马天尼 │ 高频缺失：君度(52) │
+│ 替代表覆盖：68%  │ 用户自定义：12 条   │
+└─────────────────────────────────────┘
+```
+
+**指标定义**：
+- 替代表覆盖率 = 有替代关系的材料数 / 总材料数
+- 高频缺失 = `missing_count` Top 1 材料
+- 用户自定义 = L2 层 `source='user'` 的记录数
+
+### 12.7 个性化推荐（M5）
+
+基于用户历史匹配记录的个性化推荐：
+
+- 记录用户每次匹配的"已选材料集合"
+- 计算用户的"口味画像"（偏好基酒、偏好难度、常缺材料）
+- 推荐"你可能喜欢"的配方（无需选材料，直接推荐）
+
+**隐私边界**：匹配历史仅本地存储，不离开设备，不上报服务器（除非用户开启"贡献匿名数据"开关）。
+
+## 13. 更新的决策记录
+
+| ID | 决策 | 理由 |
+|---|---|---|
+| D25 | 页面形态：独立 lab.html 极简页 | 材料选择器是核心交互价值，独立路由便于入口曝光，但页面极简符合 P6 极简哲学 |
+| D26 | 数据来源：本地 IBA 种子配方 | 开箱即用，与六大基酒种子同源，ima 暂缓 M4 |
+| D27 | 材料选择器：搜索 + 分类平铺混合 | 兼顾新手（分类探索）与老手（搜索直达） |
+| D28 | 结果展示：分组（现在就能做 / 差一种） | 兼顾即时动手与升级启发 |
+| D29 | 替代关系：三层混合（预置 + 用户 + 外部） | L1 保证开箱即用，L2 灵活扩展，L3 远期探索 |
+| D30 | 配方作为 recipe 分类文档进知识库 | 复用 M2 chunk + RAG，不新建独立存储，实验室是知识库的视图 |
+| D31 | 数据源六层架构（L1-L5+治理） | 按 M3-M5 梯度开放，统一契约入库，优先级治理避免冲突 |
+| D32 | 自动运营三层建设（统计/推荐/反馈） | M3 统计+热门打底，M4 季节推荐+反馈循环，M5 个性化 |
+| D33 | 个性化数据仅本地不上报 | 隐私优先，匿名贡献需显式开关 |
