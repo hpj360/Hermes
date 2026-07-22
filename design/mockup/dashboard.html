@@ -106,6 +106,37 @@
       </div>
     </div>
 
+    <!-- 实验室运营（M4.1） -->
+    <section class="lab-dashboard" id="labDashboard" style="display:none;">
+      <h3><span class="lab-icon">◆</span> 实验室运营</h3>
+      <div class="lab-metrics" id="labMetrics">
+        <div class="lab-metric">
+          <div class="lab-label">配方总数</div>
+          <div class="lab-num" id="labRecipeCount">-</div>
+        </div>
+        <div class="lab-metric">
+          <div class="lab-label">本周匹配</div>
+          <div class="lab-num" id="labWeeklyMatch">-</div>
+          <div class="lab-sub" id="labTopRecipe"></div>
+        </div>
+        <div class="lab-metric alert">
+          <div class="lab-label">高频缺失</div>
+          <div class="lab-num" id="labTopMissing">-</div>
+          <div class="lab-sub" id="labTopMissingCount"></div>
+        </div>
+        <div class="lab-metric">
+          <div class="lab-label">替代表覆盖</div>
+          <div class="lab-num" id="labSubCoverage">-</div>
+          <div class="lab-sub" id="labUserSub"></div>
+        </div>
+        <div class="lab-metric">
+          <div class="lab-label">今日推荐</div>
+          <div class="lab-num" id="labDailyRecipe" style="font-size:var(--fs-base);">-</div>
+          <div class="lab-sub" id="labSeasonCoverage"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- Token 用量：7 日柱状图（周五峰值） + 汇总卡 + 模型分布 -->
     <h2 class="section-title">Token 用量 <span class="hint">· 近 7 日</span></h2>
     <div class="token-row">
@@ -136,5 +167,24 @@
     <p class="footnote">Hermes KB · 所有图表为纯 CSS / conic-gradient 渲染，无外部图表库依赖。</p>
   </main>
   <script src="_nav.js"></script>
+  <script>
+    // M4.1: 加载实验室运营看板
+    fetch('/api/lab/dashboard').then(function(r){return r.json();}).then(function(d){
+      document.getElementById('labDashboard').style.display = 'block';
+      document.getElementById('labRecipeCount').textContent = d.recipe_count || 0;
+      document.getElementById('labWeeklyMatch').textContent = d.weekly_match_count || 0;
+      document.getElementById('labTopRecipe').textContent = d.top_recipe ? 'Top: ' + d.top_recipe : '';
+      if (d.top_missing) {
+        document.getElementById('labTopMissing').textContent = d.top_missing.canonical;
+        document.getElementById('labTopMissingCount').textContent = '缺 ' + d.top_missing.missing_count + ' 次';
+      } else {
+        document.getElementById('labTopMissing').textContent = '无';
+      }
+      document.getElementById('labSubCoverage').textContent = Math.round(d.substitute_coverage * 100) + '%';
+      document.getElementById('labUserSub').textContent = '用户自定义 ' + d.user_substitute_count + ' 条';
+      document.getElementById('labDailyRecipe').textContent = d.daily_recipe || '-';
+      document.getElementById('labSeasonCoverage').textContent = '季节覆盖 ' + Math.round(d.season_coverage * 100) + '%';
+    }).catch(function(){});
+  </script>
 </body>
 </html>

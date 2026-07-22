@@ -309,3 +309,29 @@ html { scroll-behavior: smooth; }
 }
 .daily-recipe .daily-name { font-family: var(--font-serif); font-size: var(--fs-lg); flex: 1; }
 .daily-recipe .daily-reason { font-size: var(--fs-xs); color: var(--ink-400); }
+
+
+/* === M4.1 运营看板 === */
+.lab-dashboard {
+  background: #fff; border: 1px solid var(--ink-200);
+  border-radius: var(--r-lg); padding: var(--sp-6);
+  box-shadow: var(--shadow-sm); margin: var(--sp-6) 0;
+}
+.lab-dashboard h3 {
+  font-family: var(--font-serif); font-size: var(--fs-lg);
+  color: var(--brand-700); margin-bottom: var(--sp-4);
+  display: flex; align-items: center; gap: var(--sp-2);
+}
+.lab-dashboard h3 .lab-icon { color: var(--gold-500); }
+.lab-metrics {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--sp-3);
+}
+.lab-metric {
+  background: var(--ink-50); border-radius: var(--r-md);
+  padding: var(--sp-3); text-align: center;
+}
+.lab-metric .lab-label { font-size: var(--fs-xs); color: var(--ink-400); margin-bottom: var(--sp-1); }
+.lab-metric .lab-num { font-family: var(--font-serif); font-size: var(--fs-xl); color: var(--ink-900); }
+.lab-metric .lab-sub { font-size: var(--fs-xs); color: var(--brand-700); margin-top: var(--sp-1); }
+.lab-metric.alert .lab-num { color: var(--gold-700); }
