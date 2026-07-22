@@ -64,3 +64,37 @@ def get_top_missing(limit: int = 10) -> list[dict[str, Any]]:
             }
             for r in rows
         ]
+
+
+def batch_increment_missing(canonicals: list[str]) -> None:
+    """批量累加 missing_count（A3-3）。
+
+    单次事务完成，替代循环调 increment_missing。保留旧语义：同一 canonical
+    在 canonicals 中出现 N 次则 +N（用 Counter 聚合，避免对同一主键多次
+    INSERT 触发 UNIQUE 约束）。供端点 BackgroundTasks 调用。
+    """
+    if not canonicals:
+        return
+    from collections import Counter
+
+    counts = Counter(canonicals)
+    now = datetime.now(timezone.utc)
+    with get_session() as session:
+        existing = session.exec(
+            select(MissingIngredientStats).where(
+                MissingIngredientStats.canonical.in_(list(counts.keys()))
+            )
+        ).all()
+        existing_map = {s.canonical: s for s in existing}
+        for stat in existing:
+            stat.missing_count += counts[stat.canonical]
+            stat.last_missing_at = now
+            session.add(stat)
+        for name, cnt in counts.items():
+            if name not in existing_map:
+                session.add(
+                    MissingIngredientStats(
+                        canonical=name, missing_count=cnt, last_missing_at=now
+                    )
+                )
+        session.commit()

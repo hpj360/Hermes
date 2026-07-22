@@ -2,6 +2,8 @@
 
 每款配方作为 Markdown 文档导入知识库（category=recipe）。
 ingredients 字段为标准化材料名列表（用于匹配算法）。
+content 开头的 HTML 注释 `<!-- ingredients: a|b|c -->` 为 A4-2 显式标注，
+供 _parse_ingredients_from_frontmatter 优先解析，避免 title 反查与裸子串误匹配。
 """
 from __future__ import annotations
 
@@ -12,7 +14,8 @@ SEED_RECIPES: list[dict] = [
         "difficulty": "easy",
         "season": "autumn",
         "ingredients": ["金酒", "味美思", "橄榄"],
-        "content": """# 马天尼 Martini
+        "content": """<!-- ingredients: 金酒|味美思|橄榄 -->
+# 马天尼 Martini
 
 ## 配方
 - 金酒 60ml
@@ -36,7 +39,8 @@ SEED_RECIPES: list[dict] = [
         "difficulty": "easy",
         "season": "summer",
         "ingredients": ["朗姆酒", "青柠汁", "糖浆", "薄荷叶", "苏打水"],
-        "content": """# 莫吉托 Mojito
+        "content": """<!-- ingredients: 朗姆酒|青柠汁|糖浆|薄荷叶|苏打水 -->
+# 莫吉托 Mojito
 
 ## 配方
 - 白朗姆酒 45ml
@@ -62,7 +66,8 @@ SEED_RECIPES: list[dict] = [
         "difficulty": "easy",
         "season": "autumn",
         "ingredients": ["金酒", "金巴利", "味美思", "橙皮"],
-        "content": """# 尼格罗尼 Negroni
+        "content": """<!-- ingredients: 金酒|金巴利|味美思|橙皮 -->
+# 尼格罗尼 Negroni
 
 ## 配方
 - 金酒 30ml
@@ -86,7 +91,8 @@ SEED_RECIPES: list[dict] = [
         "difficulty": "medium",
         "season": "summer",
         "ingredients": ["龙舌兰", "君度", "青柠汁", "柠檬片"],
-        "content": """# 玛格丽特 Margarita
+        "content": """<!-- ingredients: 龙舌兰|君度|青柠汁|柠檬片 -->
+# 玛格丽特 Margarita
 
 ## 配方
 - 龙舌兰 50ml
@@ -111,7 +117,8 @@ SEED_RECIPES: list[dict] = [
         "difficulty": "easy",
         "season": "winter",
         "ingredients": ["威士忌", "糖浆", "苦精", "橙皮"],
-        "content": """# 古典鸡尾酒 Old Fashioned
+        "content": """<!-- ingredients: 威士忌|糖浆|苦精|橙皮 -->
+# 古典鸡尾酒 Old Fashioned
 
 ## 配方
 - 波本威士忌 60ml
@@ -136,7 +143,8 @@ SEED_RECIPES: list[dict] = [
         "difficulty": "medium",
         "season": "spring",
         "ingredients": ["金酒", "君度", "柠檬汁"],
-        "content": """# 白色佳人 White Lady
+        "content": """<!-- ingredients: 金酒|君度|柠檬汁 -->
+# 白色佳人 White Lady
 
 ## 配方
 - 金酒 40ml
@@ -159,7 +167,8 @@ SEED_RECIPES: list[dict] = [
         "difficulty": "easy",
         "season": "summer",
         "ingredients": ["龙舌兰", "橙汁", "糖浆"],
-        "content": """# 龙舌兰日出 Tequila Sunrise
+        "content": """<!-- ingredients: 龙舌兰|橙汁|糖浆 -->
+# 龙舌兰日出 Tequila Sunrise
 
 ## 配方
 - 龙舌兰 45ml
@@ -183,7 +192,8 @@ SEED_RECIPES: list[dict] = [
         "difficulty": "easy",
         "season": "winter",
         "ingredients": ["伏特加", "番茄汁", "柠檬汁", "苦精"],
-        "content": """# 血腥玛丽 Bloody Mary
+        "content": """<!-- ingredients: 伏特加|番茄汁|柠檬汁|苦精 -->
+# 血腥玛丽 Bloody Mary
 
 ## 配方
 - 伏特加 45ml

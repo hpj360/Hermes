@@ -12,7 +12,7 @@ from typing import Any
 from sqlmodel import select
 
 from hermes_kb.database import get_session
-from hermes_kb.models import Document, RecipeStats, Chunk
+from hermes_kb.models import Document, RecipeStats
 
 
 def increment_match_count(doc_id: str) -> None:
@@ -71,7 +71,11 @@ def get_stats(doc_id: str) -> dict[str, Any] | None:
 
 
 def get_hot_recipes(limit: int = 3, days: int = 30) -> list[dict[str, Any]]:
-    """获取热门配方（按 match_count 降序，限时间范围）。"""
+    """获取热门配方（按 match_count 降序，限时间范围，批量化 A3-2）。
+
+    单次 session 完成 join 查询；first_chunk 通过 batch_first_chunks 批量
+    获取（消除每 (stat, doc) 单独查 first_chunk 的 N+1）。
+    """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     with get_session() as session:
         rows = session.exec(
@@ -82,25 +86,30 @@ def get_hot_recipes(limit: int = 3, days: int = 30) -> list[dict[str, Any]]:
             .order_by(RecipeStats.match_count.desc())
             .limit(limit)
         ).all()
-        results: list[dict[str, Any]] = []
-        for stat, doc in rows:
-            first_chunk = session.exec(
-                select(Chunk)
-                .where(Chunk.doc_id == doc.doc_id)
-                .order_by(Chunk.idx)
-            ).first()
-            results.append(
-                {
-                    "title": doc.title,
-                    "doc_id": doc.doc_id,
-                    "chunk_rowid": first_chunk.id if first_chunk else None,
-                    "match_count": stat.match_count,
-                    "last_matched_at": stat.last_matched_at.isoformat()
-                    if stat.last_matched_at
-                    else None,
-                }
-            )
-        return results
+
+    if not rows:
+        return []
+
+    # 批量取 first_chunk（A3-2，消除 N+1）
+    from hermes_kb.recipe_match import batch_first_chunks
+
+    doc_ids = [doc.doc_id for _, doc in rows]
+    first_chunks = batch_first_chunks(doc_ids)
+    results: list[dict[str, Any]] = []
+    for stat, doc in rows:
+        first_chunk = first_chunks.get(doc.doc_id)
+        results.append(
+            {
+                "title": doc.title,
+                "doc_id": doc.doc_id,
+                "chunk_rowid": first_chunk.id if first_chunk else None,
+                "match_count": stat.match_count,
+                "last_matched_at": stat.last_matched_at.isoformat()
+                if stat.last_matched_at
+                else None,
+            }
+        )
+    return results
 
 
 def reset_weekly_stats() -> None:
@@ -112,4 +121,40 @@ def reset_weekly_stats() -> None:
         rows = session.exec(select(RecipeStats)).all()
         for stat in rows:
             stat.weekly_match_count = 0
+        session.commit()
+
+
+def batch_increment_match_counts(doc_ids: list[str]) -> None:
+    """批量累加 match_count 和 weekly_match_count（A3-3）。
+
+    单次事务完成，替代循环调 increment_match_count。同一 doc_id 出现 N 次则
+    +N（用 Counter 聚合，避免对同一主键多次 INSERT 触发 UNIQUE 约束）。
+    供端点 BackgroundTasks 调用。
+    """
+    if not doc_ids:
+        return
+    from collections import Counter
+
+    counts = Counter(doc_ids)
+    now = datetime.now(timezone.utc)
+    with get_session() as session:
+        existing = session.exec(
+            select(RecipeStats).where(RecipeStats.doc_id.in_(list(counts.keys())))
+        ).all()
+        existing_map = {s.doc_id: s for s in existing}
+        for stat in existing:
+            stat.match_count += counts[stat.doc_id]
+            stat.weekly_match_count += counts[stat.doc_id]
+            stat.last_matched_at = now
+            session.add(stat)
+        for did, cnt in counts.items():
+            if did not in existing_map:
+                session.add(
+                    RecipeStats(
+                        doc_id=did,
+                        match_count=cnt,
+                        weekly_match_count=cnt,
+                        last_matched_at=now,
+                    )
+                )
         session.commit()

@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import (
+    BackgroundTasks,
     Depends,
     FastAPI,
     File,
@@ -818,11 +819,19 @@ def create_app() -> FastAPI:
     # M3：鸡尾酒实验室
     # -----------------------------------------------------------------------
     @app.get("/api/lab/match", dependencies=[Depends(require_age_gate)])
-    async def lab_match(ingredients: str = "") -> dict[str, Any]:
-        """材料 → 配方匹配。ingredients 为逗号分隔的材料名。"""
+    async def lab_match(
+        ingredients: str = "",
+        background_tasks: BackgroundTasks = None,
+    ) -> dict[str, Any]:
+        """材料 → 配方匹配。ingredients 为逗号分隔的材料名。
+
+        A3-3: 统计写入移到 BackgroundTasks，主响应不阻塞。match_recipes
+        返回的 _pending_stats 内部字段在此 pop 掉，不暴露给客户端。
+        """
         from hermes_kb.ingredients import canonicalize
+        from hermes_kb.missing_stats import batch_increment_missing
         from hermes_kb.recipe_match import match_recipes
-        from hermes_kb.recipe_stats import increment_match_count
+        from hermes_kb.recipe_stats import batch_increment_match_counts
 
         if not ingredients or not ingredients.strip():
             return {"full_match": [], "partial_match": []}
@@ -832,11 +841,18 @@ def create_app() -> FastAPI:
 
         result = match_recipes(user_ingredients)
 
-        for recipe in result["full_match"] + result["partial_match"]:
-            try:
-                increment_match_count(recipe["doc_id"])
-            except Exception:
-                pass
+        # A3-3: 统计写入移到 BackgroundTasks（批量、单次事务）
+        pending = result.pop("_pending_stats", {}) or {}
+        matched_doc_ids = pending.get("matched_doc_ids") or []
+        missing_ingredients = pending.get("missing_ingredients") or []
+        if matched_doc_ids:
+            background_tasks.add_task(
+                batch_increment_match_counts, matched_doc_ids
+            )
+        if missing_ingredients:
+            background_tasks.add_task(
+                batch_increment_missing, missing_ingredients
+            )
 
         return result
 

@@ -134,12 +134,16 @@ def test_missing_stats_top(seeded_recipes_ops):
 
 
 def test_match_records_missing(seeded_recipes_ops):
-    """match_recipes 调用后缺失材料被统计。"""
+    """match_recipes 调用后缺失材料被统计（A3-3: 通过 _pending_stats 异步批量写入）。"""
     from hermes_kb.recipe_match import match_recipes
-    from hermes_kb.missing_stats import get_missing_stats
+    from hermes_kb.missing_stats import batch_increment_missing, get_missing_stats
 
     # 白色佳人需要金酒+君度+柠檬汁，只给金酒+柠檬汁 → 缺君度
-    match_recipes({"金酒", "柠檬汁"})
+    result = match_recipes({"金酒", "柠檬汁"})
+    # A3-3: match_recipes 不再同步写统计，由调用方应用 _pending_stats（端点走 BackgroundTasks）
+    pending = result["_pending_stats"]
+    if pending.get("missing_ingredients"):
+        batch_increment_missing(pending["missing_ingredients"])
     stat = get_missing_stats("君度")
     assert stat is not None
     assert stat["missing_count"] >= 1
