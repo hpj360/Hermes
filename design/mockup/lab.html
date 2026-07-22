@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>鸡尾酒实验室 · Hermes KB</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="_tokens.css">
+  <link rel="stylesheet" href="_components.css">
+  <style>
+    .lab-main { max-width: 960px; margin: 0 auto; padding: var(--sp-8) var(--sp-6); }
+    .lab-hero { text-align: center; margin-bottom: var(--sp-8); }
+    .lab-hero h1 { font-family: var(--font-serif); font-size: var(--fs-2xl); color: var(--brand-700); margin-bottom: var(--sp-2); }
+    .lab-hero .sub { color: var(--ink-400); font-size: var(--fs-sm); }
+
+    .material-selector { background: #fff; border: 1px solid var(--ink-200); border-radius: var(--r-lg); padding: var(--sp-6); box-shadow: var(--shadow-sm); margin-bottom: var(--sp-6); }
+    .material-search { width: 100%; margin-bottom: var(--sp-4); }
+    .material-category { margin-bottom: var(--sp-3); border-bottom: 1px solid var(--ink-100); padding-bottom: var(--sp-3); }
+    .material-category:last-of-type { border-bottom: none; }
+    .material-category summary { font-family: var(--font-serif); font-size: var(--fs-sm); color: var(--brand-700); cursor: pointer; padding: var(--sp-1) 0; display: flex; align-items: center; gap: var(--sp-2); }
+    .material-category summary .count { font-size: var(--fs-xs); color: var(--ink-400); font-family: var(--font-sans); }
+    .chip-list { display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-2) 0; }
+
+    .chip-chip { font-family: var(--font-sans); font-size: var(--fs-xs); padding: 4px var(--sp-3); border-radius: var(--r-full); border: 1px solid var(--ink-200); background: var(--ink-100); color: var(--ink-600); cursor: pointer; transition: all var(--duration-fast) var(--ease-out); }
+    .chip-chip:hover { border-color: var(--brand-700); }
+    .chip-chip.selected.cat-base_spirit { background: var(--brand-700); color: #fff; border-color: var(--brand-700); }
+    .chip-chip.selected.cat-modifier { background: var(--gold-500); color: var(--ink-900); border-color: var(--gold-500); }
+    .chip-chip.selected.cat-juice { background: var(--ink-600); color: #fff; border-color: var(--ink-600); }
+    .chip-chip.selected.cat-garnish { background: var(--ink-400); color: var(--ink-900); border-color: var(--ink-400); }
+
+    .selected-bar { background: var(--gold-100); border-left: 3px solid var(--gold-500); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); margin: var(--sp-4) 0; display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); }
+    .selected-bar .label { font-size: var(--fs-xs); color: var(--ink-600); margin-right: var(--sp-2); }
+    .selected-chip { background: var(--gold-500); color: var(--ink-900); font-size: var(--fs-xs); padding: 2px var(--sp-2); border-radius: var(--r-full); display: inline-flex; align-items: center; gap: var(--sp-1); cursor: pointer; }
+    .selected-chip:hover { background: var(--gold-700); color: #fff; }
+    .selected-bar .clear-btn { margin-left: auto; }
+
+    .match-btn { width: 100%; justify-content: center; padding: var(--sp-3) var(--sp-4); font-size: var(--fs-base); }
+    .match-btn.pulse { animation: pulse-gold 2s infinite; }
+    @keyframes pulse-gold { 0%, 100% { box-shadow: 0 0 0 0 rgba(201,162,39,0.4); } 50% { box-shadow: 0 0 0 8px rgba(201,162,39,0); } }
+
+    .results { display: none; }
+    .results.show { display: block; }
+    .result-group { margin-bottom: var(--sp-6); }
+    .result-group h2 { font-family: var(--font-serif); font-size: var(--fs-lg); color: var(--ink-900); margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2); }
+    .result-group h2 .badge { font-size: var(--fs-xs); color: var(--ink-400); font-family: var(--font-sans); }
+    .result-group.full h2 { color: var(--brand-700); }
+    .result-group.partial h2 { color: var(--gold-700); }
+
+    .recipe-card { background: #fff; border: 1px solid var(--ink-200); border-radius: var(--r-lg); padding: var(--sp-4) var(--sp-5); margin-bottom: var(--sp-3); box-shadow: var(--shadow-sm); transition: box-shadow var(--duration-base); }
+    .recipe-card:hover { box-shadow: var(--shadow-md); }
+    .recipe-card.full-match { border-left: 3px solid var(--brand-700); }
+    .recipe-card.partial-match { border-left: 3px solid var(--gold-500); }
+    .recipe-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-2); }
+    .recipe-name { font-family: var(--font-serif); font-size: var(--fs-base); color: var(--ink-900); }
+    .match-badge { font-size: var(--fs-xs); padding: 2px var(--sp-2); border-radius: var(--r-full); }
+    .match-badge.match-full { background: var(--brand-100); color: var(--brand-700); }
+    .match-badge.match-partial { background: var(--gold-100); color: var(--gold-700); }
+    .recipe-ingredients { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: var(--sp-2); }
+    .ing { font-size: var(--fs-xs); padding: 2px var(--sp-2); border-radius: var(--r-sm); }
+    .ing.have { background: var(--brand-50); color: var(--brand-700); }
+    .ing.missing { background: var(--ink-100); color: var(--ink-400); text-decoration: line-through; }
+    .substitute-suggest { font-size: var(--fs-xs); color: var(--gold-700); margin-bottom: var(--sp-2); display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); }
+    .sub-chip { background: var(--gold-100); color: var(--gold-700); border: 1px dashed var(--gold-500); padding: 2px var(--sp-2); border-radius: var(--r-sm); cursor: pointer; font-size: var(--fs-xs); }
+    .sub-chip:hover { background: var(--gold-500); color: var(--ink-900); }
+    .recipe-footer { display: flex; align-items: center; justify-content: space-between; padding-top: var(--sp-2); border-top: 1px dashed var(--ink-200); }
+    .citation-link { color: var(--brand-700); font-size: var(--fs-xs); text-decoration: none; }
+    .citation-link:hover { text-decoration: underline; }
+
+    .lab-empty { text-align: center; padding: var(--sp-16) var(--sp-6); color: var(--ink-400); }
+    .lab-empty h3 { font-family: var(--font-serif); color: var(--ink-600); margin-bottom: var(--sp-2); }
+    .lab-empty .examples { display: flex; gap: var(--sp-2); justify-content: center; margin-top: var(--sp-4); flex-wrap: wrap; }
+  </style>
+</head>
+<body data-page="lab">
+  <main class="lab-main">
+    <div class="lab-hero">
+      <h1 class="serif">鸡尾酒实验室</h1>
+      <p class="sub">选择手头的材料，发现你能调的鸡尾酒</p>
+    </div>
+
+    <section class="material-selector">
+      <input class="input material-search" placeholder="搜索材料... 如 金酒" oninput="filterMaterials(this.value)">
+
+      <details class="material-category" open>
+        <summary>基酒 <span class="count" id="cat-count-base_spirit">6</span></summary>
+        <div class="chip-list" id="cat-base_spirit">
+          <button class="chip-chip cat-base_spirit" onclick="toggleMaterial(this, '金酒', 'base_spirit')">金酒</button>
+          <button class="chip-chip cat-base_spirit" onclick="toggleMaterial(this, '威士忌', 'base_spirit')">威士忌</button>
+          <button class="chip-chip cat-base_spirit" onclick="toggleMaterial(this, '朗姆酒', 'base_spirit')">朗姆酒</button>
+          <button class="chip-chip cat-base_spirit" onclick="toggleMaterial(this, '龙舌兰', 'base_spirit')">龙舌兰</button>
+          <button class="chip-chip cat-base_spirit" onclick="toggleMaterial(this, '白兰地', 'base_spirit')">白兰地</button>
+          <button class="chip-chip cat-base_spirit" onclick="toggleMaterial(this, '伏特加', 'base_spirit')">伏特加</button>
+        </div>
+      </details>
+
+      <details class="material-category">
+        <summary>辅料 <span class="count" id="cat-count-modifier">10</span></summary>
+        <div class="chip-list" id="cat-modifier">
+          <button class="chip-chip cat-modifier" onclick="toggleMaterial(this, '味美思', 'modifier')">味美思</button>
+          <button class="chip-chip cat-modifier" onclick="toggleMaterial(this, '金巴利', 'modifier')">金巴利</button>
+          <button class="chip-chip cat-modifier" onclick="toggleMaterial(this, '糖浆', 'modifier')">糖浆</button>
+          <button class="chip-chip cat-modifier" onclick="toggleMaterial(this, '君度', 'modifier')">君度</button>
+          <button class="chip-chip cat-modifier" onclick="toggleMaterial(this, '苦精', 'modifier')">苦精</button>
+          <button class="chip-chip cat-modifier" onclick="toggleMaterial(this, '汤力水', 'modifier')">汤力水</button>
+          <button class="chip-chip cat-modifier" onclick="toggleMaterial(this, '苏打水', 'modifier')">苏打水</button>
+          <button class="chip-chip cat-modifier" onclick="toggleMaterial(this, '可乐', 'modifier')">可乐</button>
+          <button class="chip-chip cat-modifier" onclick="toggleMaterial(this, '姜啤', 'modifier')">姜啤</button>
+        </div>
+      </details>
+
+      <details class="material-category">
+        <summary>果汁 <span class="count" id="cat-count-juice">6</span></summary>
+        <div class="chip-list" id="cat-juice">
+          <button class="chip-chip cat-juice" onclick="toggleMaterial(this, '柠檬汁', 'juice')">柠檬汁</button>
+          <button class="chip-chip cat-juice" onclick="toggleMaterial(this, '青柠汁', 'juice')">青柠汁</button>
+          <button class="chip-chip cat-juice" onclick="toggleMaterial(this, '橙汁', 'juice')">橙汁</button>
+          <button class="chip-chip cat-juice" onclick="toggleMaterial(this, '蔓越莓汁', 'juice')">蔓越莓汁</button>
+          <button class="chip-chip cat-juice" onclick="toggleMaterial(this, '菠萝汁', 'juice')">菠萝汁</button>
+          <button class="chip-chip cat-juice" onclick="toggleMaterial(this, '番茄汁', 'juice')">番茄汁</button>
+        </div>
+      </details>
+
+      <details class="material-category">
+        <summary>装饰 <span class="count" id="cat-count-garnish">5</span></summary>
+        <div class="chip-list" id="cat-garnish">
+          <button class="chip-chip cat-garnish" onclick="toggleMaterial(this, '橄榄', 'garnish')">橄榄</button>
+          <button class="chip-chip cat-garnish" onclick="toggleMaterial(this, '柠檬片', 'garnish')">柠檬片</button>
+          <button class="chip-chip cat-garnish" onclick="toggleMaterial(this, '薄荷叶', 'garnish')">薄荷叶</button>
+          <button class="chip-chip cat-garnish" onclick="toggleMaterial(this, '樱桃', 'garnish')">樱桃</button>
+          <button class="chip-chip cat-garnish" onclick="toggleMaterial(this, '橙皮', 'garnish')">橙皮</button>
+        </div>
+      </details>
+
+      <div class="selected-bar" id="selectedBar" style="display:none;">
+        <span class="label">已选：</span>
+        <div id="selectedChips" style="display:inline-flex; flex-wrap:wrap; gap:var(--sp-2);"></div>
+        <button class="btn-ghost clear-btn" onclick="clearAll()">清空</button>
+      </div>
+
+      <button class="btn-primary match-btn" id="matchBtn" onclick="doMatch()">匹配配方 →</button>
+    </section>
+
+    <section class="lab-empty" id="emptyState">
+      <h3 class="serif">选择材料开始</h3>
+      <p>点击上方材料 chip，或试试这些：</p>
+      <div class="examples">
+        <button class="btn-ghost" onclick="quickSelect(['金酒','味美思','橄榄'])">马天尼套餐</button>
+        <button class="btn-ghost" onclick="quickSelect(['朗姆酒','青柠汁','糖浆','薄荷叶','苏打水'])">莫吉托套餐</button>
+        <button class="btn-ghost" onclick="quickSelect(['龙舌兰','橙汁','糖浆'])">龙舌兰日出套餐</button>
+      </div>
+    </section>
+
+    <section class="results" id="results">
+      <div class="result-group full" id="fullGroup" style="display:none;">
+        <h2>现在就能做 <span class="badge" id="fullCount"></span></h2>
+        <div id="fullList"></div>
+      </div>
+      <div class="result-group partial" id="partialGroup" style="display:none;">
+        <h2>差一种就能做 <span class="badge" id="partialCount"></span></h2>
+        <div id="partialList"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    var selected = {};
+
+    function toggleMaterial(btn, name, category) {
+      if (selected[name]) {
+        delete selected[name];
+        btn.classList.remove('selected');
+      } else {
+        selected[name] = category;
+        btn.classList.add('selected');
+      }
+      updateSelectedBar();
+      updateMatchBtn();
+    }
+
+    function updateSelectedBar() {
+      var bar = document.getElementById('selectedBar');
+      var chipsDiv = document.getElementById('selectedChips');
+      var names = Object.keys(selected);
+      if (names.length === 0) {
+        bar.style.display = 'none';
+        return;
+      }
+      bar.style.display = 'flex';
+      chipsDiv.innerHTML = names.map(function(name) {
+        return '<span class="selected-chip" onclick="removeMaterial(\'' + name + '\')">' + name + ' ×</span>';
+      }).join('');
+    }
+
+    function removeMaterial(name) {
+      delete selected[name];
+      document.querySelectorAll('.chip-chip').forEach(function(chip) {
+        if (chip.textContent === name) chip.classList.remove('selected');
+      });
+      updateSelectedBar();
+      updateMatchBtn();
+    }
+
+    function clearAll() {
+      selected = {};
+      document.querySelectorAll('.chip-chip.selected').forEach(function(chip) {
+        chip.classList.remove('selected');
+      });
+      updateSelectedBar();
+      updateMatchBtn();
+      document.getElementById('results').classList.remove('show');
+      document.getElementById('emptyState').style.display = 'block';
+    }
+
+    function updateMatchBtn() {
+      var btn = document.getElementById('matchBtn');
+      var count = Object.keys(selected).length;
+      if (count > 0) {
+        btn.classList.add('pulse');
+        btn.textContent = '匹配配方 →（已选 ' + count + ' 种）';
+      } else {
+        btn.classList.remove('pulse');
+        btn.textContent = '匹配配方 →';
+      }
+    }
+
+    function quickSelect(names) {
+      clearAll();
+      names.forEach(function(name) {
+        var chips = document.querySelectorAll('.chip-chip');
+        for (var i = 0; i < chips.length; i++) {
+          if (chips[i].textContent === name) {
+            var cat = chips[i].className.match(/cat-(\w+)/);
+            if (cat) toggleMaterial(chips[i], name, cat[1]);
+            break;
+          }
+        }
+      });
+    }
+
+    function filterMaterials(query) {
+      query = query.trim().toLowerCase();
+      document.querySelectorAll('.chip-chip').forEach(function(chip) {
+        var match = chip.textContent.toLowerCase().indexOf(query) >= 0;
+        chip.style.display = match ? '' : 'none';
+      });
+    }
+
+    function doMatch() {
+      var names = Object.keys(selected);
+      if (names.length === 0) return;
+
+      var mockFull = [];
+      var mockPartial = [];
+
+      if (selected['金酒'] && selected['味美思'] && selected['橄榄']) {
+        mockFull.push({
+          title: '马天尼 Martini', chunk: 42, ingredients: [
+            {name: '金酒', amount: '60ml', have: true},
+            {name: '干味美思', amount: '10ml', have: true},
+            {name: '橄榄', amount: '1 颗', have: true}
+          ]
+        });
+      }
+      if (selected['金酒'] && selected['金巴利'] && selected['味美思']) {
+        mockFull.push({
+          title: '尼格罗尼 Negroni', chunk: 71, ingredients: [
+            {name: '金酒', amount: '30ml', have: true},
+            {name: '金巴利', amount: '30ml', have: true},
+            {name: '甜味美思', amount: '30ml', have: true},
+            {name: '橙皮', amount: '1 片', have: true}
+          ]
+        });
+      }
+      if (selected['金酒'] && selected['柠檬汁'] && !selected['君度']) {
+        mockPartial.push({
+          title: '白色佳人 White Lady', chunk: 58, missing: ['君度'], ingredients: [
+            {name: '金酒', amount: '40ml', have: true},
+            {name: '君度', amount: '15ml', have: false, substitutes: ['橙味力娇酒', '干库拉索']},
+            {name: '柠檬汁', amount: '20ml', have: true}
+          ]
+        });
+      }
+
+      renderResults(mockFull, mockPartial);
+    }
+
+    function renderResults(full, partial) {
+      document.getElementById('emptyState').style.display = 'none';
+      document.getElementById('results').classList.add('show');
+
+      var fullGroup = document.getElementById('fullGroup');
+      if (full.length > 0) {
+        fullGroup.style.display = 'block';
+        document.getElementById('fullCount').textContent = '(' + full.length + ')';
+        document.getElementById('fullList').innerHTML = full.map(renderCard).join('');
+      } else {
+        fullGroup.style.display = 'none';
+      }
+
+      var partialGroup = document.getElementById('partialGroup');
+      if (partial.length > 0) {
+        partialGroup.style.display = 'block';
+        document.getElementById('partialCount').textContent = '(' + partial.length + ')';
+        document.getElementById('partialList').innerHTML = partial.map(renderCard).join('');
+      } else {
+        partialGroup.style.display = 'none';
+      }
+    }
+
+    function renderCard(r) {
+      var isPartial = r.missing && r.missing.length > 0;
+      var cardClass = isPartial ? 'partial-match' : 'full-match';
+      var badgeClass = isPartial ? 'match-partial' : 'match-full';
+      var badgeText = isPartial ? '缺 ' + r.missing.length + ' 种' : '材料齐全';
+
+      var ingHtml = r.ingredients.map(function(ing) {
+        var cls = ing.have ? 'have' : 'missing';
+        var text = (ing.have ? '✓ ' : '✗ ') + ing.name + ' ' + (ing.amount || '');
+        return '<span class="ing ' + cls + '">' + text + '</span>';
+      }).join('');
+
+      var subHtml = '';
+      if (isPartial) {
+        var subs = [];
+        r.ingredients.forEach(function(ing) {
+          if (!ing.have && ing.substitutes) {
+            ing.substitutes.forEach(function(s) {
+              subs.push('<button class="sub-chip" onclick="addSubstitute(\'' + s + '\')">' + s + ' +</button>');
+            });
+          }
+        });
+        if (subs.length > 0) {
+          subHtml = '<div class="substitute-suggest">可替代：' + subs.join('') + '</div>';
+        }
+      }
+
+      return '<div class="recipe-card ' + cardClass + '">' +
+        '<div class="recipe-header">' +
+          '<h3 class="recipe-name">' + r.title + '</h3>' +
+          '<span class="match-badge ' + badgeClass + '">' + badgeText + '</span>' +
+        '</div>' +
+        '<div class="recipe-ingredients">' + ingHtml + '</div>' +
+        subHtml +
+        '<div class="recipe-footer">' +
+          '<a href="doc-detail.html?chunk=' + r.chunk + '" class="citation-link">[' + r.chunk + '] 引用 IBA 百科</a>' +
+          '<button class="btn-ghost" onclick="askAbout(\'' + r.title + '\')">基于此配方提问</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    function addSubstitute(name) {
+      var chips = document.querySelectorAll('.chip-chip');
+      for (var i = 0; i < chips.length; i++) {
+        if (chips[i].textContent === name) {
+          var cat = chips[i].className.match(/cat-(\w+)/);
+          if (cat && !chips[i].classList.contains('selected')) {
+            toggleMaterial(chips[i], name, cat[1]);
+          }
+          break;
+        }
+      }
+      doMatch();
+    }
+
+    function askAbout(title) {
+      window.location.href = 'ask.html?q=' + encodeURIComponent(title + '的做法');
+    }
+  </script>
+</body>
+</html>
