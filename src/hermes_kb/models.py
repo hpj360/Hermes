@@ -158,3 +158,13 @@ class MissingIngredientStats(SQLModel, table=True):
     canonical: str = Field(primary_key=True, max_length=64)
     missing_count: int = Field(default=0)
     last_missing_at: datetime | None = Field(default=None)
+
+
+class RecipeVariant(SQLModel, table=True):
+    """M4.3：配方变体关联。"""
+
+    id: int | None = Field(default=None, primary_key=True)
+    base_doc_id: str = Field(index=True, max_length=64)  # 原配方
+    variant_doc_id: str = Field(index=True, max_length=64)  # 变体配方
+    variant_note: str = Field(default="", max_length=200)  # 变体说明
+    created_at: datetime = Field(default_factory=_utcnow)
