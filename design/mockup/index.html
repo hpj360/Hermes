@@ -156,6 +156,15 @@
     </div>
   </section>
 
+  <!-- 今日推荐（M4.1） -->
+  <section id="dailyRecipeSection" style="display:none;">
+    <a id="dailyRecipeLink" href="#" class="daily-recipe">
+      <span class="daily-badge">今日推荐</span>
+      <span class="daily-name" id="dailyRecipeName"></span>
+      <span class="daily-reason" id="dailyRecipeReason"></span>
+    </a>
+  </section>
+
   <!-- 热门配方区（M3 实验室） -->
   <section class="hot-recipes">
     <h3 class="serif">本周热门配方</h3>
@@ -178,5 +187,17 @@
 
   <!-- 共享导航注入 + chunk 高亮逻辑 -->
   <script src="_nav.js"></script>
+  <script>
+    // M4.1: 加载今日推荐
+    fetch('/api/lab/daily').then(function(r){return r.json();}).then(function(d){
+      if (d && d.title) {
+        document.getElementById('dailyRecipeSection').style.display = 'block';
+        document.getElementById('dailyRecipeName').textContent = d.title;
+        var reasonMap = {season:'应季推荐', hot:'本周热门', random:'随机发现'};
+        document.getElementById('dailyRecipeReason').textContent = reasonMap[d.reason] || d.reason;
+        document.getElementById('dailyRecipeLink').href = 'doc-detail.html?chunk=' + (d.chunk_rowid || '');
+      }
+    }).catch(function(){});
+  </script>
 </body>
 </html>

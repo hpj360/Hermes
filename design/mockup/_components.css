@@ -259,3 +259,53 @@ html { scroll-behavior: smooth; }
 .hot-recipe .rank { font-family: var(--font-serif); color: var(--gold-500); font-size: var(--fs-lg); margin-right: var(--sp-3); }
 .hot-recipe .name { flex: 1; font-size: var(--fs-sm); }
 .hot-recipe .count { font-size: var(--fs-xs); color: var(--ink-400); }
+
+
+/* === M4.1 运营看板 === */
+.lab-dashboard {
+  background: #fff; border: 1px solid var(--ink-200);
+  border-radius: var(--r-lg); padding: var(--sp-6);
+  box-shadow: var(--shadow-sm); margin: var(--sp-6) 0;
+}
+.lab-dashboard h3 {
+  font-family: var(--font-serif); font-size: var(--fs-lg);
+  color: var(--brand-700); margin-bottom: var(--sp-4);
+  display: flex; align-items: center; gap: var(--sp-2);
+}
+.lab-dashboard h3 .lab-icon { color: var(--gold-500); }
+.lab-metrics {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--sp-3);
+}
+.lab-metric {
+  background: var(--ink-50); border-radius: var(--r-md);
+  padding: var(--sp-3); text-align: center;
+}
+.lab-metric .lab-label { font-size: var(--fs-xs); color: var(--ink-400); margin-bottom: var(--sp-1); }
+.lab-metric .lab-num { font-family: var(--font-serif); font-size: var(--fs-xl); color: var(--ink-900); }
+.lab-metric .lab-sub { font-size: var(--fs-xs); color: var(--brand-700); margin-top: var(--sp-1); }
+.lab-metric.alert .lab-num { color: var(--gold-700); }
+
+
+/* === M4.1 运营组件 === */
+.daily-recipe {
+  background: linear-gradient(135deg, var(--brand-50) 0%, var(--gold-100) 100%);
+  border: 1px solid var(--gold-500);
+  border-radius: var(--r-lg);
+  padding: var(--sp-5) var(--sp-6);
+  margin: var(--sp-4) 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  text-decoration: none;
+  color: var(--ink-900);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.daily-recipe:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.daily-recipe .daily-badge {
+  background: var(--gold-500); color: var(--ink-900);
+  font-size: var(--fs-xs); padding: 2px var(--sp-2);
+  border-radius: var(--r-full); white-space: nowrap;
+}
+.daily-recipe .daily-name { font-family: var(--font-serif); font-size: var(--fs-lg); flex: 1; }
+.daily-recipe .daily-reason { font-size: var(--fs-xs); color: var(--ink-400); }

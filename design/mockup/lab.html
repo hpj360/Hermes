@@ -80,6 +80,15 @@
       <p class="sub">选择手头的材料，发现你能调的鸡尾酒</p>
     </div>
 
+    <!-- 今日推荐（M4.1） -->
+    <div id="labDaily" style="display:none; margin-bottom: var(--sp-4);">
+      <a id="labDailyLink" href="#" class="daily-recipe" style="margin:0;">
+        <span class="daily-badge">今日推荐</span>
+        <span class="daily-name" id="labDailyName"></span>
+        <span class="daily-reason" id="labDailyReason"></span>
+      </a>
+    </div>
+
     <section class="material-selector">
       <input class="input material-search" placeholder="搜索材料... 如 金酒" oninput="filterMaterials(this.value)">
 
@@ -165,6 +174,17 @@
   </main>
 
   <script>
+    // M4.1: 加载今日推荐
+    fetch(API_BASE + '/api/lab/daily').then(function(r){return r.json();}).then(function(d){
+      if (d && d.title) {
+        document.getElementById('labDaily').style.display = 'block';
+        document.getElementById('labDailyName').textContent = d.title;
+        var reasonMap = {season:'应季推荐', hot:'本周热门', random:'随机发现'};
+        document.getElementById('labDailyReason').textContent = reasonMap[d.reason] || d.reason;
+        document.getElementById('labDailyLink').href = 'doc-detail.html?chunk=' + (d.chunk_rowid || '');
+      }
+    }).catch(function(){});
+
     var selected = {};
 
     function toggleMaterial(btn, name, category) {
