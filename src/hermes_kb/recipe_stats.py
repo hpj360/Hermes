@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlmodel import select
@@ -19,7 +19,7 @@ def increment_match_count(doc_id: str) -> None:
     """匹配命中时 match_count +1，更新 last_matched_at。"""
     with get_session() as session:
         stat = session.get(RecipeStats, doc_id)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if stat:
             stat.match_count += 1
             stat.last_matched_at = now
@@ -35,7 +35,7 @@ def increment_view_count(doc_id: str) -> None:
     """查看详情时 view_count +1，更新 last_viewed_at。"""
     with get_session() as session:
         stat = session.get(RecipeStats, doc_id)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if stat:
             stat.view_count += 1
             stat.last_viewed_at = now
@@ -68,7 +68,7 @@ def get_stats(doc_id: str) -> dict[str, Any] | None:
 
 def get_hot_recipes(limit: int = 3, days: int = 30) -> list[dict[str, Any]]:
     """获取热门配方（按 match_count 降序，限时间范围）。"""
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     with get_session() as session:
         rows = session.exec(
             select(RecipeStats, Document)

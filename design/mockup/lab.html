@@ -247,43 +247,49 @@
       });
     }
 
+    // API 基址：默认同源，本地分端口调试时可在 console 设置 window.API_BASE='http://localhost:8000'
+    var API_BASE = window.API_BASE || '';
+
     function doMatch() {
       var names = Object.keys(selected);
       if (names.length === 0) return;
 
-      var mockFull = [];
-      var mockPartial = [];
+      var btn = document.getElementById('matchBtn');
+      btn.disabled = true;
+      btn.textContent = '匹配中...';
 
-      if (selected['金酒'] && selected['味美思'] && selected['橄榄']) {
-        mockFull.push({
-          title: '马天尼 Martini', chunk: 42, ingredients: [
-            {name: '金酒', amount: '60ml', have: true},
-            {name: '干味美思', amount: '10ml', have: true},
-            {name: '橄榄', amount: '1 颗', have: true}
-          ]
+      var url = API_BASE + '/api/lab/match?ingredients=' + encodeURIComponent(names.join(','));
+      fetch(url)
+        .then(function(r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function(data) {
+          // 空结果且未播种 → 自动播种后重试一次
+          if (data.full_match.length === 0 && data.partial_match.length === 0 && !window._seeded) {
+            window._seeded = true;
+            return fetch(API_BASE + '/api/seed/recipes', {method: 'POST'})
+              .then(function(r) { return r.json(); })
+              .then(function() { return fetch(url).then(function(r) { return r.json(); }); });
+          }
+          return data;
+        })
+        .then(function(data) {
+          renderResults(data.full_match || [], data.partial_match || []);
+        })
+        .catch(function(err) {
+          document.getElementById('emptyState').style.display = 'none';
+          var results = document.getElementById('results');
+          results.classList.add('show');
+          results.innerHTML = '<div class="lab-empty"><h3 class="serif">匹配失败</h3>' +
+            '<p>' + err.message + '</p>' +
+            '<p style="font-size:var(--fs-xs);margin-top:var(--sp-2)">提示：若跨端口调试，请在 console 执行 <code>window.API_BASE=\'http://localhost:8000\'</code></p>' +
+            '</div>';
+        })
+        .finally(function() {
+          btn.disabled = false;
+          updateMatchBtn();
         });
-      }
-      if (selected['金酒'] && selected['金巴利'] && selected['味美思']) {
-        mockFull.push({
-          title: '尼格罗尼 Negroni', chunk: 71, ingredients: [
-            {name: '金酒', amount: '30ml', have: true},
-            {name: '金巴利', amount: '30ml', have: true},
-            {name: '甜味美思', amount: '30ml', have: true},
-            {name: '橙皮', amount: '1 片', have: true}
-          ]
-        });
-      }
-      if (selected['金酒'] && selected['柠檬汁'] && !selected['君度']) {
-        mockPartial.push({
-          title: '白色佳人 White Lady', chunk: 58, missing: ['君度'], ingredients: [
-            {name: '金酒', amount: '40ml', have: true},
-            {name: '君度', amount: '15ml', have: false, substitutes: ['橙味力娇酒', '干库拉索']},
-            {name: '柠檬汁', amount: '20ml', have: true}
-          ]
-        });
-      }
-
-      renderResults(mockFull, mockPartial);
     }
 
     function renderResults(full, partial) {
@@ -314,27 +320,34 @@
       var cardClass = isPartial ? 'partial-match' : 'full-match';
       var badgeClass = isPartial ? 'match-partial' : 'match-full';
       var badgeText = isPartial ? '缺 ' + r.missing.length + ' 种' : '材料齐全';
+      var chunkId = r.chunk_rowid || r.chunk || '';
 
-      var ingHtml = r.ingredients.map(function(ing) {
+      var ingHtml = (r.ingredients || []).map(function(ing) {
         var cls = ing.have ? 'have' : 'missing';
-        var text = (ing.have ? '✓ ' : '✗ ') + ing.name + ' ' + (ing.amount || '');
+        var text = (ing.have ? '✓ ' : '✗ ') + ing.name;
         return '<span class="ing ' + cls + '">' + text + '</span>';
       }).join('');
 
       var subHtml = '';
-      if (isPartial) {
-        var subs = [];
-        r.ingredients.forEach(function(ing) {
-          if (!ing.have && ing.substitutes) {
-            ing.substitutes.forEach(function(s) {
-              subs.push('<button class="sub-chip" onclick="addSubstitute(\'' + s + '\')">' + s + ' +</button>');
-            });
-          }
-        });
-        if (subs.length > 0) {
-          subHtml = '<div class="substitute-suggest">可替代：' + subs.join('') + '</div>';
+      var subs = [];
+      (r.ingredients || []).forEach(function(ing) {
+        if (!ing.have && ing.substitutes) {
+          ing.substitutes.forEach(function(s) {
+            subs.push('<button class="sub-chip" onclick="addSubstitute(\'' + s + '\')">' + s + ' +</button>');
+          });
         }
+      });
+      if (subs.length > 0) {
+        subHtml = '<div class="substitute-suggest">可替代：' + subs.join('') + '</div>';
       }
+
+      var footer = '';
+      if (chunkId) {
+        footer += '<a href="doc-detail.html?chunk=' + chunkId + '" class="citation-link">[' + chunkId + '] 引用 IBA 百科</a>';
+      } else {
+        footer += '<span class="citation-link" style="color:var(--ink-400)">无引用</span>';
+      }
+      footer += '<button class="btn-ghost" onclick="askAbout(\'' + r.title + '\')">基于此配方提问</button>';
 
       return '<div class="recipe-card ' + cardClass + '">' +
         '<div class="recipe-header">' +
@@ -343,10 +356,7 @@
         '</div>' +
         '<div class="recipe-ingredients">' + ingHtml + '</div>' +
         subHtml +
-        '<div class="recipe-footer">' +
-          '<a href="doc-detail.html?chunk=' + r.chunk + '" class="citation-link">[' + r.chunk + '] 引用 IBA 百科</a>' +
-          '<button class="btn-ghost" onclick="askAbout(\'' + r.title + '\')">基于此配方提问</button>' +
-        '</div>' +
+        '<div class="recipe-footer">' + footer + '</div>' +
       '</div>';
     }
 

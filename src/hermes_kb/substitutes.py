@@ -6,8 +6,6 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
-
 from sqlmodel import select
 
 from hermes_kb.database import get_session
