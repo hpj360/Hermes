@@ -15,7 +15,7 @@ import threading
 from contextlib import contextmanager
 from typing import Iterator
 
-from sqlalchemy import text as sa_text
+from sqlalchemy import event, text as sa_text
 from sqlmodel import Session, SQLModel, create_engine
 
 from hermes_kb.config import get_settings
@@ -39,6 +39,13 @@ def get_engine():
             echo=False,
             connect_args={"check_same_thread": False},
         )
+        # 每个新连接都启用外键约束（连接池复用连接，必须用事件监听器）
+        # 必须在首次 connect 之前注册，确保首个池化连接也启用
+        @event.listens_for(eng, "connect")
+        def _set_sqlite_pragma(dbapi_conn, _conn_record):
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
         # 开启 WAL + busy_timeout
         with eng.connect() as conn:
             conn.execute(sa_text("PRAGMA journal_mode=WAL"))
@@ -92,7 +99,7 @@ def _init_vec_table(eng) -> None:
         conn.execute(sa_text(
             "CREATE TABLE IF NOT EXISTS chunk_vec ("
             "chunk_rowid INTEGER PRIMARY KEY, "
-            "doc_id TEXT, "
+            "doc_id TEXT REFERENCES document(doc_id) ON DELETE CASCADE, "
             "vec TEXT NOT NULL"
             ")"
         ))

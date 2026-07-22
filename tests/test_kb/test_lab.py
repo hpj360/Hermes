@@ -7,10 +7,14 @@ from sqlmodel import select
 
 def test_recipe_stats_model(tmp_db):
     """RecipeStats 表可创建并写入。"""
-    from hermes_kb.models import RecipeStats
+    from hermes_kb.models import Document, RecipeStats
     from hermes_kb.database import get_session
 
     with get_session() as session:
+        # 先建父 Document（A2-1：RecipeStats.doc_id 有 FK 约束）
+        doc = Document(doc_id="recipe-martini", title="Martini")
+        session.add(doc)
+        session.flush()
         stat = RecipeStats(doc_id="recipe-martini", match_count=5, view_count=12)
         session.add(stat)
         session.commit()

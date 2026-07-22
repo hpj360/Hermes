@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Column, Text
+from sqlalchemy import Column, ForeignKey, Text
 from sqlmodel import Field, SQLModel
 
 
@@ -39,7 +39,10 @@ class Chunk(SQLModel, table=True):
     """文档分片。"""
 
     id: int | None = Field(default=None, primary_key=True)
-    doc_id: str = Field(index=True, max_length=64)
+    doc_id: str = Field(
+        max_length=64,
+        sa_column=Column("doc_id", Text, ForeignKey("document.doc_id", ondelete="CASCADE"), index=True),
+    )
     idx: int = Field(default=0)
     text: str = Field(default="", sa_column=Column("text", Text))
     char_start: int = Field(default=0)
@@ -60,8 +63,13 @@ class DocumentTag(SQLModel, table=True):
     """M2-06：文档-标签关联（多对多）。"""
 
     id: int | None = Field(default=None, primary_key=True)
-    doc_id: str = Field(index=True, max_length=64)
-    tag_id: int = Field(index=True)
+    doc_id: str = Field(
+        max_length=64,
+        sa_column=Column("doc_id", Text, ForeignKey("document.doc_id", ondelete="CASCADE"), index=True),
+    )
+    tag_id: int = Field(
+        sa_column=Column("tag_id", ForeignKey("tag.id", ondelete="CASCADE"), index=True),
+    )
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -95,7 +103,10 @@ PRESET_CATEGORIES = [
 class RecipeStats(SQLModel, table=True):
     """M3：配方使用统计。"""
 
-    doc_id: str = Field(primary_key=True, max_length=64)
+    doc_id: str = Field(
+        max_length=64,
+        sa_column=Column("doc_id", Text, ForeignKey("document.doc_id", ondelete="CASCADE"), primary_key=True),
+    )
     match_count: int = Field(default=0)  # 被匹配命中次数（累计）
     view_count: int = Field(default=0)  # 被点击查看次数
     weekly_match_count: int = Field(default=0)  # A4-1: 本周新增匹配数
