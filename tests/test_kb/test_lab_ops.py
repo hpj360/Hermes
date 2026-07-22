@@ -98,3 +98,48 @@ def test_daily_recipe_reason_format(seeded_recipes_ops):
     result = daily_recipe()
     assert isinstance(result["reason"], str)
     assert len(result["reason"]) > 0
+
+
+def test_missing_stats_increment(seeded_recipes_ops):
+    """记录缺失材料计数。"""
+    from hermes_kb.missing_stats import increment_missing, get_missing_stats
+
+    increment_missing("君度")
+    increment_missing("君度")
+    increment_missing("金巴利")
+
+    stat = get_missing_stats("君度")
+    assert stat is not None
+    assert stat["missing_count"] == 2
+    assert stat["last_missing_at"] is not None
+
+
+def test_missing_stats_top(seeded_recipes_ops):
+    """缺失材料排行。"""
+    from hermes_kb.missing_stats import increment_missing, get_top_missing
+
+    for _ in range(5):
+        increment_missing("君度")
+    for _ in range(3):
+        increment_missing("金巴利")
+    for _ in range(1):
+        increment_missing("苦精")
+
+    top = get_top_missing(limit=3)
+    assert len(top) == 3
+    assert top[0]["canonical"] == "君度"
+    assert top[0]["missing_count"] == 5
+    assert top[1]["canonical"] == "金巴利"
+    assert top[2]["canonical"] == "苦精"
+
+
+def test_match_records_missing(seeded_recipes_ops):
+    """match_recipes 调用后缺失材料被统计。"""
+    from hermes_kb.recipe_match import match_recipes
+    from hermes_kb.missing_stats import get_missing_stats
+
+    # 白色佳人需要金酒+君度+柠檬汁，只给金酒+柠檬汁 → 缺君度
+    match_recipes({"金酒", "柠檬汁"})
+    stat = get_missing_stats("君度")
+    assert stat is not None
+    assert stat["missing_count"] >= 1

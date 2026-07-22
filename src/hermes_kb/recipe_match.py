@@ -151,6 +151,14 @@ def match_recipes(
         elif len(truly_missing) <= 2:
             base["missing"] = truly_missing
             base["missing_count"] = len(truly_missing)
+            # M4.1：记录缺失材料统计（反馈循环）
+            from hermes_kb.missing_stats import increment_missing
+
+            for m in truly_missing:
+                try:
+                    increment_missing(m)
+                except Exception:
+                    pass  # 统计失败不影响主流程
             partial_match.append(base)
 
     full_match.sort(key=lambda x: x.get("match_count", 0), reverse=True)
