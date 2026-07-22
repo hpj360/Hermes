@@ -70,6 +70,7 @@ data/profile.json
 web/node_modules/
 web/.vite/
 web/tsconfig.tsbuildinfo
+web/dist
 
 # 临时数据库
 *.db
