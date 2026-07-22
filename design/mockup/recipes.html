@@ -35,20 +35,7 @@
     @media (max-width: 640px) { .recipe-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
-<body>
-  <nav class="navbar">
-    <div class="container nav-inner">
-      <a href="index.html" class="brand">Hermes <span class="brand-accent">KB</span></a>
-      <div class="nav-links">
-        <a href="index.html">首页</a>
-        <a href="lab.html">调酒实验室</a>
-        <a href="docs.html">文档库</a>
-        <a href="recipes.html" class="active">配方治理</a>
-        <a href="dashboard.html">仪表盘</a>
-      </div>
-    </div>
-  </nav>
-
+<body data-page="recipes">
   <main class="recipes-main">
     <div class="page-head">
       <h1>配方治理</h1>
@@ -89,6 +76,7 @@
     </div>
   </main>
 
+  <script src="_nav.js"></script>
   <script>
     (function () {
       var grid = document.getElementById('recipe-grid');

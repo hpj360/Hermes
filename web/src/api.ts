@@ -13,7 +13,7 @@ import type {
   TagInfo,
 } from "./types";
 
-const BASE = "";
+const BASE = import.meta.env.VITE_API_BASE || "";
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem("hermes_kb_token");
