@@ -179,6 +179,17 @@
             </div>
           </div>
         </div>
+
+        <!-- M4.3: 待审核配方队列 -->
+        <div class="lab-pending-queue">
+          <div class="lab-sync-head">
+            <span class="lab-sync-title">待审核配方</span>
+            <span class="lab-sync-hint" id="labPendingHint">UGC 投稿审核队列</span>
+          </div>
+          <div class="pending-list" id="pendingList">
+            <div class="empty-state-mini">加载中…</div>
+          </div>
+        </div>
     </section>
 
     <!-- Token 用量：7 日柱状图（周五峰值） + 汇总卡 + 模型分布 -->
@@ -279,6 +290,93 @@
             }
           });
         });
+      })();
+    </script>
+    <script>
+      // M4.3: 待审核配方队列（GET /api/lab/recipes?status=pending + 通过/驳回）
+      (function () {
+        var listEl = document.getElementById('pendingList');
+        var hintEl = document.getElementById('labPendingHint');
+
+        function escapeHtml(s) {
+          return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+          });
+        }
+
+        function fmtDate(s) {
+          if (!s) return '';
+          // ISO 字符串取 YYYY-MM-DD HH:MM
+          return String(s).replace('T', ' ').slice(0, 16);
+        }
+
+        function loadPending() {
+          fetch('/api/lab/recipes?status=pending&limit=100')
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (d) {
+              var items = d.items || [];
+              if (items.length === 0) {
+                listEl.innerHTML = '<div class="empty-state-mini">暂无待审核配方</div>';
+                hintEl.textContent = '当前无 UGC 投稿待审';
+                return;
+              }
+              hintEl.textContent = '共 ' + items.length + ' 条 UGC 投稿待审';
+              listEl.innerHTML = items.map(function (r) {
+                return '<div class="pending-item" data-doc-id="' + escapeHtml(r.doc_id) + '">' +
+                  '<div>' +
+                    '<div class="pending-title">' + escapeHtml(r.title || '(未命名)') + '</div>' +
+                    '<div class="pending-meta">' + escapeHtml(r.doc_id) + (r.created_at ? ' · ' + fmtDate(r.created_at) : '') + '</div>' +
+                  '</div>' +
+                  '<div class="pending-actions">' +
+                    '<button class="btn-approve" data-action="approve">通过</button>' +
+                    '<button class="btn-reject" data-action="reject">驳回</button>' +
+                  '</div>' +
+                '</div>';
+              }).join('');
+            })
+            .catch(function (e) {
+              listEl.innerHTML = '<div class="empty-state-mini">加载失败：' + escapeHtml(e.message) + '</div>';
+            });
+        }
+
+        listEl.addEventListener('click', async function (e) {
+          var btn = e.target.closest('button[data-action]');
+          if (!btn) return;
+          var item = btn.closest('.pending-item');
+          var docId = item.getAttribute('data-doc-id');
+          var action = btn.getAttribute('data-action');
+          btn.disabled = true;
+          var original = btn.textContent;
+          btn.textContent = '处理中…';
+          try {
+            if (action === 'approve') {
+              var resp = await fetch('/api/lab/recipes/' + encodeURIComponent(docId) + '/approve', { method: 'POST' });
+              if (!resp.ok) {
+                var err = await resp.json().catch(function () { return { detail: resp.statusText }; });
+                throw new Error(err.detail || 'HTTP ' + resp.status);
+              }
+            } else if (action === 'reject') {
+              var reason = prompt('驳回理由：');
+              if (reason === null) { btn.disabled = false; btn.textContent = original; return; }
+              var resp2 = await fetch('/api/lab/recipes/' + encodeURIComponent(docId) + '/reject', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason: reason })
+              });
+              if (!resp2.ok) {
+                var err2 = await resp2.json().catch(function () { return { detail: resp2.statusText }; });
+                throw new Error(err2.detail || 'HTTP ' + resp2.status);
+              }
+            }
+            await loadPending();  // 刷新列表
+          } catch (e) {
+            alert('操作失败：' + e.message);
+            btn.disabled = false;
+            btn.textContent = original;
+          }
+        });
+
+        loadPending();
       })();
     </script>
 </body>

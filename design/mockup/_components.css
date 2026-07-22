@@ -678,3 +678,23 @@ html { scroll-behavior: smooth; }
 .editor-status-banner.pending { background: var(--gold-100); color: var(--gold-700); }
 .editor-status-banner.published { background: rgba(46, 125, 91, 0.12); color: var(--success); }
 .editor-status-banner.rejected { background: rgba(179, 38, 30, 0.1); color: var(--danger); }
+
+/* === M4.3 待审核队列 === */
+.lab-pending-queue { margin-top: var(--sp-4); padding: var(--sp-4); background: var(--ink-50); border: 1px dashed var(--ink-200); border-radius: var(--r-md); }
+.pending-list { display: flex; flex-direction: column; gap: var(--sp-2); }
+.pending-item { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-2) var(--sp-3); background: #fff; border: 1px solid var(--ink-200); border-radius: var(--r-sm); }
+.pending-item .pending-title { font-family: var(--font-serif); font-size: var(--fs-sm); color: var(--ink-900); font-weight: 600; }
+.pending-item .pending-meta { font-size: var(--fs-xs); color: var(--ink-400); font-family: var(--font-mono); }
+.pending-item .pending-actions { display: flex; gap: var(--sp-1); }
+.pending-item .pending-actions button { padding: 2px 8px; font-size: var(--fs-xs); border-radius: var(--r-sm); cursor: pointer; border: 1px solid transparent; }
+.pending-item .btn-approve { background: var(--success); color: #fff; }
+.pending-item .btn-reject { background: transparent; color: var(--danger); border-color: var(--danger); }
+.empty-state-mini { text-align: center; padding: var(--sp-4); color: var(--ink-400); font-size: var(--fs-sm); }
+
+/* === M4.3 变体列表 === */
+.doc-variants { margin: var(--sp-8) 0; }
+.variant-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--sp-3); }
+.variant-card { background: #fff; border: 1px solid var(--ink-200); border-radius: var(--r-md); padding: var(--sp-3); transition: box-shadow var(--duration-fast); }
+.variant-card:hover { box-shadow: var(--shadow-md); }
+.variant-card .variant-title { font-family: var(--font-serif); font-size: var(--fs-base); color: var(--brand-700); font-weight: 600; margin-bottom: var(--sp-1); }
+.variant-card .variant-note { font-size: var(--fs-xs); color: var(--ink-600); font-style: italic; }

@@ -33,6 +33,10 @@
     .doc-content p strong { color: var(--ink-900); }
     .doc-content em { color: var(--brand-700); font-style: normal; }
     .chunk-num { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--gold-700); background: var(--gold-100); padding: 2px var(--sp-2); border-radius: var(--r-full); }
+    /* M4.3: 变体区标题（与 dashboard 一致的章节标题样式） */
+    .section-title { font-family: var(--font-serif); font-size: var(--fs-xl); color: var(--ink-900); margin: var(--sp-8) 0 var(--sp-4); display: flex; align-items: center; gap: var(--sp-3); padding-bottom: 0; border-bottom: none; }
+    .section-title::before { content: ""; width: 4px; height: 1.1em; background: var(--gold-500); border-radius: var(--r-sm); }
+    .section-title .hint { font-family: var(--font-sans); font-size: var(--fs-xs); color: var(--ink-400); font-weight: 400; }
   </style>
 </head>
 <body data-page="docs">
@@ -103,6 +107,14 @@
         <p>加拿大威士忌（Canadian Whisky）常以黑麦为主调，允许添加少量其他谷物调和，须在木桶陈酿<strong>至少 3 年</strong>。风格轻盈、顺滑、略带黑麦香料感。</p>
         <p><strong>品鉴要点</strong>：观色（琥珀深浅暗示桶龄）→ 闻香（前调果香、后调木质）→ 入口（酒体轻重与油脂感）→ 余韵（长短与回甘）。建议室温纯饮，加少量纯净水可释放更多花果香气。</p>
       </section>
+
+    <!-- M4.3: 配方变体区 -->
+    <section class="doc-variants" id="docVariants" hidden>
+      <h2 class="section-title">配方变体 <span class="hint">· 基于本配方的创作</span></h2>
+      <div class="variant-list" id="variantList">
+        <!-- JS 动态填充 -->
+      </div>
+    </section>
     </main>
   </div>
 
@@ -128,6 +140,39 @@
       sections.forEach(function (s) { observer.observe(s); });
       // 默认激活首章
       if (links[0]) links[0].classList.add('active');
+    })();
+  </script>
+  <!-- M4.3: 配方变体加载（GET /api/lab/recipes/{doc_id}/variants） -->
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var docId = params.get('doc_id');
+      if (!docId) return;  // 无 doc_id 参数时不展示变体区
+      var box = document.getElementById('docVariants');
+      var list = document.getElementById('variantList');
+
+      fetch('/api/lab/recipes/' + encodeURIComponent(docId) + '/variants')
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (d) {
+          var items = d.items || [];
+          if (items.length === 0) return;  // 无变体，保持隐藏
+          box.hidden = false;
+          list.innerHTML = items.map(function (v) {
+            var title = escapeHtml(v.variant_title || '(已删除)');
+            var note = v.variant_note ? escapeHtml(v.variant_note) : '';
+            var noteHtml = note ? '<div class="variant-note">' + note + '</div>' : '';
+            return '<a class="variant-card" href="doc-detail.html?doc_id=' + encodeURIComponent(v.variant_doc_id) + '">' +
+              '<div class="variant-title">' + title + '</div>' + noteHtml +
+              '</a>';
+          }).join('');
+        })
+        .catch(function () { /* 接口不可用时静默隐藏变体区 */ });
+
+      function escapeHtml(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+      }
     })();
   </script>
   <!-- 共享导航 + chunk 高亮逻辑（解析 ?chunk=N 跳转高亮） -->
