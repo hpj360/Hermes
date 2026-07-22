@@ -1,6 +1,6 @@
 {
   "name": "hermes",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "main_repo_path": "/workspace/OpenClaw/openclaw-main",
   "inherited_from": [
     "/workspace/.trae/skills",
@@ -10,23 +10,32 @@
     "agent-browser",
     "aipm-news-digest",
     "brave-search",
+    "component-library-selector",
+    "design-spec-skill-creator",
     "douyin-reader",
+    "figma-reader",
     "find-skills",
     "frontend-design",
     "github",
+    "liquid-glass-builder",
     "loop-engineering",
     "notion",
     "obsidian",
     "product-manager",
     "product-manager-skills",
+    "prototype-validator",
     "self-improving-agent",
     "skill-creator",
     "skill-manager",
     "skill-vetter",
     "stock-analysis",
+    "storybook-chromatic",
+    "style-dictionary-sync",
     "summarize",
     "tavily-search",
     "trello",
+    "ui-design-system",
+    "ui-review-checklist",
     "weather",
     "wechat-reader",
     "youtube-watcher"
@@ -40,7 +49,15 @@
     "memory-model.md",
     "skill-and-loop.md",
     "skill-sync-management.md",
+    "ui-design-stack.md",
     "working-principles.md"
   ],
-  "notes": "Skills and knowledge documents are copied from the main repository. Each skill may have its own runtime dependencies; check the individual SKILL.md files. Built-in capabilities: Skill Sync (Local mode) via `hermes skill-sync --help`; Loop Engineering with Sub-Agent orchestration (Fan-out/Fan-in), builder-checker pattern, 7 stop rules, tool-level isolation, L1/L2/L3 staged autonomy, and OpenClaw Gateway integration via `hermes loop --help`."
+  "ui_design_layer": {
+    "L1_foundation": ["figma-reader", "ui-design-system", "ui-review-checklist"],
+    "L2_sync_select": ["style-dictionary-sync", "component-library-selector"],
+    "L3_meta": ["design-spec-skill-creator"],
+    "L4_validate_close_loop": ["prototype-validator", "storybook-chromatic"],
+    "L5_differentiation": ["liquid-glass-builder"]
+  },
+  "notes": "Skills and knowledge documents are copied from the main repository. Each skill may have its own runtime dependencies; check the individual SKILL.md files. Built-in capabilities: Skill Sync (Local mode) via `hermes skill-sync --help`; Loop Engineering with Sub-Agent orchestration (Fan-out/Fan-in), builder-checker pattern, 7 stop rules, tool-level isolation, L1/L2/L3 staged autonomy, and OpenClaw Gateway integration via `hermes loop --help`. v0.4.0 adds 9 UI/design skills in 5 layers: figma-reader (L1), ui-design-system (L1), ui-review-checklist (L1), style-dictionary-sync (L2), component-library-selector (L2), design-spec-skill-creator (L3), prototype-validator (L4), storybook-chromatic (L4), liquid-glass-builder (L5). See knowledge/ui-design-stack.md for the design rationale."
 }
