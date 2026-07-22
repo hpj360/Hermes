@@ -1,0 +1,157 @@
+/* Hermes KB 组件样式 —— 复用组件，各页面引用 _tokens.css 后引入本文件 */
+
+/* === 按钮 === */
+.btn-primary, .btn-secondary, .btn-ghost, .btn-danger {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  font-family: var(--font-sans); font-size: var(--fs-sm); font-weight: 500;
+  padding: var(--sp-2) var(--sp-4); border-radius: var(--r-md);
+  border: 1px solid transparent; cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+.btn-primary { background: var(--brand-700); color: #fff; }
+.btn-primary:hover { background: var(--brand-500); color: #fff; }
+.btn-secondary { background: var(--gold-500); color: var(--ink-900); }
+.btn-secondary:hover { background: var(--gold-700); color: #fff; }
+.btn-ghost { background: transparent; color: var(--ink-600); border-color: var(--ink-200); }
+.btn-ghost:hover { color: var(--brand-700); border-color: var(--brand-700); }
+.btn-danger { background: transparent; color: var(--danger); border-color: var(--danger); }
+.btn-danger:hover { background: var(--danger); color: #fff; }
+.btn-primary:disabled, .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* === 卡片 === */
+.card {
+  background: #fff; border: 1px solid var(--ink-200);
+  border-radius: var(--r-lg); padding: var(--sp-6);
+  box-shadow: var(--shadow-sm); transition: box-shadow var(--duration-base);
+}
+.card:hover { box-shadow: var(--shadow-md); }
+.card-title { font-family: var(--font-serif); font-size: var(--fs-lg); margin-bottom: var(--sp-2); }
+
+/* === 输入框 === */
+.input, .select, .textarea {
+  font-family: var(--font-sans); font-size: var(--fs-sm);
+  padding: var(--sp-2) var(--sp-3); border: 1px solid var(--ink-200);
+  border-radius: var(--r-md); background: #fff; color: var(--ink-900);
+  transition: border-color var(--duration-fast);
+  width: 100%;
+}
+.input:focus, .select:focus, .textarea:focus {
+  outline: none; border-color: var(--brand-700);
+  box-shadow: 0 0 0 3px var(--brand-100);
+}
+.textarea { min-height: 120px; resize: vertical; }
+
+/* === 引用列表（05 核心原则：gold-100 背景 + gold-500 左边框 + 不折叠 + brand-700 编号） === */
+.citation-list {
+  background: var(--gold-100);
+  border-left: 3px solid var(--gold-500);
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  padding: var(--sp-3) var(--sp-4);
+  margin: var(--sp-4) 0;
+}
+.citation-list .cite-title {
+  font-size: var(--fs-xs); color: var(--gold-700);
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: var(--sp-2);
+}
+.citation-item { display: flex; gap: var(--sp-3); padding: var(--sp-2) 0; border-bottom: 1px solid var(--gold-300); }
+.citation-item:last-child { border-bottom: none; }
+.citation-item .cite-num {
+  font-family: var(--font-serif); font-weight: 600; color: var(--brand-700);
+  min-width: 1.5rem;
+}
+.citation-item .cite-snippet { font-size: var(--fs-sm); color: var(--ink-600); flex: 1; }
+.citation-item a { color: var(--ink-900); }
+.citation-item a:hover { color: var(--brand-700); text-decoration: underline; }
+
+/* === chunk 高亮动画（05 场景 A 硬约束：2000ms 淡金 + smooth scroll） === */
+@keyframes highlightFade {
+  0% { background: var(--highlight); }
+  100% { background: var(--highlight-fade); }
+}
+.chunk-highlight {
+  animation: highlightFade var(--duration-highlight) var(--ease-out) forwards;
+  border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-2);
+  scroll-margin-top: calc(var(--nav-height) + var(--sp-4));
+}
+html { scroll-behavior: smooth; }
+
+/* === 标签 chip === */
+.tag {
+  display: inline-flex; align-items: center; gap: var(--sp-1);
+  font-size: var(--fs-xs); padding: 2px var(--sp-2);
+  border-radius: var(--r-full); color: #fff;
+}
+.tag-gold { background: var(--gold-500); color: var(--ink-900); }
+.tag-brand { background: var(--brand-700); }
+.tag-info { background: var(--info); }
+.tag-success { background: var(--success); }
+.tag-warning { background: var(--warning); }
+.tag-danger { background: var(--danger); }
+.tag-ink { background: var(--ink-400); }
+.tag-outline { background: transparent; border: 1px solid var(--ink-200); color: var(--ink-600); }
+
+/* === 表格 === */
+.table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.table thead { background: var(--ink-100); }
+.table th {
+  text-align: left; font-size: var(--fs-xs); text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--ink-400);
+  padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--ink-200);
+}
+.table td { padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--ink-100); }
+.table tbody tr:hover { background: var(--ink-50); }
+
+/* === Modal === */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(31, 28, 24, 0.6);
+  display: none; align-items: center; justify-content: center;
+  z-index: 100; padding: var(--sp-4);
+}
+.modal-overlay.active { display: flex; }
+.modal {
+  background: #fff; border-radius: var(--r-lg);
+  max-width: 480px; width: 100%; padding: var(--sp-8);
+  box-shadow: var(--shadow-lg); max-height: 90vh; overflow-y: auto;
+}
+.modal-title { font-family: var(--font-serif); font-size: var(--fs-xl); margin-bottom: var(--sp-4); }
+
+/* === 骨架屏 === */
+.skeleton {
+  background: linear-gradient(90deg, var(--ink-100) 25%, var(--ink-50) 50%, var(--ink-100) 75%);
+  background-size: 200% 100%; animation: shimmer 1.5s infinite;
+  border-radius: var(--r-sm);
+}
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* === Toast === */
+.toast {
+  position: fixed; bottom: var(--sp-8); right: var(--sp-8);
+  background: var(--ink-900); color: #fff;
+  padding: var(--sp-3) var(--sp-6); border-radius: var(--r-md);
+  font-size: var(--fs-sm); box-shadow: var(--shadow-lg);
+  opacity: 0; transform: translateY(20px);
+  transition: all var(--duration-base); z-index: 200;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+
+/* === 空状态 === */
+.empty-state { text-align: center; padding: var(--sp-16) var(--sp-6); color: var(--ink-400); }
+.empty-state .empty-icon { font-size: var(--fs-3xl); margin-bottom: var(--sp-3); }
+.empty-state .empty-text { font-size: var(--fs-sm); }
+
+/* === 低置信标记 === */
+.low-confidence { color: var(--warning); font-size: var(--fs-xs); }
+
+/* === 导航栏 === */
+.nav {
+  height: var(--nav-height); background: #fff; border-bottom: 1px solid var(--ink-200);
+  position: sticky; top: 0; z-index: 50; display: flex; align-items: center;
+}
+.nav .container { display: flex; align-items: center; gap: var(--sp-6); width: 100%; }
+.nav-brand { font-family: var(--font-serif); font-size: var(--fs-lg); font-weight: 700; color: var(--brand-700); }
+.nav-links { display: flex; gap: var(--sp-4); list-style: none; }
+.nav-links a { color: var(--ink-600); font-size: var(--fs-sm); padding: var(--sp-1) 0; border-bottom: 2px solid transparent; }
+.nav-links a:hover { color: var(--brand-700); }
+.nav-links a.active { color: var(--brand-700); border-bottom-color: var(--gold-500); }
+.nav-actions { margin-left: auto; display: flex; gap: var(--sp-2); }
