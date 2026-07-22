@@ -8,6 +8,7 @@
     { href: 'ask.html', label: '问答', page: 'ask' },
     { href: 'lab.html', label: '实验室', page: 'lab' },
     { href: 'recipes.html', label: '配方', page: 'recipes' },
+    { href: 'recipe-editor.html', label: '创作', page: 'editor' },
     { href: 'docs.html', label: '文档', page: 'docs' },
     { href: 'tags.html', label: '标签', page: 'tags' },
     { href: 'history.html', label: '历史', page: 'history' },

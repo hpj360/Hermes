@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>创作配方 · Hermes KB</title>
+  <!-- 字体：Cormorant Garamond + Crimson Text + Noto Serif SC + JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Noto+Serif+SC:wght@500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="_tokens.css">
+  <link rel="stylesheet" href="_components.css">
+  <style>
+    body { background: linear-gradient(180deg, var(--ink-50) 0%, #fff 260px); }
+    .editor-main { max-width: var(--container); margin: 0 auto; padding: var(--sp-8) var(--sp-6) var(--sp-16); min-height: calc(100vh - var(--nav-height)); }
+    .page-kicker { font-size: var(--fs-xs); letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold-700); margin-bottom: var(--sp-2); }
+    .editor-hero { margin-bottom: var(--sp-6); }
+    .editor-hero .foil-title { font-size: var(--fs-2xl); }
+    .editor-hero .foil-quote { font-size: var(--fs-base); }
+    .editor-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
+    .ingredient-add { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-2); }
+    .ingredient-add input { flex: 1; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--ink-200); border-radius: var(--r-md); font-size: var(--fs-sm); font-family: var(--font-sans); background: #fff; color: var(--ink-900); }
+    .ingredient-add input:focus { outline: none; border-color: var(--brand-500); box-shadow: 0 0 0 3px var(--brand-100); }
+    .ingredient-add .btn-ghost { padding: var(--sp-2) var(--sp-4); }
+    .ingredient-hint { font-size: var(--fs-xs); color: var(--ink-400); font-family: var(--font-sans); margin-top: var(--sp-1); }
+    .editor-result { margin-top: var(--sp-4); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); font-size: var(--fs-sm); display: none; }
+    .editor-result.ok { display: block; background: rgba(46, 125, 91, 0.12); color: var(--success); }
+    .editor-result.err { display: block; background: rgba(179, 38, 30, 0.1); color: var(--danger); }
+    .content-help { font-size: var(--fs-xs); color: var(--ink-400); font-family: var(--font-sans); margin-top: var(--sp-1); }
+    .content-help code { font-family: var(--font-mono); background: var(--ink-100); padding: 1px 4px; border-radius: var(--r-sm); color: var(--gold-700); }
+    @media (max-width: 640px) {
+      .editor-field-row { grid-template-columns: 1fr; }
+      .editor-actions { flex-direction: column; }
+    }
+  </style>
+</head>
+<body data-page="editor">
+  <main class="editor-main">
+    <div class="page-kicker">Lab · 调酒研究室</div>
+
+    <!-- 顶部金箔引导卡片（C 阶段视觉语言） -->
+    <div class="gold-foil-card editor-hero">
+      <div class="foil-title">创作新配方</div>
+      <p class="foil-quote">把你的灵感沉淀为一杯可被检索、可被引用的配方。先存为草稿反复打磨，再提交审核——通过后即可进入实验室匹配与变体创作。</p>
+      <div class="foil-attribution">Hermes KB · UGC 调酒研究室</div>
+    </div>
+
+    <!-- 编辑器表单 -->
+    <form class="recipe-editor" id="editorForm" onsubmit="return false;">
+      <!-- 状态横幅 -->
+      <div class="editor-status-banner draft" id="statusBanner">当前状态：草稿（draft）— 未提交</div>
+
+      <div class="editor-field">
+        <label for="recipeTitle">配方名 *</label>
+        <input type="text" id="recipeTitle" placeholder="如：夏日清风" required>
+      </div>
+
+      <div class="editor-field-row">
+        <div class="editor-field">
+          <label for="recipeBaseSpirit">基酒</label>
+          <select id="recipeBaseSpirit">
+            <option value="gin">金酒 Gin</option>
+            <option value="rum">朗姆酒 Rum</option>
+            <option value="vodka">伏特加 Vodka</option>
+            <option value="tequila">龙舌兰 Tequila</option>
+            <option value="whiskey">威士忌 Whiskey</option>
+            <option value="brandy">白兰地 Brandy</option>
+          </select>
+        </div>
+        <div class="editor-field">
+          <label for="recipeDifficulty">难度</label>
+          <select id="recipeDifficulty">
+            <option value="easy">简单</option>
+            <option value="medium">中等</option>
+            <option value="hard">困难</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="editor-field">
+        <label for="recipeSeason">季节</label>
+        <select id="recipeSeason">
+          <option value="">不限</option>
+          <option value="spring">春季</option>
+          <option value="summer">夏季</option>
+          <option value="autumn">秋季</option>
+          <option value="winter">冬季</option>
+        </select>
+      </div>
+
+      <div class="editor-field">
+        <label>材料</label>
+        <div class="ingredient-add">
+          <input type="text" id="ingredientInput" placeholder="输入材料名后回车或点击添加（如：金酒 50ml）">
+          <button type="button" class="btn-ghost" onclick="addIngredient()">添加</button>
+        </div>
+        <div class="editor-ingredients" id="selectedIngredients">
+          <span style="color:var(--ink-400);font-size:var(--fs-xs);font-family:var(--font-sans);">未选择材料</span>
+        </div>
+        <div class="ingredient-hint">回车快速添加；点击 chip 上的 × 移除。</div>
+      </div>
+
+      <div class="editor-field">
+        <label for="recipeContent">配方正文（Markdown）*</label>
+        <textarea id="recipeContent" placeholder="# 配方名&#10;&#10;## 配方&#10;- 金酒 50ml&#10;- 柠檬汁 20ml&#10;- 糖浆 10ml&#10;&#10;## 步骤&#10;1. 加冰摇匀&#10;2. 滤入冰杯&#10;3. 柠檬皮装饰"></textarea>
+        <div class="content-help">可在正文首行使用 frontmatter 注解材料：<code>&lt;!-- ingredients: 金酒|柠檬汁|糖浆 --&gt;</code></div>
+      </div>
+
+      <div class="editor-actions" id="editorActions">
+        <!-- JS 根据 new/edit 模式动态渲染按钮 -->
+      </div>
+
+      <div class="editor-result" id="saveResult"></div>
+    </form>
+  </main>
+
+  <script src="_nav.js"></script>
+  <script>
+    // === M4.3 配方编辑器逻辑 ===
+    var state = {
+      docId: null,          // 编辑模式下的配方 ID
+      status: 'draft',      // draft / pending / published / rejected
+      ingredients: []       // 已选材料列表（有序）
+    };
+
+    var STATUS_TEXT = {
+      draft: '草稿（draft）— 未提交',
+      pending: '待审核（pending）— 等待管理员审核',
+      published: '已发布（published）— 审核通过，进入实验室',
+      rejected: '已驳回（rejected）— 请修改后重新提交'
+    };
+
+    // ---- URL 参数：编辑模式 ----
+    var urlParams = new URLSearchParams(window.location.search);
+    var docIdParam = urlParams.get('doc_id');
+    if (docIdParam) {
+      state.docId = docIdParam;
+      loadExistingRecipe(docIdParam);
+    }
+
+    renderActions();
+    renderIngredients();
+
+    // 材料输入框回车提交
+    document.getElementById('ingredientInput').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        addIngredient();
+      }
+    });
+
+    // ---- 加载已有配方（编辑模式） ----
+    function loadExistingRecipe(docId) {
+      // 1) 从配方列表拉取元信息（title / season / status）
+      fetch('/api/lab/recipes?limit=500')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var items = d.items || [];
+          var hit = null;
+          for (var i = 0; i < items.length; i++) {
+            if (items[i].doc_id === docId) { hit = items[i]; break; }
+          }
+          if (hit) {
+            document.getElementById('recipeTitle').value = hit.title || '';
+            if (hit.season) document.getElementById('recipeSeason').value = hit.season;
+            state.status = hit.status || 'draft';
+            updateStatusBanner();
+            renderActions();
+          } else {
+            showResult('未找到配方 ' + docId + '，将作为新配方创建。', 'err');
+            state.docId = null;
+            renderActions();
+          }
+        })
+        .catch(function () {
+          showResult('加载配方元信息失败，请检查服务是否可用。', 'err');
+        });
+
+      // 2) 尽力拉取正文 chunks 填充 textarea（需鉴权，失败则静默）
+      fetch('/api/documents/' + encodeURIComponent(docId))
+        .then(function (r) { if (!r.ok) throw new Error('http'); return r.json(); })
+        .then(function (d) {
+          var chunks = d.chunks || [];
+          if (chunks.length > 0) {
+            var text = chunks.map(function (c) { return c.text || ''; }).join('\n\n');
+            if (text.trim()) document.getElementById('recipeContent').value = text;
+          }
+        })
+        .catch(function () { /* 鉴权失败时忽略，保留空白 textarea */ });
+    }
+
+    // ---- 状态横幅 ----
+    function updateStatusBanner() {
+      var banner = document.getElementById('statusBanner');
+      banner.className = 'editor-status-banner ' + state.status;
+      banner.textContent = '当前状态：' + (STATUS_TEXT[state.status] || state.status);
+    }
+
+    // ---- 操作按钮区：新建 vs 编辑 ----
+    function renderActions() {
+      var box = document.getElementById('editorActions');
+      if (state.docId) {
+        // 编辑模式：保存草稿 + 提交审核（仅 draft/rejected 可编辑）
+        var canEdit = (state.status === 'draft' || state.status === 'rejected');
+        box.innerHTML =
+          '<button type="button" class="btn-secondary" onclick="saveRecipe(false)"' + (canEdit ? '' : ' disabled') + '>保存草稿</button>' +
+          '<button type="button" class="btn-primary" onclick="submitForReview()"' + (canEdit ? '' : ' disabled') + '>提交审核</button>';
+      } else {
+        // 新建模式：仅创建草稿
+        box.innerHTML = '<button type="button" class="btn-primary" onclick="saveRecipe(false)">创建草稿</button>';
+      }
+    }
+
+    // ---- 材料管理 ----
+    function addIngredient() {
+      var input = document.getElementById('ingredientInput');
+      var val = input.value.trim();
+      if (!val) return;
+      if (state.ingredients.indexOf(val) >= 0) {
+        input.value = '';
+        return;
+      }
+      state.ingredients.push(val);
+      input.value = '';
+      renderIngredients();
+    }
+
+    function removeIngredient(idx) {
+      state.ingredients.splice(idx, 1);
+      renderIngredients();
+    }
+
+    function renderIngredients() {
+      var box = document.getElementById('selectedIngredients');
+      if (state.ingredients.length === 0) {
+        box.innerHTML = '<span style="color:var(--ink-400);font-size:var(--fs-xs);font-family:var(--font-sans);">未选择材料</span>';
+        return;
+      }
+      box.innerHTML = state.ingredients.map(function (name, idx) {
+        return '<span class="editor-ingredient-chip">' +
+          escapeHtml(name) +
+          '<button type="button" onclick="removeIngredient(' + idx + ')" aria-label="移除">×</button>' +
+        '</span>';
+      }).join('');
+    }
+
+    // ---- 收集表单 ----
+    function collectBody() {
+      var title = document.getElementById('recipeTitle').value.trim();
+      var content = document.getElementById('recipeContent').value.trim();
+      if (!title || !content) {
+        showResult('配方名和正文为必填项。', 'err');
+        return null;
+      }
+      return {
+        title: title,
+        content: content,
+        ingredients: state.ingredients.slice(),
+        base_spirit: document.getElementById('recipeBaseSpirit').value,
+        difficulty: document.getElementById('recipeDifficulty').value,
+        season: document.getElementById('recipeSeason').value || null
+      };
+    }
+
+    // ---- 保存（新建 POST / 编辑 PUT） ----
+    // doSubmit=true 表示保存后立即提交审核
+    function saveRecipe(doSubmit) {
+      var body = collectBody();
+      if (!body) return;
+
+      var url, method, isCreate;
+      if (state.docId) {
+        url = '/api/lab/recipes/' + encodeURIComponent(state.docId);
+        method = 'PUT';
+        isCreate = false;
+      } else {
+        url = '/api/lab/recipes';
+        method = 'POST';
+        isCreate = true;
+      }
+
+      hideResult();
+      fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+        .then(function (r) {
+          if (!r.ok) return r.json().then(function (e) { throw new Error(e.detail || ('HTTP ' + r.status)); });
+          return r.json();
+        })
+        .then(function (d) {
+          if (isCreate && d.doc_id) {
+            state.docId = d.doc_id;
+            // 新建后刷新 URL，便于后续保存/提交
+            try {
+              window.history.replaceState({}, '', 'recipe-editor.html?doc_id=' + encodeURIComponent(d.doc_id));
+            } catch (e) {}
+          }
+          state.status = 'draft';
+          updateStatusBanner();
+          renderActions();
+          if (doSubmit) {
+            submitForReview();
+          } else {
+            showResult('保存成功！配方 ID：' + (d.doc_id || state.docId) + '（草稿）。', 'ok');
+          }
+        })
+        .catch(function (e) {
+          showResult('保存失败：' + e.message, 'err');
+        });
+    }
+
+    // ---- 提交审核（先保存再 submit） ----
+    function submitForReview() {
+      if (!state.docId) {
+        // 新建场景：先创建草稿，再提交
+        saveRecipe(true);
+        return;
+      }
+      // 编辑场景：先 PUT 保存最新内容，再 POST submit
+      var body = collectBody();
+      if (!body) return;
+
+      hideResult();
+      fetch('/api/lab/recipes/' + encodeURIComponent(state.docId), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+        .then(function (r) {
+          if (!r.ok) return r.json().then(function (e) { throw new Error(e.detail || ('HTTP ' + r.status)); });
+          return fetch('/api/lab/recipes/' + encodeURIComponent(state.docId) + '/submit', { method: 'POST' });
+        })
+        .then(function (r) {
+          if (!r.ok) return r.json().then(function (e) { throw new Error(e.detail || ('HTTP ' + r.status)); });
+          return r.json();
+        })
+        .then(function (d) {
+          state.status = 'pending';
+          updateStatusBanner();
+          renderActions();
+          showResult('已提交审核！配方 ID：' + state.docId + '，等待管理员在仪表盘队列中处理。', 'ok');
+        })
+        .catch(function (e) {
+          showResult('提交审核失败：' + e.message, 'err');
+        });
+    }
+
+    // ---- 结果提示 ----
+    function showResult(msg, kind) {
+      var box = document.getElementById('saveResult');
+      box.className = 'editor-result ' + (kind === 'err' ? 'err' : 'ok');
+      box.textContent = msg;
+    }
+    function hideResult() {
+      var box = document.getElementById('saveResult');
+      box.className = 'editor-result';
+      box.textContent = '';
+    }
+
+    // ---- HTML 转义 ----
+    function escapeHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+  </script>
+</body>
+</html>
