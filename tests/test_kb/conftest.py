@@ -36,13 +36,19 @@ def tmp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def client(tmp_db: Path):
-    """FastAPI TestClient。"""
+    """FastAPI TestClient。
+
+    自动确认年龄门，使受保护接口（/api/ask、/api/lab/*）在测试中可直接访问，
+    避免每个测试重复 client.post("/api/age-gate/confirm")。
+    年龄门本身的校验逻辑由 test_age_gate.py 覆盖。
+    """
     from fastapi.testclient import TestClient
 
     from hermes_kb.app import create_app
 
     app = create_app()
     with TestClient(app) as c:
+        c.post("/api/age-gate/confirm", json={"confirmed": True})
         yield c
 
 

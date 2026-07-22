@@ -45,6 +45,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlmodel import select
 
+from hermes_kb.age_gate import (
+    COOKIE_NAME,
+    COOKIE_TTL_DAYS,
+    make_age_cookie_value,
+    require_age_gate,
+    verify_age_cookie,
+)
 from hermes_kb.config import get_settings
 from hermes_kb.database import get_engine, get_session
 from hermes_kb.models import (
@@ -614,14 +621,14 @@ def create_app() -> FastAPI:
     # -----------------------------------------------------------------------
     # 问答
     # -----------------------------------------------------------------------
-    @app.post("/api/ask", dependencies=[Depends(require_auth)])
+    @app.post("/api/ask", dependencies=[Depends(require_auth), Depends(require_age_gate)])
     async def ask(req: AskReq) -> dict[str, Any]:
         if not req.query or not req.query.strip():
             raise HTTPException(status_code=400, detail="query 不能为空")
         result = rag.answer(req.query, top_k=req.top_k)
         return result.to_dict()
 
-    @app.post("/api/ask/stream", dependencies=[Depends(require_auth)])
+    @app.post("/api/ask/stream", dependencies=[Depends(require_auth), Depends(require_age_gate)])
     async def ask_stream(req: AskReq) -> StreamingResponse:
         if not req.query or not req.query.strip():
             raise HTTPException(status_code=400, detail="query 不能为空")
@@ -794,7 +801,16 @@ def create_app() -> FastAPI:
     # 年龄门（M1-08）
     # -----------------------------------------------------------------------
     @app.post("/api/age-gate/confirm")
-    async def age_gate_confirm(req: AgeGateReq) -> dict[str, Any]:
+    async def age_gate_confirm(req: AgeGateReq, response: Response) -> dict[str, Any]:
+        if req.confirmed:
+            response.set_cookie(
+                key=COOKIE_NAME,
+                value=make_age_cookie_value(),
+                max_age=COOKIE_TTL_DAYS * 86400,
+                httponly=True,
+                samesite="strict",
+                secure=False,  # 开发环境 HTTP；生产应通过 reverse proxy
+            )
         return {
             "confirmed": bool(req.confirmed),
             "age_gate_enabled": settings.age_gate_enabled,
@@ -802,9 +818,11 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/api/age-gate/status")
-    async def age_gate_status() -> dict[str, Any]:
+    async def age_gate_status(request: Request) -> dict[str, Any]:
+        confirmed = verify_age_cookie(request.cookies.get(COOKIE_NAME))
         return {
             "age_gate_enabled": settings.age_gate_enabled,
+            "confirmed": confirmed,
             "message": "本站内容含酒类知识，未满 18 岁请勿访问"
             if settings.age_gate_enabled
             else "年龄门未启用",
@@ -813,7 +831,7 @@ def create_app() -> FastAPI:
     # -----------------------------------------------------------------------
     # M3：鸡尾酒实验室
     # -----------------------------------------------------------------------
-    @app.get("/api/lab/match")
+    @app.get("/api/lab/match", dependencies=[Depends(require_age_gate)])
     async def lab_match(ingredients: str = "") -> dict[str, Any]:
         """材料 → 配方匹配。ingredients 为逗号分隔的材料名。"""
         from hermes_kb.ingredients import canonicalize
@@ -836,7 +854,7 @@ def create_app() -> FastAPI:
 
         return result
 
-    @app.get("/api/lab/hot")
+    @app.get("/api/lab/hot", dependencies=[Depends(require_age_gate)])
     async def lab_hot(limit: int = 3, days: int = 30) -> dict[str, Any]:
         """热门配方（按 match_count 降序）。"""
         from hermes_kb.recipe_stats import get_hot_recipes
@@ -846,7 +864,7 @@ def create_app() -> FastAPI:
         items = get_hot_recipes(limit=limit, days=days)
         return {"items": items}
 
-    @app.post("/api/lab/view/{doc_id}")
+    @app.post("/api/lab/view/{doc_id}", dependencies=[Depends(require_age_gate)])
     async def lab_view(doc_id: str) -> dict[str, Any]:
         """查看配方详情时调用，view_count +1。"""
         from hermes_kb.recipe_stats import increment_view_count
@@ -857,7 +875,7 @@ def create_app() -> FastAPI:
     # -----------------------------------------------------------------------
     # M4.1：实验室自动运营层
     # -----------------------------------------------------------------------
-    @app.get("/api/lab/daily")
+    @app.get("/api/lab/daily", dependencies=[Depends(require_age_gate)])
     async def lab_daily() -> dict[str, Any]:
         """每日推荐配方。"""
         from hermes_kb.daily_recipe import daily_recipe
@@ -865,7 +883,7 @@ def create_app() -> FastAPI:
         result = daily_recipe()
         return result or {"title": None, "reason": "empty"}
 
-    @app.get("/api/lab/missing-stats")
+    @app.get("/api/lab/missing-stats", dependencies=[Depends(require_age_gate)])
     async def lab_missing_stats(limit: int = 10) -> dict[str, Any]:
         """缺失材料排行。"""
         from hermes_kb.missing_stats import get_top_missing
@@ -873,7 +891,7 @@ def create_app() -> FastAPI:
         limit = max(1, min(limit, 50))
         return {"items": get_top_missing(limit=limit)}
 
-    @app.post("/api/lab/substitute")
+    @app.post("/api/lab/substitute", dependencies=[Depends(require_age_gate)])
     async def lab_save_substitute(req: dict[str, Any]) -> dict[str, Any]:
         """保存用户自定义替代关系。"""
         from hermes_kb.substitutes import add_user_substitute
@@ -885,7 +903,7 @@ def create_app() -> FastAPI:
         add_user_substitute(canonical, substitute)
         return {"canonical": canonical, "substitute": substitute, "status": "ok"}
 
-    @app.get("/api/lab/dashboard")
+    @app.get("/api/lab/dashboard", dependencies=[Depends(require_age_gate)])
     async def lab_dashboard_endpoint() -> dict[str, Any]:
         """实验室运营看板聚合指标。"""
         from hermes_kb.lab_dashboard import get_lab_dashboard
