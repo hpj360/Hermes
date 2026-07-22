@@ -16,6 +16,7 @@ M1 增强：
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -55,7 +56,14 @@ _INJECTION_RE = re.compile(
     "|".join(re.escape(p) for p in _INJECTION_PATTERNS), re.IGNORECASE
 )
 
-_OUTPUT_LEAK_MARKERS = ("你是 Hermes", "检索片段：", "规则：", "<untrusted_retrieval>")
+_OUTPUT_LEAK_MARKERS = (
+    "你是 Hermes",
+    "检索片段：",
+    "规则：",
+    "<untrusted_retrieval>",
+    "</untrusted_retrieval>",
+    "system prompt",
+)
 _OUTPUT_LEAK_FALLBACK = "抱歉，回答生成异常，请联系管理员。"
 
 _JAILBREAK_NOTICE = "检测到潜在越狱尝试，已拒绝处理。请直接提出知识库相关问题。"
@@ -71,6 +79,18 @@ def _check_output(query: str, answer: str) -> str:
         if marker in answer:
             return _OUTPUT_LEAK_FALLBACK
     return answer
+
+
+def _contains_leak(text: str) -> bool:
+    """检测累积 buffer 中是否出现系统提示词/检索标签等泄露标记（A1-4 滑动窗口用）。
+
+    与 _check_output 不同：返回布尔值而非替换文本，且大小写不敏感，
+    便于流式生成时在每个 chunk 追加后立即判定是否需要中断。
+    """
+    if not isinstance(text, str) or not text:
+        return False
+    lower = text.lower()
+    return any(m.lower() in lower for m in _OUTPUT_LEAK_MARKERS)
 
 
 def _sanitize_query(q: Any) -> str:
@@ -306,18 +326,36 @@ class RAGEngine:
         }
         yield f"data: {json.dumps(meta, ensure_ascii=False)}\n\n"
 
-        # 流式生成
+        # 流式生成 + 滑动窗口泄露检测（A1-4）
+        leak_detected = False
         try:
             async for chunk in self.llm_client.chat_stream(messages):
+                if leak_detected:
+                    break
                 full_answer.append(chunk)
+                # 检测累积 buffer 中是否出现泄露标记
+                if _contains_leak("".join(full_answer)):
+                    leak_detected = True
+                    full_answer.clear()
+                    logging.warning(
+                        "output leak detected during streaming (query=%r)",
+                        query[:80],
+                    )
+                    err = {
+                        "type": "error",
+                        "message": "output policy violation, stream aborted",
+                    }
+                    yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
+                    return
                 yield f"data: {json.dumps({'type': 'delta', 'content': chunk}, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            err = {"type": "error", "message": str(e)}
+        except Exception:
+            logging.exception("streaming error")
+            err = {"type": "error", "message": "stream interrupted"}
             yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
             return
 
-        # 输出泄露检测（流式结束后整体检查）
-        final_answer = _check_output(query, "".join(full_answer))
+        # 流正常结束，无泄露
+        final_answer = "".join(full_answer)
         done = {"type": "done", "latency_ms": int((time.time() - started) * 1000)}
         yield f"data: {json.dumps(done, ensure_ascii=False)}\n\n"
 
