@@ -754,6 +754,50 @@ def create_app() -> FastAPI:
         }
 
     # -----------------------------------------------------------------------
+    # M3：鸡尾酒实验室
+    # -----------------------------------------------------------------------
+    @app.get("/api/lab/match")
+    async def lab_match(ingredients: str = "") -> dict[str, Any]:
+        """材料 → 配方匹配。ingredients 为逗号分隔的材料名。"""
+        from hermes_kb.ingredients import canonicalize
+        from hermes_kb.recipe_match import match_recipes
+        from hermes_kb.recipe_stats import increment_match_count
+
+        if not ingredients or not ingredients.strip():
+            return {"full_match": [], "partial_match": []}
+
+        raw_names = [s.strip() for s in ingredients.split(",") if s.strip()]
+        user_ingredients = {canonicalize(n) for n in raw_names}
+
+        result = match_recipes(user_ingredients)
+
+        for recipe in result["full_match"] + result["partial_match"]:
+            try:
+                increment_match_count(recipe["doc_id"])
+            except Exception:
+                pass
+
+        return result
+
+    @app.get("/api/lab/hot")
+    async def lab_hot(limit: int = 3, days: int = 30) -> dict[str, Any]:
+        """热门配方（按 match_count 降序）。"""
+        from hermes_kb.recipe_stats import get_hot_recipes
+
+        limit = max(1, min(limit, 50))
+        days = max(1, min(days, 365))
+        items = get_hot_recipes(limit=limit, days=days)
+        return {"items": items}
+
+    @app.post("/api/lab/view/{doc_id}")
+    async def lab_view(doc_id: str) -> dict[str, Any]:
+        """查看配方详情时调用，view_count +1。"""
+        from hermes_kb.recipe_stats import increment_view_count
+
+        increment_view_count(doc_id)
+        return {"doc_id": doc_id, "status": "ok"}
+
+    # -----------------------------------------------------------------------
     # 静态文件挂载（单进程部署）
     # -----------------------------------------------------------------------
     web_dist = Path(__file__).resolve().parent.parent.parent / "web" / "dist"

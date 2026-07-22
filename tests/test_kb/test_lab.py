@@ -291,3 +291,73 @@ def test_stats_hot_recipes(seeded_recipes):
     hot = get_hot_recipes(limit=10, days=30)
     assert len(hot) >= 2
     assert hot[0]["match_count"] >= 3
+
+
+def test_api_lab_match(seeded_recipes, client):
+    """GET /api/lab/match 返回匹配结果。"""
+    resp = client.get("/api/lab/match", params={"ingredients": "金酒,味美思,橄榄"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "full_match" in data
+    assert "partial_match" in data
+    titles = [r["title"] for r in data["full_match"]]
+    assert "马天尼 Martini" in titles
+
+
+def test_api_lab_match_empty(client):
+    """空材料返回空结果。"""
+    resp = client.get("/api/lab/match", params={"ingredients": ""})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["full_match"] == []
+    assert data["partial_match"] == []
+
+
+def test_api_lab_match_increments_stats(seeded_recipes, client):
+    """匹配 API 调用后统计计数增加。"""
+    resp = client.get(
+        "/api/lab/match", params={"ingredients": "金酒,味美思,橄榄"}
+    )
+    assert resp.status_code == 200
+    martini = next(
+        r for r in resp.json()["full_match"] if "马天尼" in r["title"]
+    )
+    doc_id = martini["doc_id"]
+
+    from hermes_kb.recipe_stats import get_stats
+
+    stat = get_stats(doc_id)
+    assert stat is not None
+    assert stat["match_count"] >= 1
+
+
+def test_api_lab_hot(seeded_recipes, client):
+    """GET /api/lab/hot 返回热门配方。"""
+    for _ in range(3):
+        client.get(
+            "/api/lab/match", params={"ingredients": "金酒,味美思,橄榄"}
+        )
+
+    resp = client.get("/api/lab/hot", params={"limit": 10, "days": 30})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "items" in data
+    assert len(data["items"]) > 0
+    assert data["items"][0]["match_count"] >= 3
+
+
+def test_api_lab_view(seeded_recipes, client):
+    """POST /api/lab/view/{doc_id} 增加查看计数。"""
+    from hermes_kb.recipe_match import match_recipes
+
+    result = match_recipes({"金酒", "味美思", "橄榄"})
+    doc_id = result["full_match"][0]["doc_id"]
+
+    resp = client.post(f"/api/lab/view/{doc_id}")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+    from hermes_kb.recipe_stats import get_stats
+
+    stat = get_stats(doc_id)
+    assert stat["view_count"] == 1
