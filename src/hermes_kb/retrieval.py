@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -177,20 +178,28 @@ class HybridRetriever:
         return hits
 
     def _vector(self, query: str, k: int) -> list[RetrievalHit]:
-        """向量检索（Python 余弦相似度）。"""
+        """向量检索（Python 余弦相似度，A3-1 优化）。"""
         qvec = self.embedding.embed_one(query)
         if not qvec or all(v == 0.0 for v in qvec):
             return []
         eng = get_engine()
+        settings = get_settings()
+        scan_limit = settings.vector_scan_limit
         try:
             with eng.connect() as conn:
                 rows = conn.execute(
                     sa_text(
-                        "SELECT chunk_rowid, doc_id, vec FROM chunk_vec LIMIT 10000"
-                    )
+                        "SELECT chunk_rowid, doc_id, vec FROM chunk_vec LIMIT :lim"
+                    ),
+                    {"lim": scan_limit},
                 ).fetchall()
         except Exception:
             return []
+        if len(rows) >= scan_limit:
+            logging.warning(
+                "vector scan hit limit (%d); increase KB_VECTOR_SCAN_LIMIT to avoid silent truncation",
+                scan_limit,
+            )
         scored: list[tuple[float, int, str]] = []
         for row in rows:
             rowid = int(row[0])
@@ -203,15 +212,35 @@ class HybridRetriever:
             scored.append((sim, rowid, doc_id))
         scored.sort(key=lambda x: x[0], reverse=True)
         top = scored[:k]
+        if not top:
+            return []
+
+        # 批量查元数据（消除 N+1，A3-1）
+        rowids = [t[1] for t in top]
+        doc_ids = list({t[2] for t in top})
+        chunk_map: dict[int, str] = {}
+        title_map: dict[str, str] = {}
+        try:
+            with get_session() as session:
+                chunks = session.exec(
+                    select(Chunk).where(Chunk.id.in_(rowids))
+                ).all()
+                chunk_map = {c.id: c.text for c in chunks}
+                docs = session.exec(
+                    select(Document).where(Document.doc_id.in_(doc_ids))
+                ).all()
+                title_map = {d.doc_id: d.title for d in docs}
+        except Exception:
+            pass
+
         hits: list[RetrievalHit] = []
         for sim, rowid, doc_id in top:
-            text, title = self._chunk_meta(rowid, doc_id)
             hits.append(
                 RetrievalHit(
                     chunk_rowid=rowid,
                     doc_id=doc_id,
-                    title=title,
-                    text=text,
+                    title=title_map.get(doc_id, doc_id),
+                    text=chunk_map.get(rowid, ""),
                     score=sim,
                     source="vector",
                 )

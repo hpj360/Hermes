@@ -54,6 +54,9 @@ class Settings:
     # 低置信度阈值：RRF score < 此值时返回"未找到"反馈（M1-06）
     min_score_threshold: float = field(default_factory=lambda: float(_env_str("KB_MIN_SCORE", "0.005")))
 
+    # 向量检索扫描上限（A3-1：替代硬编码 LIMIT 10000）
+    vector_scan_limit: int = field(default_factory=lambda: _env_int("KB_VECTOR_SCAN_LIMIT", 50000))
+
     # Embedding Provider（M1-02）
     embedding_dim: int = field(default_factory=lambda: _env_int("KB_EMBEDDING_DIM", 256))
     embedding_provider: str = field(default_factory=lambda: _env_str("KB_EMBEDDING_PROVIDER", "hash"))
