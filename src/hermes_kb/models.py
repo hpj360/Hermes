@@ -110,3 +110,11 @@ class IngredientSubstitute(SQLModel, table=True):
     substitute: str = Field(max_length=64)  # 替代材料名
     source: str = Field(default="preset", max_length=16)  # preset | user
     created_at: datetime = Field(default_factory=_utcnow)
+
+
+class MissingIngredientStats(SQLModel, table=True):
+    """M4.1：缺失材料统计（材料维度，反向优化替代表）。"""
+
+    canonical: str = Field(primary_key=True, max_length=64)
+    missing_count: int = Field(default=0)
+    last_missing_at: datetime | None = Field(default=None)
