@@ -843,6 +843,44 @@ def create_app() -> FastAPI:
         return {"doc_id": doc_id, "status": "ok"}
 
     # -----------------------------------------------------------------------
+    # M4.1：实验室自动运营层
+    # -----------------------------------------------------------------------
+    @app.get("/api/lab/daily")
+    async def lab_daily() -> dict[str, Any]:
+        """每日推荐配方。"""
+        from hermes_kb.daily_recipe import daily_recipe
+
+        result = daily_recipe()
+        return result or {"title": None, "reason": "empty"}
+
+    @app.get("/api/lab/missing-stats")
+    async def lab_missing_stats(limit: int = 10) -> dict[str, Any]:
+        """缺失材料排行。"""
+        from hermes_kb.missing_stats import get_top_missing
+
+        limit = max(1, min(limit, 50))
+        return {"items": get_top_missing(limit=limit)}
+
+    @app.post("/api/lab/substitute")
+    async def lab_save_substitute(req: dict[str, Any]) -> dict[str, Any]:
+        """保存用户自定义替代关系。"""
+        from hermes_kb.substitutes import add_user_substitute
+
+        canonical = (req.get("canonical") or "").strip()
+        substitute = (req.get("substitute") or "").strip()
+        if not canonical or not substitute:
+            raise HTTPException(status_code=400, detail="canonical 和 substitute 必填")
+        add_user_substitute(canonical, substitute)
+        return {"canonical": canonical, "substitute": substitute, "status": "ok"}
+
+    @app.get("/api/lab/dashboard")
+    async def lab_dashboard_endpoint() -> dict[str, Any]:
+        """实验室运营看板聚合指标。"""
+        from hermes_kb.lab_dashboard import get_lab_dashboard
+
+        return get_lab_dashboard()
+
+    # -----------------------------------------------------------------------
     # 静态文件挂载（单进程部署）
     # -----------------------------------------------------------------------
     web_dist = Path(__file__).resolve().parent.parent.parent / "web" / "dist"

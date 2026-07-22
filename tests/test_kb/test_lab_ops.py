@@ -167,3 +167,50 @@ def test_lab_dashboard_aggregation(seeded_recipes_ops):
     assert dashboard["recipe_count"] >= 8
     assert isinstance(dashboard["substitute_coverage"], (int, float))
     assert 0 <= dashboard["substitute_coverage"] <= 1
+
+
+def test_api_lab_daily(seeded_recipes_ops, client):
+    """GET /api/lab/daily 返回每日推荐。"""
+    resp = client.get("/api/lab/daily")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "title" in data
+    assert "doc_id" in data
+    assert data["reason"] in ["season", "hot", "random"]
+
+
+def test_api_lab_missing_stats(seeded_recipes_ops, client):
+    """GET /api/lab/missing-stats 返回缺失排行。"""
+    # 先制造缺失数据
+    client.get("/api/lab/match", params={"ingredients": "金酒,柠檬汁"})
+
+    resp = client.get("/api/lab/missing-stats", params={"limit": 5})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "items" in data
+    assert len(data["items"]) > 0
+    assert "canonical" in data["items"][0]
+    assert "missing_count" in data["items"][0]
+
+
+def test_api_lab_substitute_save(seeded_recipes_ops, client):
+    """POST /api/lab/substitute 保存用户自定义替代。"""
+    resp = client.post(
+        "/api/lab/substitute",
+        json={"canonical": "君度", "substitute": "自制橙皮酒"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+    from hermes_kb.substitutes import get_substitutes
+    assert "自制橙皮酒" in get_substitutes("君度")
+
+
+def test_api_lab_dashboard(seeded_recipes_ops, client):
+    """GET /api/lab/dashboard 返回运营看板。"""
+    resp = client.get("/api/lab/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["recipe_count"] >= 8
+    assert "substitute_coverage" in data
+    assert "daily_recipe" in data
