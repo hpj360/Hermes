@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>低保真原型 · 登录 Modal</title>
+  <link rel="stylesheet" href="./_shared.css">
+</head>
+<body>
+  <nav class="nav">
+    <a class="nav-logo" href="index.html">Hermes KB</a>
+    <ul class="nav-links">
+      <li><a href="index.html">首页</a></li>
+      <li><a href="ask.html">问答</a></li>
+      <li><a href="docs.html">文档</a></li>
+      <li><a href="tags.html">标签</a></li>
+      <li><a href="history.html">历史</a></li>
+      <li><a href="dashboard.html">仪表盘</a></li>
+      <li><a href="audit.html">审计</a></li>
+    </ul>
+    <div class="nav-actions">
+      <a class="btn-wire" href="_modal-import.html">导入</a>
+      <a class="btn-wire" href="export.html">导出</a>
+      <a class="btn-wire" href="#">登录</a>
+    </div>
+  </nav>
+
+  <div class="wireframe">
+    <p>静态展示 modal：<span class="annot">[显示 modal]</span></p>
+
+    <div style="background:rgba(0,0,0,0.4);padding:60px 24px;margin-top:16px;">
+      <span class="annot">居中卡片</span>
+      <div class="box" style="max-width:360px;margin:40px auto;padding:32px;background:var(--w-bg);">
+        <div class="box-text mid" style="height:20px;"></div>
+        <!-- 输入框占位 -->
+        <div class="label" style="margin-top:24px;">账号占位</div>
+        <div class="box" style="padding:10px;margin-top:6px;"><div class="box-text long" style="margin:0;"></div></div>
+        <div class="label" style="margin-top:16px;">密码占位</div>
+        <div class="box" style="padding:10px;margin-top:6px;"><div class="box-text long" style="margin:0;"></div></div>
+        <!-- 复选框占位 -->
+        <div style="display:flex;align-items:center;gap:8px;margin-top:16px;">
+          <span class="box" style="width:14px;height:14px;"></span>
+          <div class="box-text mid" style="margin:0;"></div>
+        </div>
+        <!-- 错误提示占位 -->
+        <span class="annot" style="margin-top:16px;display:block;">错误提示占位</span>
+        <div class="box-text short" style="margin-top:6px;"></div>
+        <a class="btn-wire" href="index.html" style="display:block;margin-top:24px;text-align:center;">[登录按钮占位]</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

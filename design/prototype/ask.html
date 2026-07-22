@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>低保真原型 · 问答</title>
+  <link rel="stylesheet" href="./_shared.css">
+</head>
+<body>
+  <nav class="nav">
+    <a class="nav-logo" href="index.html">Hermes KB</a>
+    <ul class="nav-links">
+      <li><a href="index.html">首页</a></li>
+      <li><a class="active" href="ask.html">问答</a></li>
+      <li><a href="docs.html">文档</a></li>
+      <li><a href="tags.html">标签</a></li>
+      <li><a href="history.html">历史</a></li>
+      <li><a href="dashboard.html">仪表盘</a></li>
+      <li><a href="audit.html">审计</a></li>
+    </ul>
+    <div class="nav-actions">
+      <a class="btn-wire" href="_modal-import.html">导入</a>
+      <a class="btn-wire" href="export.html">导出</a>
+      <a class="btn-wire" href="_modal-login.html">登录</a>
+    </div>
+  </nav>
+
+  <div class="wireframe">
+    <!-- 示例问题区 -->
+    <span class="annot">示例问题 · 3 个按钮占位</span>
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+      <a class="btn-wire" href="#">[示例问题占位]</a>
+      <a class="btn-wire" href="#">[示例问题占位]</a>
+      <a class="btn-wire" href="#">[示例问题占位]</a>
+    </div>
+
+    <!-- 对话区 -->
+    <h2 style="margin-top:32px;">对话区占位</h2>
+    <span class="annot">对话区 · 用户气泡 + AI 气泡 + 引用列表</span>
+    <div style="margin-top:8px;">
+      <!-- 用户气泡 -->
+      <div class="box" style="padding:12px;margin-left:25%;margin-bottom:12px;">
+        <div class="label">用户气泡</div>
+        <div class="box-text long" style="margin-top:6px;"></div>
+        <div class="box-text short"></div>
+      </div>
+      <!-- AI 气泡 -->
+      <div class="box" style="padding:12px;margin-right:25%;margin-bottom:12px;">
+        <div class="label">AI 回答气泡</div>
+        <div class="box-text long" style="margin-top:6px;"></div>
+        <div class="box-text long"></div>
+        <div class="box-text long"></div>
+        <div class="box-text mid"></div>
+        <!-- 引用列表 3 条 -->
+        <div style="margin-top:12px;border-top:1px dashed var(--w-border);padding-top:12px;">
+          <div class="label">引用列表 · 3 条 · 不折叠</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+            <span class="box" style="width:18px;height:18px;border-radius:50%;"></span>
+            <div class="box-text long" style="margin:0;"></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+            <span class="box" style="width:18px;height:18px;border-radius:50%;"></span>
+            <div class="box-text long" style="margin:0;"></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+            <span class="box" style="width:18px;height:18px;border-radius:50%;"></span>
+            <div class="box-text long" style="margin:0;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 输入框 -->
+    <span class="annot">输入框 · 底部固定</span>
+    <div class="box" style="padding:12px;margin-top:16px;display:flex;gap:8px;align-items:center;">
+      <div class="box-text long" style="margin:0;flex:1;"></div>
+      <a class="btn-wire" href="#">[发送]</a>
+    </div>
+  </div>
+</body>
+</html>

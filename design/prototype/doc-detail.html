@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>低保真原型 · 文档详情</title>
+  <link rel="stylesheet" href="./_shared.css">
+</head>
+<body>
+  <nav class="nav">
+    <a class="nav-logo" href="index.html">Hermes KB</a>
+    <ul class="nav-links">
+      <li><a href="index.html">首页</a></li>
+      <li><a href="ask.html">问答</a></li>
+      <li><a class="active" href="docs.html">文档</a></li>
+      <li><a href="tags.html">标签</a></li>
+      <li><a href="history.html">历史</a></li>
+      <li><a href="dashboard.html">仪表盘</a></li>
+      <li><a href="audit.html">审计</a></li>
+    </ul>
+    <div class="nav-actions">
+      <a class="btn-wire" href="_modal-import.html">导入</a>
+      <a class="btn-wire" href="export.html">导出</a>
+      <a class="btn-wire" href="_modal-login.html">登录</a>
+    </div>
+  </nav>
+
+  <div class="wireframe">
+    <div style="display:grid;grid-template-columns:300px 1fr;gap:24px;">
+      <!-- 左目录区 -->
+      <div>
+        <span class="annot">左目录 300px</span>
+        <div class="box" style="padding:16px;margin-top:8px;">
+          <div class="label">文档元信息</div>
+          <div class="box-text mid" style="margin-top:8px;"></div>
+          <div class="box-text short"></div>
+          <div class="box-text short"></div>
+          <div style="margin-top:16px;border-top:1px dashed var(--w-border);padding-top:12px;">
+            <div class="label">章节目录 · 5 条</div>
+            <div class="box-text long" style="margin-top:8px;"></div>
+            <div class="box-text long"></div>
+            <div class="box-text long"></div>
+            <div class="box-text long"></div>
+            <div class="box-text long"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右全文区 -->
+      <div>
+        <span class="annot">右全文区 · 5 个 chunk 占位</span>
+        <div style="margin-top:8px;">
+          <div class="box" id="chunk-1" style="padding:16px;margin-bottom:12px;">
+            <div class="label">chunk 1</div>
+            <div class="box-text long" style="margin-top:8px;"></div>
+            <div class="box-text long"></div>
+            <div class="box-text long"></div>
+            <div class="box-text mid"></div>
+          </div>
+          <div class="box" id="chunk-2" style="padding:16px;margin-bottom:12px;">
+            <div class="label">chunk 2</div>
+            <div class="box-text long" style="margin-top:8px;"></div>
+            <div class="box-text long"></div>
+            <div class="box-text mid"></div>
+          </div>
+          <div class="box" id="chunk-3" style="padding:16px;margin-bottom:12px;">
+            <div class="label">chunk 3</div>
+            <div class="box-text long" style="margin-top:8px;"></div>
+            <div class="box-text long"></div>
+            <div class="box-text long"></div>
+            <div class="box-text short"></div>
+          </div>
+          <div class="box" id="chunk-4" style="padding:16px;margin-bottom:12px;">
+            <div class="label">chunk 4</div>
+            <div class="box-text long" style="margin-top:8px;"></div>
+            <div class="box-text mid"></div>
+          </div>
+          <div class="box" id="chunk-5" style="padding:16px;margin-bottom:12px;">
+            <div class="label">chunk 5</div>
+            <div class="box-text long" style="margin-top:8px;"></div>
+            <div class="box-text long"></div>
+            <div class="box-text long"></div>
+          </div>
+        </div>
+
+        <!-- 操作按钮区 -->
+        <span class="annot">操作按钮区</span>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <a class="btn-wire" href="ask.html">[基于此文档提问]</a>
+          <a class="btn-wire" href="#">[编辑]</a>
+          <a class="btn-wire" href="audit.html">[审计]</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

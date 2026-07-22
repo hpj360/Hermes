@@ -1,0 +1,125 @@
+/* Hermes KB 低保真原型共享样式
+ * 严格灰阶 · 系统无衬线 · 占位块表达信息架构
+ * 禁止任何彩色 hex（仅本文件 5 个灰阶值 + rgba(0,0,0,0.4) 遮罩）
+ */
+:root {
+  --w-bg: #fafafa;
+  --w-border: #ddd;
+  --w-text: #333;
+  --w-muted: #999;
+  --w-fill: #eee;
+}
+
+* {
+  color: var(--w-text);
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Helvetica Neue", Arial;
+  background: var(--w-bg);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* 页面容器 */
+.wireframe {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* 顶部导航栏 */
+.nav {
+  background: var(--w-fill);
+  border-bottom: 1px solid var(--w-border);
+  padding: 10px 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.nav-logo {
+  font-weight: 700;
+  margin-right: 16px;
+  text-decoration: none;
+}
+.nav-links {
+  display: flex;
+  gap: 14px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+}
+.nav-links a {
+  text-decoration: none;
+  padding: 4px 0;
+  border-bottom: 2px solid transparent;
+}
+.nav-links a.active {
+  border-bottom: 2px solid var(--w-text);
+}
+.nav-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* 占位块 */
+.box {
+  background: var(--w-fill);
+  border: 1px solid var(--w-border);
+  border-radius: 4px;
+}
+.box-img {
+  background: var(--w-fill);
+  border: 1px solid var(--w-border);
+  border-radius: 4px;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--w-muted);
+}
+.box-text {
+  height: 12px;
+  background: linear-gradient(90deg, var(--w-fill) 0%, #f4f4f4 100%);
+  border-radius: 3px;
+  margin: 6px 0;
+}
+.box-text.short { width: 40%; }
+.box-text.mid { width: 65%; }
+.box-text.long { width: 100%; }
+
+/* 小灰字标签 */
+.label {
+  font-size: 11px;
+  color: var(--w-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* 线框按钮 */
+.btn-wire {
+  display: inline-block;
+  padding: 6px 12px;
+  border: 1px solid var(--w-text);
+  border-radius: 3px;
+  text-decoration: none;
+  font-size: 13px;
+  background: var(--w-bg);
+}
+.btn-wire.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* 设计标注 */
+.annot {
+  border-bottom: 1px dashed var(--w-muted);
+  font-size: 11px;
+  color: var(--w-muted);
+  font-style: italic;
+  display: inline-block;
+  padding-bottom: 1px;
+}

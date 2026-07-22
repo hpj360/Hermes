@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>低保真原型 · 导入 Modal</title>
+  <link rel="stylesheet" href="./_shared.css">
+</head>
+<body>
+  <nav class="nav">
+    <a class="nav-logo" href="index.html">Hermes KB</a>
+    <ul class="nav-links">
+      <li><a href="index.html">首页</a></li>
+      <li><a href="ask.html">问答</a></li>
+      <li><a href="docs.html">文档</a></li>
+      <li><a href="tags.html">标签</a></li>
+      <li><a href="history.html">历史</a></li>
+      <li><a href="dashboard.html">仪表盘</a></li>
+      <li><a href="audit.html">审计</a></li>
+    </ul>
+    <div class="nav-actions">
+      <a class="btn-wire" href="#">导入</a>
+      <a class="btn-wire" href="export.html">导出</a>
+      <a class="btn-wire" href="_modal-login.html">登录</a>
+    </div>
+  </nav>
+
+  <div class="wireframe">
+    <p>静态展示 modal：<span class="annot">[显示 modal]</span></p>
+
+    <div style="background:rgba(0,0,0,0.4);padding:60px 24px;margin-top:16px;">
+      <span class="annot">居中大卡片</span>
+      <div class="box" style="max-width:560px;margin:40px auto;padding:32px;background:var(--w-bg);">
+        <!-- 标题 -->
+        <div class="box-text mid" style="height:20px;"></div>
+        <!-- 3 个 tab 占位 -->
+        <div style="display:flex;gap:8px;margin-top:24px;border-bottom:1px solid var(--w-border);">
+          <a class="box" href="#" style="padding:8px 16px;border-bottom:2px solid var(--w-text);"><span class="label">tab 1</span></a>
+          <a class="box" href="#" style="padding:8px 16px;border:none;"><span class="label">tab 2</span></a>
+          <a class="box" href="#" style="padding:8px 16px;border:none;"><span class="label">tab 3</span></a>
+        </div>
+        <!-- 内容区占位 -->
+        <span class="annot" style="margin-top:16px;display:block;">内容区占位</span>
+        <div class="box" style="padding:24px;margin-top:8px;height:120px;display:flex;align-items:center;justify-content:center;">
+          <span class="label">拖拽上传区域占位</span>
+        </div>
+        <div class="box-text long" style="margin-top:12px;"></div>
+        <div class="box-text mid"></div>
+        <!-- 底部 2 按钮 -->
+        <div style="display:flex;gap:12px;margin-top:24px;justify-content:flex-end;">
+          <a class="btn-wire" href="#">[取消]</a>
+          <a class="btn-wire" href="docs.html">[确认导入]</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

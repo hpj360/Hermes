@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>低保真原型 · 仪表盘</title>
+  <link rel="stylesheet" href="./_shared.css">
+</head>
+<body>
+  <nav class="nav">
+    <a class="nav-logo" href="index.html">Hermes KB</a>
+    <ul class="nav-links">
+      <li><a href="index.html">首页</a></li>
+      <li><a href="ask.html">问答</a></li>
+      <li><a href="docs.html">文档</a></li>
+      <li><a href="tags.html">标签</a></li>
+      <li><a href="history.html">历史</a></li>
+      <li><a class="active" href="dashboard.html">仪表盘</a></li>
+      <li><a href="audit.html">审计</a></li>
+    </ul>
+    <div class="nav-actions">
+      <a class="btn-wire" href="_modal-import.html">导入</a>
+      <a class="btn-wire" href="export.html">导出</a>
+      <a class="btn-wire" href="_modal-login.html">登录</a>
+    </div>
+  </nav>
+
+  <div class="wireframe">
+    <h2>标题占位</h2>
+
+    <!-- 4 指标卡占位 -->
+    <span class="annot">4 张指标卡占位</span>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:8px;">
+      <div class="box" style="padding:16px;height:100px;"><div class="label">指标占位</div><div class="box-text short" style="margin-top:16px;height:24px;"></div><div class="box-text short"></div></div>
+      <div class="box" style="padding:16px;height:100px;"><div class="label">指标占位</div><div class="box-text short" style="margin-top:16px;height:24px;"></div><div class="box-text short"></div></div>
+      <div class="box" style="padding:16px;height:100px;"><div class="label">指标占位</div><div class="box-text short" style="margin-top:16px;height:24px;"></div><div class="box-text short"></div></div>
+      <div class="box" style="padding:16px;height:100px;"><div class="label">指标占位</div><div class="box-text short" style="margin-top:16px;height:24px;"></div><div class="box-text short"></div></div>
+    </div>
+
+    <!-- 图表区 -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:32px;">
+      <!-- 环形图占位 -->
+      <div>
+        <span class="annot">环形图 · 圆形色块占位</span>
+        <div class="box" style="padding:24px;margin-top:8px;display:flex;align-items:center;justify-content:center;">
+          <div class="box" style="width:160px;height:160px;border-radius:50%;display:flex;align-items:center;justify-content:center;">
+            <div class="box" style="width:80px;height:80px;border-radius:50%;background:var(--w-bg);"></div>
+          </div>
+        </div>
+      </div>
+      <!-- 柱状图占位 -->
+      <div>
+        <span class="annot">柱状图 · 7 根竖条占位</span>
+        <div class="box" style="padding:24px;margin-top:8px;height:208px;display:flex;align-items:flex-end;justify-content:space-around;">
+          <div class="box" style="width:24px;height:60%;"></div>
+          <div class="box" style="width:24px;height:80%;"></div>
+          <div class="box" style="width:24px;height:45%;"></div>
+          <div class="box" style="width:24px;height:90%;"></div>
+          <div class="box" style="width:24px;height:70%;"></div>
+          <div class="box" style="width:24px;height:55%;"></div>
+          <div class="box" style="width:24px;height:75%;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
