@@ -950,15 +950,23 @@ def test_cmd_task_cancel_missing_returns_1(
 # ---------------------------------------------------------------------------
 
 
-def test_cmd_serve_no_server_returns_1(
-    capsys: pytest.CaptureFixture[str],
+def test_cmd_serve_invokes_run_server(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # hermes.workbench.server does not exist yet (lands in P3); the command
-    # must report the ImportError and exit 1.
-    rc = cmd_workbench_serve(_ns(host="127.0.0.1", port=8000))
-    assert rc == 1
-    err = capsys.readouterr().err
-    assert "server not available" in err
+    # server module now exists (P3); the command must call run_server with
+    # the parsed host/port and return 0. We patch run_server so it does not
+    # actually block on serve_forever().
+    import hermes.workbench.server as server_mod
+
+    captured: list[tuple[str, int]] = []
+
+    def _fake_run_server(host: str, port: int) -> None:
+        captured.append((host, port))
+
+    monkeypatch.setattr(server_mod, "run_server", _fake_run_server)
+    rc = cmd_workbench_serve(_ns(host="127.0.0.1", port=8123))
+    assert rc == 0
+    assert captured == [("127.0.0.1", 8123)]
 
 
 # ---------------------------------------------------------------------------

@@ -436,6 +436,26 @@ def cmd_workbench_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_workbench_github_sync(args: argparse.Namespace) -> int:
+    """Sync GitHub issues to workbench tasks and push results back."""
+    from hermes.workbench.errors import ValidationError
+    from hermes.workbench.github_sync import GitHubSyncService
+
+    try:
+        service = GitHubSyncService.from_env(repo=args.repo)
+    except ValidationError as e:
+        print(f"sync error: {e}", file=sys.stderr)
+        return 1
+    result = service.sync(label=args.label)
+    print(
+        f"sync: pulled={result['pulled']} ran={result['ran']} "
+        f"pushed={result['pushed']} errors={len(result['errors'])}"
+    )
+    for err in result["errors"]:
+        print(f"  error: {err}", file=sys.stderr)
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Parser registration
 # ---------------------------------------------------------------------------
@@ -528,6 +548,13 @@ def _register_serve(sub: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     p.set_defaults(func=cmd_workbench_serve)
 
 
+def _register_github(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = sub.add_parser("github-sync", help="Sync GitHub issues to workbench tasks (P4)")
+    p.add_argument("--repo", required=True, help="GitHub repo as owner/name")
+    p.add_argument("--label", default="workbench", help="Issue label to filter (default: workbench)")
+    p.set_defaults(func=cmd_workbench_github_sync)
+
+
 def add_workbench_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Register the ``workbench`` subcommand and its nested subcommands."""
     p = sub.add_parser("workbench", help="Hermes Workbench runtime commands")
@@ -538,6 +565,7 @@ def add_workbench_subparser(sub: argparse._SubParsersAction[argparse.ArgumentPar
     _register_memory(wb_sub)
     _register_task(wb_sub)
     _register_serve(wb_sub)
+    _register_github(wb_sub)
 
 
 def register_workbench_commands(parser: argparse.ArgumentParser) -> None:
