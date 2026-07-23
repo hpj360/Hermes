@@ -215,13 +215,17 @@ async def lab_create_recipe(
 @router.put("/recipes/{doc_id}", dependencies=[Depends(require_age_gate)])
 async def lab_update_recipe(doc_id: str, req: dict[str, Any]) -> dict[str, Any]:
     """编辑 UGC 配方（仅 draft 状态）。"""
-    ok = update_recipe(
-        doc_id,
-        title=req.get("title"),
-        ingredients=req.get("ingredients"),
-        content=req.get("content"),
-        season=req.get("season"),
-    )
+    try:
+        ok = update_recipe(
+            doc_id,
+            title=req.get("title"),
+            ingredients=req.get("ingredients"),
+            content=req.get("content"),
+            season=req.get("season"),
+        )
+    except ValueError as e:
+        # P2-2: ingredients 不支持更新，显式拒绝而非静默丢弃
+        raise HTTPException(status_code=400, detail=str(e))
     if not ok:
         raise HTTPException(status_code=400, detail="仅 draft 状态可编辑")
     return {"doc_id": doc_id, "status": "ok"}

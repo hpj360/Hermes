@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from sqlalchemy import text as sa_text
 from sqlmodel import select
 
 from hermes_kb.database import get_session
@@ -16,38 +17,46 @@ from hermes_kb.models import Document, RecipeStats
 
 
 def increment_match_count(doc_id: str) -> None:
-    """匹配命中时 match_count +1，weekly_match_count +1，更新 last_matched_at。"""
+    """匹配命中时 match_count +1，weekly_match_count +1，更新 last_matched_at。
+
+    P2-1: 用原子 SQL upsert（INSERT ... ON CONFLICT DO UPDATE）消除
+    读-改-写竞态，避免并发下 lost-update。
+    """
+    now = datetime.now(timezone.utc)
     with get_session() as session:
-        stat = session.get(RecipeStats, doc_id)
-        now = datetime.now(timezone.utc)
-        if stat:
-            stat.match_count += 1
-            stat.weekly_match_count += 1
-            stat.last_matched_at = now
-        else:
-            stat = RecipeStats(
-                doc_id=doc_id,
-                match_count=1,
-                weekly_match_count=1,
-                last_matched_at=now,
-            )
-        session.add(stat)
+        session.execute(
+            sa_text(
+                "INSERT INTO recipestats "
+                "(doc_id, match_count, view_count, weekly_match_count, last_matched_at) "
+                "VALUES (:did, 1, 0, 1, :now) "
+                "ON CONFLICT(doc_id) DO UPDATE SET "
+                "match_count = match_count + 1, "
+                "weekly_match_count = weekly_match_count + 1, "
+                "last_matched_at = :now"
+            ),
+            {"did": doc_id, "now": now},
+        )
         session.commit()
 
 
 def increment_view_count(doc_id: str) -> None:
-    """查看详情时 view_count +1，更新 last_viewed_at。"""
+    """查看详情时 view_count +1，更新 last_viewed_at。
+
+    P2-1: 原子 SQL upsert。
+    """
+    now = datetime.now(timezone.utc)
     with get_session() as session:
-        stat = session.get(RecipeStats, doc_id)
-        now = datetime.now(timezone.utc)
-        if stat:
-            stat.view_count += 1
-            stat.last_viewed_at = now
-        else:
-            stat = RecipeStats(
-                doc_id=doc_id, view_count=1, last_viewed_at=now
-            )
-        session.add(stat)
+        session.execute(
+            sa_text(
+                "INSERT INTO recipestats "
+                "(doc_id, match_count, view_count, weekly_match_count, last_viewed_at) "
+                "VALUES (:did, 0, 1, 0, :now) "
+                "ON CONFLICT(doc_id) DO UPDATE SET "
+                "view_count = view_count + 1, "
+                "last_viewed_at = :now"
+            ),
+            {"did": doc_id, "now": now},
+        )
         session.commit()
 
 
@@ -127,8 +136,8 @@ def reset_weekly_stats() -> None:
 def batch_increment_match_counts(doc_ids: list[str]) -> None:
     """批量累加 match_count 和 weekly_match_count（A3-3）。
 
-    单次事务完成，替代循环调 increment_match_count。同一 doc_id 出现 N 次则
-    +N（用 Counter 聚合，避免对同一主键多次 INSERT 触发 UNIQUE 约束）。
+    P2-1: 用原子 SQL upsert（INSERT ... ON CONFLICT DO UPDATE SET col = col + excluded.col），
+    单次事务完成，消除读-改-写竞态。同一 doc_id 出现 N 次则 +N（Counter 聚合）。
     供端点 BackgroundTasks 调用。
     """
     if not doc_ids:
@@ -138,23 +147,19 @@ def batch_increment_match_counts(doc_ids: list[str]) -> None:
     counts = Counter(doc_ids)
     now = datetime.now(timezone.utc)
     with get_session() as session:
-        existing = session.exec(
-            select(RecipeStats).where(RecipeStats.doc_id.in_(list(counts.keys())))
-        ).all()
-        existing_map = {s.doc_id: s for s in existing}
-        for stat in existing:
-            stat.match_count += counts[stat.doc_id]
-            stat.weekly_match_count += counts[stat.doc_id]
-            stat.last_matched_at = now
-            session.add(stat)
-        for did, cnt in counts.items():
-            if did not in existing_map:
-                session.add(
-                    RecipeStats(
-                        doc_id=did,
-                        match_count=cnt,
-                        weekly_match_count=cnt,
-                        last_matched_at=now,
-                    )
-                )
+        session.execute(
+            sa_text(
+                "INSERT INTO recipestats "
+                "(doc_id, match_count, view_count, weekly_match_count, last_matched_at) "
+                "VALUES (:did, :cnt, 0, :cnt, :now) "
+                "ON CONFLICT(doc_id) DO UPDATE SET "
+                "match_count = match_count + :cnt, "
+                "weekly_match_count = weekly_match_count + :cnt, "
+                "last_matched_at = :now"
+            ),
+            [
+                {"did": did, "cnt": cnt, "now": now}
+                for did, cnt in counts.items()
+            ],
+        )
         session.commit()

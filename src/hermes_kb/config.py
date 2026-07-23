@@ -47,6 +47,19 @@ def _env_bool(key: str, default: bool) -> bool:
     )
 
 
+def _env_float(key: str, default: float) -> float:
+    """P3-4: 浮点配置项，非法值显式报错（避免启动崩溃且错误不清）。"""
+    v = os.environ.get(key)
+    if v is None or v.strip() == "":
+        return default
+    try:
+        return float(v)
+    except ValueError as e:
+        raise ValueError(
+            f"Invalid float value for {key}: {v!r}. Expected a number."
+        ) from e
+
+
 @dataclass
 class Settings:
     """全局配置。"""
@@ -64,7 +77,7 @@ class Settings:
     top_k: int = field(default_factory=lambda: _env_int("KB_TOP_K", 5))
     rrf_k: int = field(default_factory=lambda: _env_int("KB_RRF_K", 60))
     # 低置信度阈值：RRF score < 此值时返回"未找到"反馈（M1-06）
-    min_score_threshold: float = field(default_factory=lambda: float(_env_str("KB_MIN_SCORE", "0.005")))
+    min_score_threshold: float = field(default_factory=lambda: _env_float("KB_MIN_SCORE", 0.005))
 
     # 向量检索扫描上限（A3-1：替代硬编码 LIMIT 10000）
     vector_scan_limit: int = field(default_factory=lambda: _env_int("KB_VECTOR_SCAN_LIMIT", 50000))
@@ -95,6 +108,8 @@ class Settings:
 
     # 未成年保护（M1-08）
     age_gate_enabled: bool = field(default_factory=lambda: _env_bool("KB_AGE_GATE", True))
+    # 年龄门 cookie 安全（P2-5）：生产 HTTPS 应置 True，开发 HTTP 置 False
+    cookie_secure: bool = field(default_factory=lambda: _env_bool("KB_COOKIE_SECURE", False))
 
     # 调试模式（A1-02）：True 时 500 响应保留 str(exc) 便于排查；False 时隐藏内部信息
     debug: bool = field(default_factory=lambda: _env_bool("KB_DEBUG", False))

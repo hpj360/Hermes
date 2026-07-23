@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import text as sa_text
 from sqlmodel import select
 
 from hermes_kb.database import get_session
@@ -15,18 +16,22 @@ from hermes_kb.models import MissingIngredientStats
 
 
 def increment_missing(canonical: str) -> None:
-    """缺失材料计数 +1。"""
+    """缺失材料计数 +1。
+
+    P2-1: 原子 SQL upsert，消除读-改-写竞态。
+    """
+    now = datetime.now(timezone.utc)
     with get_session() as session:
-        stat = session.get(MissingIngredientStats, canonical)
-        now = datetime.now(timezone.utc)
-        if stat:
-            stat.missing_count += 1
-            stat.last_missing_at = now
-        else:
-            stat = MissingIngredientStats(
-                canonical=canonical, missing_count=1, last_missing_at=now
-            )
-        session.add(stat)
+        session.execute(
+            sa_text(
+                "INSERT INTO missingingredientstats (canonical, missing_count, last_missing_at) "
+                "VALUES (:name, 1, :now) "
+                "ON CONFLICT(canonical) DO UPDATE SET "
+                "missing_count = missing_count + 1, "
+                "last_missing_at = :now"
+            ),
+            {"name": canonical, "now": now},
+        )
         session.commit()
 
 
@@ -69,9 +74,8 @@ def get_top_missing(limit: int = 10) -> list[dict[str, Any]]:
 def batch_increment_missing(canonicals: list[str]) -> None:
     """批量累加 missing_count（A3-3）。
 
-    单次事务完成，替代循环调 increment_missing。保留旧语义：同一 canonical
-    在 canonicals 中出现 N 次则 +N（用 Counter 聚合，避免对同一主键多次
-    INSERT 触发 UNIQUE 约束）。供端点 BackgroundTasks 调用。
+    P2-1: 原子 SQL upsert，单次事务完成，消除读-改-写竞态。同一 canonical
+    在 canonicals 中出现 N 次则 +N（Counter 聚合）。供端点 BackgroundTasks 调用。
     """
     if not canonicals:
         return
@@ -80,21 +84,17 @@ def batch_increment_missing(canonicals: list[str]) -> None:
     counts = Counter(canonicals)
     now = datetime.now(timezone.utc)
     with get_session() as session:
-        existing = session.exec(
-            select(MissingIngredientStats).where(
-                MissingIngredientStats.canonical.in_(list(counts.keys()))
-            )
-        ).all()
-        existing_map = {s.canonical: s for s in existing}
-        for stat in existing:
-            stat.missing_count += counts[stat.canonical]
-            stat.last_missing_at = now
-            session.add(stat)
-        for name, cnt in counts.items():
-            if name not in existing_map:
-                session.add(
-                    MissingIngredientStats(
-                        canonical=name, missing_count=cnt, last_missing_at=now
-                    )
-                )
+        session.execute(
+            sa_text(
+                "INSERT INTO missingingredientstats (canonical, missing_count, last_missing_at) "
+                "VALUES (:name, :cnt, :now) "
+                "ON CONFLICT(canonical) DO UPDATE SET "
+                "missing_count = missing_count + :cnt, "
+                "last_missing_at = :now"
+            ),
+            [
+                {"name": name, "cnt": cnt, "now": now}
+                for name, cnt in counts.items()
+            ],
+        )
         session.commit()

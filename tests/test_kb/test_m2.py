@@ -400,3 +400,77 @@ def test_delete_document_clears_tag_links(client):
     r2 = client.get("/api/tags")
     items = {t["name"]: t["doc_count"] for t in r2.json()["items"]}
     assert items.get("T") == 0
+
+
+# ---------------------------------------------------------------------------
+# P1-1：上传路径穿越防御（CWE-22）
+# ---------------------------------------------------------------------------
+def test_safe_upload_path_blocks_traversal(tmp_db):
+    """P1-1: _safe_upload_path 剥离目录前缀并拒绝纯 .. / 空名（CWE-22）。"""
+    from pathlib import Path
+
+    import pytest as _pytest
+    from fastapi import HTTPException
+
+    from hermes_kb.api.documents import _safe_upload_path
+    from hermes_kb.config import get_settings
+
+    tmp_dir = Path(get_settings().db_path).parent / "uploads"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. 剥离子目录前缀：foo/evil.txt → basename evil.txt，仍落在 tmp_dir
+    p = _safe_upload_path(tmp_dir, "sub/evil.txt")
+    assert p.parent.resolve() == tmp_dir.resolve()
+    assert p.name.endswith("evil.txt")
+
+    # 2. 剥离 ../ 前缀：穿越 payload 被降级为 basename，留在 tmp_dir
+    p2 = _safe_upload_path(tmp_dir, "../evil.txt")
+    assert p2.parent.resolve() == tmp_dir.resolve()
+    assert p2.name.endswith("evil.txt")
+
+    # 3. 多层穿越 ../../etc/passwd.txt → basename passwd.txt，留在 tmp_dir
+    p3 = _safe_upload_path(tmp_dir, "../../etc/passwd.txt")
+    assert p3.parent.resolve() == tmp_dir.resolve()
+    assert p3.name.endswith("passwd.txt")
+
+    # 4. 纯 .. 被显式拒绝（400）
+    with _pytest.raises(HTTPException) as exc:
+        _safe_upload_path(tmp_dir, "..")
+    assert exc.value.status_code == 400
+
+    # 5. 纯 . 被显式拒绝
+    with _pytest.raises(HTTPException):
+        _safe_upload_path(tmp_dir, ".")
+
+    # 6. 空文件名被拒绝
+    with _pytest.raises(HTTPException):
+        _safe_upload_path(tmp_dir, "")
+
+
+def test_upload_batch_traversal_filename_stays_in_uploads(client, tmp_db):
+    """P1-1: 批量上传含 ../ 的文件名不会逃逸到 uploads 父目录。"""
+    from pathlib import Path
+
+    from hermes_kb.config import get_settings
+
+    uploads_dir = Path(get_settings().db_path).parent / "uploads"
+    parent_dir = uploads_dir.parent  # 若穿越成功，逃逸文件会落在这里
+
+    # 清理可能残留的同名逃逸文件
+    for stale in parent_dir.glob("*traversal_escape*"):
+        stale.unlink(missing_ok=True)
+
+    files = [
+        (
+            "files",
+            ("../traversal_escape.txt", io.BytesIO(b"evil payload"), "text/plain"),
+        ),
+    ]
+    resp = client.post("/api/documents/upload-batch", files=files)
+    assert resp.status_code == 200
+    body = resp.json()
+    # 该文件应被正常导入（basename 降级），而非逃逸
+    assert body["imported"] == 1
+    # 关键断言：uploads 父目录不应出现逃逸文件
+    escaped = list(parent_dir.glob("*traversal_escape*"))
+    assert not escaped, f"路径穿越未被阻断，父目录出现逃逸文件: {escaped}"

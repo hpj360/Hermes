@@ -151,7 +151,6 @@ def test_update_recipe(tmp_db):
     ok = update_recipe(
         created["doc_id"],
         title="改后配方",
-        ingredients=["金酒", "柠檬汁"],
         content="# 改后配方\n\n## 配方\n- 金酒 50ml\n- 柠檬汁 20ml",
     )
     assert ok is True
@@ -165,7 +164,6 @@ def test_update_recipe(tmp_db):
     ok2 = update_recipe(
         created["doc_id"],
         title="再改",
-        ingredients=["金酒"],
         content="# 再改",
     )
     assert ok2 is False
@@ -318,6 +316,37 @@ def test_api_pending_recipes(client, base_and_variant):
     assert resp.status_code == 200
     data = resp.json()
     assert any(i["title"] == "原版马天尼" for i in data["items"])
+
+
+def test_update_recipe_rejects_ingredients(tmp_db):
+    """P2-2: update_recipe 传非空 ingredients 应抛 ValueError（显式拒绝而非静默丢弃）。"""
+    from hermes_kb.recipe_crud import create_recipe, update_recipe
+
+    created = create_recipe(
+        title="测试配方",
+        ingredients=["金酒"],
+        content="# 测试配方\n\n## 配方\n- 金酒 50ml",
+    )
+    # 传非空 ingredients 应抛 ValueError
+    with pytest.raises(ValueError, match="不支持更新 ingredients"):
+        update_recipe(created["doc_id"], ingredients=["金酒", "柠檬汁"])
+    # 不传 ingredients 正常工作
+    ok = update_recipe(created["doc_id"], title="新标题")
+    assert ok is True
+
+
+def test_api_update_recipe_ingredients_returns_400(client):
+    """P2-2: PUT /api/lab/recipes/{doc_id} 传 ingredients 返回 400 而非静默丢弃。"""
+    created = client.post("/api/lab/recipes", json={
+        "title": "API 编辑测试",
+        "ingredients": ["金酒"],
+        "content": "# API 编辑测试\n\n## 配方\n- 金酒 50ml",
+    }).json()
+    resp = client.put(f"/api/lab/recipes/{created['doc_id']}", json={
+        "ingredients": ["金酒", "柠檬汁"],
+    })
+    assert resp.status_code == 400
+    assert "ingredients" in resp.json()["detail"]
 
 
 def test_recipe_variant_cascade_on_delete(base_and_variant):

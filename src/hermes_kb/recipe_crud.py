@@ -67,7 +67,17 @@ def update_recipe(
     content: str | None = None,
     season: str | None = None,
 ) -> bool:
-    """编辑配方（仅 draft 状态可编辑）。"""
+    """编辑配方（仅 draft 状态可编辑）。
+
+    注意：``ingredients`` 更新需重新分片，本函数不支持。调用方若传入非空
+    ``ingredients`` 将被显式拒绝（抛 ValueError），避免"接受即丢弃"的契约陷阱
+    （P2-2）。如需更新材料，应删除后重新 ``create_recipe``。
+    """
+    if ingredients:
+        raise ValueError(
+            "update_recipe 不支持更新 ingredients（需重新分片）；"
+            "请删除后重新 create_recipe，或在 content 中更新材料 frontmatter"
+        )
     with get_session() as session:
         doc = session.get(Document, doc_id)
         if not doc or doc.status != "draft":

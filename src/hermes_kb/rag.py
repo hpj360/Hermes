@@ -525,7 +525,7 @@ class ImportService:
                             },
                         )
                     except Exception as exc:  # noqa: BLE001 — 写路径降级，不阻塞导入
-                        logger.warning(
+                        logging.warning(
                             "ANN insert failed for chunk rowid=%s (dim mismatch?), "
                             "falling back to JSON-only vector: %s",
                             rowid,

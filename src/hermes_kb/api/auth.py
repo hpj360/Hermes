@@ -77,7 +77,7 @@ async def age_gate_confirm(req: AgeGateReq, response: Response) -> dict[str, Any
             max_age=COOKIE_TTL_DAYS * 86400,
             httponly=True,
             samesite="strict",
-            secure=False,  # 开发环境 HTTP；生产应通过 reverse proxy
+            secure=settings.cookie_secure,  # P2-5: 生产 HTTPS 通过 KB_COOKIE_SECURE=true 启用
         )
     return {
         "confirmed": bool(req.confirmed),

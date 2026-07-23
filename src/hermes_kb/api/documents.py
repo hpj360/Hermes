@@ -20,6 +20,22 @@ from hermes_kb.rag import ImportService
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 
+def _safe_upload_path(tmp_dir: Path, filename: str) -> Path:
+    """构造安全的上传临时路径，防御路径穿越（CWE-22）。
+
+    仅取 basename 剥离所有目录前缀（含 ``..``），并校验 resolve 后仍在
+    ``tmp_dir`` 内。客户端 filename 不可信，禁止直接拼接。
+    """
+    safe_name = Path(filename).name  # 剥离所有目录前缀（含 ../）
+    if not safe_name or safe_name in (".", ".."):
+        raise HTTPException(status_code=400, detail="非法文件名")
+    path = tmp_dir / f"{int(time.time() * 1000)}_{safe_name}"
+    # 双重保险：resolve 后必须仍在 tmp_dir 内
+    if not path.resolve().is_relative_to(tmp_dir.resolve()):
+        raise HTTPException(status_code=400, detail="非法文件名")
+    return path
+
+
 class ImportTextReq(BaseModel):
     title: str = Field(..., max_length=200)
     content: str = Field(default="")
@@ -131,7 +147,7 @@ async def upload_file(
     # 保存到临时文件后由 parser 处理（PDF 需要二进制）
     tmp_dir = Path(settings.db_path).parent / "uploads"
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    tmp_path = tmp_dir / f"{int(time.time() * 1000)}_{file.filename}"
+    tmp_path = _safe_upload_path(tmp_dir, file.filename)
     with tmp_path.open("wb") as f:
         f.write(await file.read())
     try:
@@ -287,7 +303,7 @@ async def upload_batch(
                 }
             )
             continue
-        tmp_path = tmp_dir / f"{int(time.time() * 1000)}_{f.filename}"
+        tmp_path = _safe_upload_path(tmp_dir, f.filename)
         try:
             content = await f.read()
             tmp_path.write_bytes(content)
