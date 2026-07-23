@@ -42,35 +42,7 @@ def test_seed_recipes_season_distribution():
     assert len(seasons) >= 3, f"季节覆盖不足: {seasons}"
 
 
-@pytest.fixture
-def seeded_recipes_ops(tmp_db):
-    """导入种子配方（含 season）用于运营层测试。"""
-    from hermes_kb.rag import ImportService
-    from hermes_kb.seed_recipes import SEED_RECIPES
-    from hermes_kb.database import get_session
-    from hermes_kb.models import Document
-    from sqlmodel import select
-
-    importer = ImportService()
-    for recipe in SEED_RECIPES:
-        importer.import_text(
-            content=recipe["content"],
-            title=recipe["title"],
-            source_type="seed",
-            file_type="md",
-        )
-        with get_session() as session:
-            doc = session.exec(
-                select(Document).where(Document.title == recipe["title"])
-            ).first()
-            if doc:
-                doc.category = "recipe"
-                session.add(doc)
-                session.commit()
-    return importer
-
-
-def test_daily_recipe_returns_one(seeded_recipes_ops):
+def test_daily_recipe_returns_one(seeded_recipes):
     """每日推荐返回一款配方。"""
     from hermes_kb.daily_recipe import daily_recipe
 
@@ -82,7 +54,7 @@ def test_daily_recipe_returns_one(seeded_recipes_ops):
     assert result["reason"] in ["season", "hot", "random"]
 
 
-def test_daily_recipe_stable_per_day(seeded_recipes_ops):
+def test_daily_recipe_stable_per_day(seeded_recipes):
     """同一天多次调用返回同一款。"""
     from hermes_kb.daily_recipe import daily_recipe
 
@@ -91,7 +63,7 @@ def test_daily_recipe_stable_per_day(seeded_recipes_ops):
     assert r1["doc_id"] == r2["doc_id"]
 
 
-def test_daily_recipe_reason_format(seeded_recipes_ops):
+def test_daily_recipe_reason_format(seeded_recipes):
     """reason 字段格式正确。"""
     from hermes_kb.daily_recipe import daily_recipe
 
@@ -100,7 +72,7 @@ def test_daily_recipe_reason_format(seeded_recipes_ops):
     assert len(result["reason"]) > 0
 
 
-def test_missing_stats_increment(seeded_recipes_ops):
+def test_missing_stats_increment(seeded_recipes):
     """记录缺失材料计数。"""
     from hermes_kb.missing_stats import increment_missing, get_missing_stats
 
@@ -114,7 +86,7 @@ def test_missing_stats_increment(seeded_recipes_ops):
     assert stat["last_missing_at"] is not None
 
 
-def test_missing_stats_top(seeded_recipes_ops):
+def test_missing_stats_top(seeded_recipes):
     """缺失材料排行。"""
     from hermes_kb.missing_stats import increment_missing, get_top_missing
 
@@ -133,7 +105,7 @@ def test_missing_stats_top(seeded_recipes_ops):
     assert top[2]["canonical"] == "苦精"
 
 
-def test_match_records_missing(seeded_recipes_ops):
+def test_match_records_missing(seeded_recipes):
     """match_recipes 调用后缺失材料被统计（A3-3: 通过 _pending_stats 异步批量写入）。"""
     from hermes_kb.recipe_match import match_recipes
     from hermes_kb.missing_stats import batch_increment_missing, get_missing_stats
@@ -149,7 +121,7 @@ def test_match_records_missing(seeded_recipes_ops):
     assert stat["missing_count"] >= 1
 
 
-def test_lab_dashboard_aggregation(seeded_recipes_ops):
+def test_lab_dashboard_aggregation(seeded_recipes):
     """运营看板返回完整指标。"""
     from hermes_kb.lab_dashboard import get_lab_dashboard
     from hermes_kb.recipe_match import match_recipes
@@ -173,7 +145,7 @@ def test_lab_dashboard_aggregation(seeded_recipes_ops):
     assert 0 <= dashboard["substitute_coverage"] <= 1
 
 
-def test_api_lab_daily(seeded_recipes_ops, client):
+def test_api_lab_daily(seeded_recipes, client):
     """GET /api/lab/daily 返回每日推荐。"""
     resp = client.get("/api/lab/daily")
     assert resp.status_code == 200
@@ -183,7 +155,7 @@ def test_api_lab_daily(seeded_recipes_ops, client):
     assert data["reason"] in ["season", "hot", "random"]
 
 
-def test_api_lab_missing_stats(seeded_recipes_ops, client):
+def test_api_lab_missing_stats(seeded_recipes, client):
     """GET /api/lab/missing-stats 返回缺失排行。"""
     # 先制造缺失数据
     client.get("/api/lab/match", params={"ingredients": "金酒,柠檬汁"})
@@ -197,7 +169,7 @@ def test_api_lab_missing_stats(seeded_recipes_ops, client):
     assert "missing_count" in data["items"][0]
 
 
-def test_api_lab_substitute_save(seeded_recipes_ops, client):
+def test_api_lab_substitute_save(seeded_recipes, client):
     """POST /api/lab/substitute 保存用户自定义替代。"""
     resp = client.post(
         "/api/lab/substitute",
@@ -210,7 +182,7 @@ def test_api_lab_substitute_save(seeded_recipes_ops, client):
     assert "自制橙皮酒" in get_substitutes("君度")
 
 
-def test_api_lab_dashboard(seeded_recipes_ops, client):
+def test_api_lab_dashboard(seeded_recipes, client):
     """GET /api/lab/dashboard 返回运营看板。"""
     resp = client.get("/api/lab/dashboard")
     assert resp.status_code == 200
@@ -220,7 +192,7 @@ def test_api_lab_dashboard(seeded_recipes_ops, client):
     assert "daily_recipe" in data
 
 
-def test_weekly_match_count_semantics(seeded_recipes_ops):
+def test_weekly_match_count_semantics(seeded_recipes):
     """A4-1: weekly_match_count 应为本周新增匹配数，不是累计值。"""
     from hermes_kb.recipe_stats import increment_match_count
     from hermes_kb.lab_dashboard import get_lab_dashboard
@@ -228,7 +200,7 @@ def test_weekly_match_count_semantics(seeded_recipes_ops):
     from hermes_kb.models import Document
     from sqlmodel import select
 
-    # seeded_recipes_ops 是 ImportService，从 DB 取前 2 个 recipe 的 doc_id
+    # seeded_recipes 是 ImportService，从 DB 取前 2 个 recipe 的 doc_id
     with get_session() as session:
         docs = session.exec(
             select(Document).where(Document.category == "recipe").limit(2)

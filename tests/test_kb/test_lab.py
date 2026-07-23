@@ -210,36 +210,6 @@ def test_seed_recipes_all_ingredients_canonical():
             )
 
 
-@pytest.fixture
-def seeded_recipes(tmp_db):
-    """导入种子配方的 ImportService。"""
-    from hermes_kb.rag import ImportService
-    from hermes_kb.seed_recipes import SEED_RECIPES
-
-    importer = ImportService()
-    for recipe in SEED_RECIPES:
-        importer.import_text(
-            content=recipe["content"],
-            title=recipe["title"],
-            source_type="seed",
-            file_type="md",
-        )
-        # 设置 category=recipe
-        from hermes_kb.database import get_session
-        from hermes_kb.models import Document
-        from sqlmodel import select
-
-        with get_session() as session:
-            doc = session.exec(
-                select(Document).where(Document.title == recipe["title"])
-            ).first()
-            if doc:
-                doc.category = "recipe"
-                session.add(doc)
-                session.commit()
-    return importer
-
-
 def test_match_full(seeded_recipes):
     """材料齐全的配方进 full_match。"""
     from hermes_kb.recipe_match import match_recipes
