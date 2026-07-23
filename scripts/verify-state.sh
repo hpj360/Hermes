@@ -13,10 +13,29 @@
 
 set -euo pipefail
 
-BRANCH="trae/agent-glOxQF"
+BRANCH="main"
+WORK_BRANCH="trae/agent-glOxQF"
 PASS=0
 FAIL=0
 WARN=0
+
+# 解析参数
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --branch)
+            BRANCH="$2"
+            shift 2
+            ;;
+        --work-branch)
+            WORK_BRANCH="$2"
+            shift 2
+            ;;
+        *)
+            echo "未知参数: $1" >&2
+            exit 1
+            ;;
+    esac
+done
 
 ok()   { echo "  ✅ $1"; PASS=$((PASS+1)); }
 fail() { echo "  ❌ $1"; FAIL=$((FAIL+1)); }
