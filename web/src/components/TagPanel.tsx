@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { TagInfo } from "../types";
+import { SkeletonList } from "./Skeleton";
 
 interface TagPanelProps {
   onChange: () => void;
@@ -118,7 +119,7 @@ export function TagPanel({ onChange }: TagPanelProps) {
           <span className="text-xs text-gray-500">{tags.length} 个</span>
         </div>
         {loading ? (
-          <div className="text-center text-gray-400 py-4">加载中...</div>
+          <div className="py-2"><SkeletonList count={3} /></div>
         ) : tags.length === 0 ? (
           <div className="text-center text-gray-400 py-8 text-sm">
             暂无标签，请在上方创建

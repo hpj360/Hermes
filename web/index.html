@@ -7,8 +7,16 @@
     <meta name="description" content="Hermes 知识库 - AI 原生酒类知识问答平台" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%234A0E1C'/%3E%3Cpath d='M11 8h10l-1 6a4 4 0 0 1-8 0L11 8z' fill='none' stroke='%23C9A227' stroke-width='1.6' stroke-linejoin='round'/%3E%3Cpath d='M16 18v5M12 25h8' stroke='%23C9A227' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E" />
     <meta name="theme-color" content="#4A0E1C" />
+    <!-- F1: 加载设计宪法规定的衬线杂志字体（Crimson Text + Cormorant Garamond + Noto Serif SC + JetBrains Mono）
+         _tokens.css 已定义令牌但缺实际字体文件加载，浏览器此前回退到 serif -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Noto+Serif+SC:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
   </head>
-  <body class="bg-gray-50">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

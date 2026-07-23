@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { CategoryInfo, DocumentItem, TagInfo } from "../types";
+import { SkeletonList } from "./Skeleton";
 
 interface DocumentListProps {
   refreshKey: number;
@@ -58,7 +59,7 @@ export function DocumentList({ refreshKey, onChange, onSelectDoc }: DocumentList
   };
 
   if (loading && docs.length === 0) {
-    return <div className="p-4 text-center text-gray-400">加载中...</div>;
+    return <div className="p-4"><SkeletonList count={4} /></div>;
   }
 
   if (error) {

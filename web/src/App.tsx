@@ -11,6 +11,7 @@ import { TagPanel } from "./components/TagPanel";
 import { LabPanel } from "./components/LabPanel";
 import { RecipePanel } from "./components/RecipePanel";
 import { RecipeEditorPanel } from "./components/RecipeEditorPanel";
+import { Skeleton } from "./components/Skeleton";
 
 type Tab = "chat" | "docs" | "detail" | "tags" | "lab" | "recipes" | "recipe-editor";
 
@@ -58,8 +59,12 @@ export default function App() {
   // 等待健康检查
   if (!authReady) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-gray-400">
-        加载中...
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4" style={{ background: "var(--paper-bg)" }}>
+        <div className="text-3xl reveal-item">🍷</div>
+        <div className="w-48 reveal-item delay-2">
+          <Skeleton height="0.875rem" width="100%" className="mb-2" />
+          <Skeleton height="0.875rem" width="60%" />
+        </div>
       </div>
     );
   }
@@ -109,21 +114,24 @@ export default function App() {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
-      {/* 顶部栏 */}
-      <header className="bg-white border-b px-4 py-3 flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-3">
+    <div className="h-screen flex flex-col relative bg-noise" style={{ background: "var(--paper-bg)" }}>
+      {/* 顶部栏 — F6: 深酒红渐变 + 金箔标题，营造高级酒类杂志感 */}
+      <header
+        className="bg-brand-gradient px-4 py-3 flex items-center justify-between flex-shrink-0 relative overflow-hidden"
+        style={{ boxShadow: "var(--shadow-md)" }}
+      >
+        <div className="flex items-center gap-3 relative z-10">
           <div className="text-2xl">🍷</div>
           <div>
-            <h1 className="font-bold text-gray-900">Hermes 知识库</h1>
+            <h1 className="font-bold text-gold-foil" style={{ fontFamily: "var(--font-serif)" }}>Hermes 知识库</h1>
             {health && (
-              <p className="text-xs text-gray-500">
+              <p className="text-xs" style={{ color: "rgba(250, 243, 220, 0.75)" }}>
                 {health.doc_count} 篇文档 ·{" "}
-                <span className={health.llm_available ? "text-green-600" : "text-yellow-600"}>
+                <span style={{ color: health.llm_available ? "#B8E6C9" : "#F5D49A" }}>
                   LLM: {health.llm_provider}{health.llm_available ? "" : "（mock）"}
                 </span>{" "}
                 ·{" "}
-                <span className={health.embedding_available ? "text-green-600" : "text-yellow-600"}>
+                <span style={{ color: health.embedding_available ? "#B8E6C9" : "#F5D49A" }}>
                   Embed: {health.embedding_provider}{health.embedding_available ? "" : "（hash）"}
                 </span>
               </p>
@@ -166,7 +174,7 @@ export default function App() {
         <nav
           className={`${
             sidebarOpen ? "block" : "hidden"
-          } md:block w-48 bg-white border-r flex-shrink-0`}
+          } md:block w-48 bg-white border-r flex-shrink-0 reveal-stagger`}
         >
           <button
             className={`w-full text-left px-4 py-3 text-sm border-b ${

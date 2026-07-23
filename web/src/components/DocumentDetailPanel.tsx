@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { DocumentDetail, TagInfo } from "../types";
+import { Skeleton, SkeletonText } from "./Skeleton";
 
 interface DocumentDetailPanelProps {
   docId: string;
@@ -92,7 +93,12 @@ export function DocumentDetailPanel({
   };
 
   if (loading) {
-    return <div className="p-8 text-center text-gray-400">加载中...</div>;
+    return (
+      <div className="p-8 max-w-3xl mx-auto">
+        <Skeleton height="1.75rem" width="50%" className="mb-6" />
+        <SkeletonText lines={8} lastLineRatio={0.7} />
+      </div>
+    );
   }
   if (error) {
     return (

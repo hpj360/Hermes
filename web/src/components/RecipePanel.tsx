@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { LabRecipe } from "../types";
 import { PendingReviewPanel } from "./PendingReviewPanel";
+import { SkeletonList } from "./Skeleton";
 
 interface RecipePanelProps {
   /** 打开 UGC 编辑器（外部通过 tab 切换实现，组件本身只发请求）。 */
@@ -187,9 +188,11 @@ export function RecipePanel({ onCreateRecipe, onEditRecipe }: RecipePanelProps) 
         <div className="card p-6 mb-4 text-center text-red-600">加载失败：{error}</div>
       )}
 
-      {/* 加载中 */}
+      {/* 加载中 — F3: 骨架屏替代纯文字 */}
       {loading && items.length === 0 && (
-        <div className="text-center text-gray-400 py-8">加载中...</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <SkeletonList count={6} />
+        </div>
       )}
 
       {/* 空状态 */}

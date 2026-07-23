@@ -170,4 +170,43 @@ describe("LabPanel", () => {
     fireEvent.click(dailyCard);
     expect(onJump).toHaveBeenCalledWith("doc-mojito", 9);
   });
+
+  it("F4 a11y：今日推荐卡片支持 Enter/Space 键盘激活", async () => {
+    vi.mocked(api.labDaily).mockResolvedValue({
+      title: "Negroni",
+      reason: "season",
+      doc_id: "doc-negroni",
+      chunk_rowid: 3,
+    });
+    const onJump = vi.fn();
+    render(<LabPanel onJumpToDoc={onJump} />);
+    await waitFor(() => expect(screen.getByText("Negroni")).toBeInTheDocument());
+
+    const dailyCard = screen.getByText("Negroni").closest('[role="button"]') as HTMLElement;
+    expect(dailyCard).toBeTruthy();
+
+    // Enter 键激活
+    fireEvent.keyDown(dailyCard, { key: "Enter" });
+    expect(onJump).toHaveBeenCalledWith("doc-negroni", 3);
+    expect(onJump).toHaveBeenCalledTimes(1);
+
+    // Space 键激活
+    fireEvent.keyDown(dailyCard, { key: " " });
+    expect(onJump).toHaveBeenCalledTimes(2);
+  });
+
+  it("F4 a11y：无 onJumpToDoc 时键盘事件不报错（防御性）", async () => {
+    vi.mocked(api.labDaily).mockResolvedValue({
+      title: "Daiquiri",
+      reason: "random",
+      doc_id: "doc-daiquiri",
+      chunk_rowid: 5,
+    });
+    render(<LabPanel />);
+    await waitFor(() => expect(screen.getByText("Daiquiri")).toBeInTheDocument());
+
+    const dailyCard = screen.getByText("Daiquiri").closest('[role="button"]') as HTMLElement;
+    // 无 onJumpToDoc 时按 Enter 不应抛错
+    expect(() => fireEvent.keyDown(dailyCard, { key: "Enter" })).not.toThrow();
+  });
 });

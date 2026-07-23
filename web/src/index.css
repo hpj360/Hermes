@@ -77,3 +77,101 @@
     box-shadow: var(--shadow-sm);
   }
 }
+
+/* === F3: 骨架屏 shimmer 动效 ===
+ * 设计宪法："聚焦高光时刻，一次精心编排的加载动效 > 散落的微交互"。
+ * shimmer 微光从左扫到右，模拟内容正在流入。 */
+.skeleton {
+  display: block;
+  background: linear-gradient(
+    90deg,
+    var(--ink-100) 0%,
+    var(--ink-200) 40%,
+    var(--ink-100) 80%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s var(--ease-out) infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* === F5: 页面加载 staggered reveals ===
+ * 设计宪法："一次精心编排的页面加载 + 错落显现 > 散落的微交互"。
+ * 用 CSS animation-delay 实现错落入场，无需 JS 动画库（符合"优先 CSS-only 方案"）。
+ * 用法：在容器加 .reveal-stagger，子元素自动按序入场；或单元素加 .reveal-item + .delay-N。 */
+.reveal-item {
+  opacity: 0;
+  transform: translateY(12px);
+  animation: reveal-up var(--duration-base) var(--ease-out) forwards;
+}
+.reveal-stagger > * {
+  opacity: 0;
+  transform: translateY(12px);
+  animation: reveal-up var(--duration-base) var(--ease-out) forwards;
+}
+.reveal-stagger > *:nth-child(1) { animation-delay: 40ms; }
+.reveal-stagger > *:nth-child(2) { animation-delay: 90ms; }
+.reveal-stagger > *:nth-child(3) { animation-delay: 140ms; }
+.reveal-stagger > *:nth-child(4) { animation-delay: 190ms; }
+.reveal-stagger > *:nth-child(5) { animation-delay: 240ms; }
+.reveal-stagger > *:nth-child(6) { animation-delay: 290ms; }
+.reveal-stagger > *:nth-child(7) { animation-delay: 340ms; }
+.reveal-stagger > *:nth-child(8) { animation-delay: 390ms; }
+.delay-1 { animation-delay: 40ms; }
+.delay-2 { animation-delay: 90ms; }
+.delay-3 { animation-delay: 140ms; }
+.delay-4 { animation-delay: 190ms; }
+.delay-5 { animation-delay: 240ms; }
+
+@keyframes reveal-up {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* === F6: 氛围背景与金箔质感 utility ===
+ * 设计宪法："用渐变网格、噪点纹理、几何图案、分层透明、戏剧化阴影营造氛围与深度，而非纯色背景"。
+ * 令牌已在 _tokens.css 定义（--noise-bg / --gold-foil / --brand-gradient / --shadow-drama / --shadow-gold），
+ * 此处提供 utility 类便于在组件中引用。 */
+
+/* 噪点纸质感叠加层（固定定位，pointer-events:none，不拦截交互） */
+.bg-noise::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: var(--noise-bg);
+  opacity: 0.035;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 深酒红渐变背景（用于英雄区/页头） */
+.bg-brand-gradient {
+  background: var(--brand-gradient);
+}
+
+/* 金箔文字（配合 background-clip: text） */
+.text-gold-foil {
+  background: var(--gold-foil-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: var(--gold-500); /* fallback */
+}
+
+/* 金箔边框（用于引用卡片/装饰线） */
+.border-gold-foil {
+  border-image: var(--gold-foil) 1;
+}
+
+/* 戏剧化阴影（深酒红投影，用于金箔卡片/英雄区） */
+.shadow-drama {
+  box-shadow: var(--shadow-drama);
+}
+
+/* 金色光晕（用于引用卡片 hover/聚焦） */
+.shadow-gold-hover:hover {
+  box-shadow: var(--shadow-gold);
+  transition: box-shadow var(--duration-base) var(--ease-out);
+}

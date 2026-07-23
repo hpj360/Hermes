@@ -111,6 +111,13 @@ export function LabPanel({ onJumpToDoc }: LabPanelProps) {
               ? onJumpToDoc(daily.doc_id, daily.chunk_rowid || undefined)
               : undefined
           }
+          onKeyDown={(e) => {
+            // F4: a11y — role=button 需支持 Enter/Space 键盘激活
+            if ((e.key === "Enter" || e.key === " ") && onJumpToDoc && daily.doc_id) {
+              e.preventDefault();
+              onJumpToDoc(daily.doc_id, daily.chunk_rowid || undefined);
+            }
+          }}
           role="button"
           tabIndex={0}
         >
