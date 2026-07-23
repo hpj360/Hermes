@@ -131,6 +131,16 @@ bash scripts/git-push.sh
 - **主分支**：`main`（只接受合并，不直接开发）
 - **远程**：`origin`（GitHub: hpj360/Hermes）
 
+### "推送到 git" 的含义（用户约定）
+
+> 用户原话："以后我说推送到git都是指main；合并到main"
+
+- **"推送 / push 到 git"** = `git checkout main && git merge --no-ff trae/agent-glOxQF && git push origin main`
+- 工作分支本地提交后**不要**直接 `git push origin trae/agent-glOxQF`；改用合并到 main 的方式
+- 单一目标：保持 main 是唯一对外可见的稳定分支
+- 仍然用 `scripts/git-push.sh` 替代裸 `git push`，因为它绑定 ls-remote 校验，防 push 幻觉
+- 工作分支本身保留在本地（不删除），方便后续在此基础上继续开发
+
 Fresh clone 后必须运行 `bash scripts/setup-tracking.sh` 配置 `trae/agent-glOxQF` 的远程跟踪，否则 `git status` 无法正确显示同步状态。
 
 ---
