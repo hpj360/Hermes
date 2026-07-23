@@ -255,6 +255,7 @@ def parse_recipe(api_data: dict[str, Any]) -> dict[str, Any]:
 def sync_thecocktaildb(
     limit: int = 50,
     letters: str = "abcdefghijklmnopqrstuvwxyz0123456789",
+    importer: ImportService | None = None,
 ) -> dict[str, Any]:
     """从 TheCocktailDB 全量同步配方。
 
@@ -269,7 +270,7 @@ def sync_thecocktaildb(
     skipped = 0
     failed = 0
     all_unknown: list[str] = []
-    importer = ImportService()
+    importer = importer or ImportService()
 
     for letter in letters:
         url = f"{API_BASE}/search.php?f={letter}"

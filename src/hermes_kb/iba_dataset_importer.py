@@ -136,11 +136,15 @@ def _is_duplicate(title: str) -> bool:
     return False
 
 
-def sync_iba_dataset(data: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def sync_iba_dataset(
+    data: list[dict[str, Any]] | None = None,
+    importer: ImportService | None = None,
+) -> dict[str, Any]:
     """从 IBA dataset 导入配方。
 
     Args:
         data: IBA 配方列表。若为 None，尝试从 GitHub 拉取。
+        importer: 可选的 ImportService 实例（由 router 通过 app.state 注入）。
 
     Returns:
         {imported, skipped, failed, unknown_ingredients}
@@ -155,7 +159,7 @@ def sync_iba_dataset(data: list[dict[str, Any]] | None = None) -> dict[str, Any]
     skipped = 0
     failed = 0
     all_unknown: list[str] = []
-    importer = ImportService()
+    importer = importer or ImportService()
 
     for raw in data:
         try:

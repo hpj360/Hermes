@@ -6,7 +6,8 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from hermes_kb.api.deps import require_age_gate
+from hermes_kb.api.deps import get_importer, require_age_gate
+from hermes_kb.rag import ImportService
 from hermes_kb.daily_recipe import daily_recipe
 from hermes_kb.ingredients import canonicalize
 from hermes_kb.lab_dashboard import get_lab_dashboard
@@ -121,7 +122,10 @@ async def lab_dashboard_endpoint() -> dict[str, Any]:
 
 # B6: 外部数据源同步 + 配方治理
 @router.post("/sync", dependencies=[Depends(require_age_gate)])
-async def lab_sync(req: SyncRequest) -> dict[str, Any]:
+async def lab_sync(
+    req: SyncRequest,
+    importer: ImportService = Depends(get_importer),
+) -> dict[str, Any]:
     """同步外部数据源配方/替代材料。
 
     source 取值：
@@ -135,11 +139,11 @@ async def lab_sync(req: SyncRequest) -> dict[str, Any]:
     if req.source == "thecocktaildb":
         from hermes_kb.thecocktaildb_sync import sync_thecocktaildb
 
-        result = sync_thecocktaildb(limit=req.limit)
+        result = sync_thecocktaildb(limit=req.limit, importer=importer)
     elif req.source == "iba_dataset":
         from hermes_kb.iba_dataset_importer import sync_iba_dataset
 
-        result = sync_iba_dataset()
+        result = sync_iba_dataset(importer=importer)
     elif req.source == "bar_assistant":
         from hermes_kb.bar_assistant_sync import sync_bar_assistant_substitutes
 
@@ -186,7 +190,10 @@ async def lab_hide_recipe(doc_id: str, hidden: bool = True) -> dict[str, Any]:
 
 # M4.3：UGC 调酒研究室
 @router.post("/recipes", dependencies=[Depends(require_age_gate)])
-async def lab_create_recipe(req: dict[str, Any]) -> dict[str, Any]:
+async def lab_create_recipe(
+    req: dict[str, Any],
+    importer: ImportService = Depends(get_importer),
+) -> dict[str, Any]:
     """创建 UGC 配方（draft 状态）。"""
     title = (req.get("title") or "").strip()
     content = req.get("content") or ""
@@ -200,6 +207,7 @@ async def lab_create_recipe(req: dict[str, Any]) -> dict[str, Any]:
         base_spirit=req.get("base_spirit", ""),
         difficulty=req.get("difficulty", "easy"),
         season=req.get("season"),
+        importer=importer,
     )
     return result
 

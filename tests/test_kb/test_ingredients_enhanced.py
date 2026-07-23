@@ -90,7 +90,7 @@ def test_new_ingredients_have_abv_and_brands():
 
 
 def test_backward_compatible():
-    """G1: 原有函数行为不变。"""
+    """G1: 原有函数行为不变（具体烈酒英文别名已解冲突，归一化到具体条目）。"""
     from hermes_kb.ingredients import (
         all_canonical,
         canonicalize,
@@ -103,15 +103,18 @@ def test_backward_compatible():
     assert canonicalize("gin") == "金酒"
     assert canonicalize("Gordon's") == "金酒"
     assert canonicalize("whiskey") == "威士忌"
-    assert canonicalize("bourbon") == "威士忌"  # 仍为威士忌别名
-    assert canonicalize("scotch") == "威士忌"
-    assert canonicalize("cognac") == "白兰地"
+    assert canonicalize("whisky") == "威士忌"
     assert canonicalize("rum") == "朗姆酒"
-    assert canonicalize("white rum") == "朗姆酒"
-    assert canonicalize("dark rum") == "朗姆酒"
-    assert canonicalize("triple sec") == "君度"
     assert canonicalize("vermouth") == "味美思"
     assert canonicalize("苦艾酒") == "味美思"
+    # P2-A 修复：具体烈酒英文别名归一化到具体条目（不再被通用别名遮蔽）
+    assert canonicalize("bourbon") == "波本威士忌"
+    assert canonicalize("scotch") == "苏格兰威士忌"
+    assert canonicalize("rye") == "黑麦威士忌"
+    assert canonicalize("cognac") == "干邑白兰地"
+    assert canonicalize("white rum") == "白朗姆酒"
+    assert canonicalize("dark rum") == "黑朗姆酒"
+    assert canonicalize("triple sec") == "白橙力娇酒"
     # 未知材料返回原值
     assert canonicalize("某未知材料") == "某未知材料"
     assert canonicalize("") == ""
@@ -139,3 +142,17 @@ def test_backward_compatible():
     assert len(all_names) == len(set(all_names))
     # 注册表条目数与 all_canonical 一致
     assert len(all_names) == len(INGREDIENT_REGISTRY)
+
+
+def test_specific_spirit_abv_resolution():
+    """P2-A: 具体烈酒英文别名归一化后查到正确的 ABV（不再用通用条目 ABV）。"""
+    from hermes_kb.ingredient_strength import get_ingredient_abv
+
+    # dark rum 应查到黑朗姆酒 ABV 0.43，而非朗姆酒 0.40
+    assert get_ingredient_abv("dark rum") == 0.43
+    # white rum 查到白朗姆酒 0.40
+    assert get_ingredient_abv("white rum") == 0.40
+    # triple sec 查到白橙力娇酒 0.30，而非君度 0.40
+    assert get_ingredient_abv("triple sec") == 0.30
+    # 通用 rum 仍查到朗姆酒 0.40
+    assert get_ingredient_abv("rum") == 0.40

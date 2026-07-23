@@ -27,7 +27,7 @@ def test_parse_iba_recipe_basic():
     assert recipe["title"] == "MOJITO"
     assert recipe["source"] == "iba"
     assert recipe["verified"] is True
-    assert "朗姆酒" in recipe["ingredients"]
+    assert "白朗姆酒" in recipe["ingredients"]
     assert "青柠汁" in recipe["ingredients"]
     assert recipe["category_official"] == "Contemporary Classics"
     # content 应含 frontmatter

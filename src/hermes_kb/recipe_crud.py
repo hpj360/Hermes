@@ -25,13 +25,18 @@ def create_recipe(
     base_spirit: str = "",
     difficulty: str = "easy",
     season: str | None = None,
+    importer: ImportService | None = None,
 ) -> dict[str, Any]:
     """创建 UGC 配方（draft 状态）。
+
+    Args:
+        importer: 可选的 ImportService 实例（由 router 通过 app.state 注入）。
+                  为 None 时内部新建（保持向后兼容）。
 
     Returns:
         {doc_id, status, title}
     """
-    importer = ImportService()
+    importer = importer or ImportService()
     result = importer.import_text(
         content=content,
         title=title,

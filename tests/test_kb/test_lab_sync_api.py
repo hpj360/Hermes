@@ -8,7 +8,7 @@ def test_sync_thecocktaildb_endpoint(client, monkeypatch):
     """POST /api/lab/sync source=thecocktaildb 返回同步结果。"""
     from hermes_kb.thecocktaildb_sync import sync_thecocktaildb
 
-    def fake_sync(limit=50, letters="abcdefghijklmnopqrstuvwxyz0123456789"):
+    def fake_sync(limit=50, letters="abcdefghijklmnopqrstuvwxyz0123456789", importer=None):
         return {"imported": 5, "skipped": 2, "failed": 0, "unknown_ingredients": ["Baileys"]}
 
     monkeypatch.setattr("hermes_kb.app.sync_thecocktaildb", fake_sync, raising=False)
@@ -28,7 +28,7 @@ def test_sync_iba_dataset_endpoint(client, monkeypatch):
     """POST /api/lab/sync source=iba_dataset 返回同步结果。"""
     import hermes_kb.iba_dataset_importer as iba_mod
 
-    def fake_sync(data=None):
+    def fake_sync(data=None, importer=None):
         return {"imported": 3, "skipped": 1, "failed": 0, "unknown_ingredients": []}
 
     monkeypatch.setattr(iba_mod, "sync_iba_dataset", fake_sync)
