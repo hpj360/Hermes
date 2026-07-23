@@ -111,20 +111,15 @@ async def list_documents(
 async def import_text(
     req: ImportTextReq, importer: ImportService = Depends(get_importer)
 ) -> dict[str, Any]:
+    # P2-3: category 随 doc 原子落库（消除两阶段非原子）
     result = importer.import_text(
         content=req.content,
         title=req.title,
         source_type=req.source_type,
         file_type=req.file_type,
+        category=req.category or "",
     )
-    # M2-06：写入 category（如果有）
-    if req.category and result.get("doc_id"):
-        with get_session() as session:
-            doc = session.get(Document, result["doc_id"])
-            if doc:
-                doc.category = req.category
-                session.add(doc)
-                session.commit()
+    if req.category:
         result["category"] = req.category
     return result
 

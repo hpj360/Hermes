@@ -349,6 +349,85 @@ def test_api_update_recipe_ingredients_returns_400(client):
     assert "ingredients" in resp.json()["detail"]
 
 
+def test_import_text_governance_atomic(tmp_db):
+    """P2-3: import_text 治理字段与 doc 在同一事务原子落库（无第二阶段）。
+
+    验证 verified/status/source/category/source_id/image_url 一次性写入，
+    避免崩溃残留模型默认（verified=True/status=published）绕过治理意图。
+    """
+    from hermes_kb.rag import ImportService
+    from hermes_kb.models import Document
+    from hermes_kb.database import get_session
+
+    importer = ImportService()
+    result = importer.import_text(
+        content="# 外部配方\n\n## 配方\n- 金酒 50ml",
+        title="外部待审核",
+        source_type="upload",
+        file_type="md",
+        category="recipe",
+        source="thecocktaildb",
+        source_id="cocktail-11008",
+        verified=False,
+        status="pending",
+        image_url="https://example.com/drink.png",
+        season="summer",
+    )
+    doc_id = result["doc_id"]
+
+    # 单次读取即应包含全部治理字段（证明同一事务写入，无需第二阶段）
+    with get_session() as session:
+        doc = session.get(Document, doc_id)
+        assert doc.category == "recipe"
+        assert doc.source == "thecocktaildb"
+        assert doc.source_id == "cocktail-11008"
+        assert doc.verified is False  # 关键：未残留模型默认 True
+        assert doc.status == "pending"  # 关键：未残留模型默认 published
+        assert doc.image_url == "https://example.com/drink.png"
+        assert doc.season == "summer"
+
+
+def test_import_text_governance_defaults_preserved(tmp_db):
+    """P2-3: 不传治理字段时保留模型默认（向后兼容）。"""
+    from hermes_kb.rag import ImportService
+    from hermes_kb.models import Document
+    from hermes_kb.database import get_session
+
+    importer = ImportService()
+    result = importer.import_text(
+        content="普通文档内容",
+        title="普通文档",
+    )
+    with get_session() as session:
+        doc = session.get(Document, result["doc_id"])
+        assert doc.verified is True  # 模型默认
+        assert doc.status == "published"  # 模型默认
+        assert doc.source == "local"  # 模型默认
+        assert doc.category == ""
+
+
+def test_create_recipe_governance_atomic(tmp_db):
+    """P2-3: create_recipe 落地 verified=False/status=draft 原子（无残留 published）。"""
+    from hermes_kb.recipe_crud import create_recipe
+    from hermes_kb.models import Document
+    from hermes_kb.database import get_session
+
+    result = create_recipe(
+        title="UGC 原子测试",
+        ingredients=["金酒"],
+        content="# UGC 原子测试\n\n## 配方\n- 金酒 50ml",
+        season="winter",
+    )
+    with get_session() as session:
+        doc = session.get(Document, result["doc_id"])
+        assert doc.verified is False
+        assert doc.status == "draft"
+        assert doc.source == "ugc"
+        assert doc.category == "recipe"
+        assert doc.source_id == f"ugc-{result['doc_id']}"
+        assert doc.season == "winter"
+
+
 def test_recipe_variant_cascade_on_delete(base_and_variant):
     """P0-2: 删除 base 配方后，RecipeVariant 关联应级联删除（不留孤儿）。"""
     from hermes_kb.recipe_variants import create_variant_link

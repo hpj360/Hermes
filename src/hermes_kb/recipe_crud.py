@@ -14,7 +14,7 @@ from typing import Any
 from sqlmodel import select
 
 from hermes_kb.database import get_session
-from hermes_kb.models import Document
+from hermes_kb.models import Document, _gen_doc_id
 from hermes_kb.rag import ImportService
 
 
@@ -37,27 +37,24 @@ def create_recipe(
         {doc_id, status, title}
     """
     importer = importer or ImportService()
+    # P2-3: 治理字段（verified=False/status=draft/source=ugc/category=recipe）
+    # 与 doc+chunks+vectors 在同一事务原子落库；预生成 doc_id 以便 source_id 一并写入，
+    # 消除"先导入再单独 session 改治理字段"的两阶段非原子（崩溃会残留 verified=True）。
+    new_doc_id = _gen_doc_id()
     result = importer.import_text(
         content=content,
         title=title,
         source_type="ugc",
         file_type="md",
+        doc_id=new_doc_id,
+        category="recipe",
+        source="ugc",
+        source_id=f"ugc-{new_doc_id}",
+        verified=False,
+        status="draft",
+        season=season,
     )
-    doc_id = result.get("doc_id")
-    if doc_id:
-        with get_session() as session:
-            doc = session.get(Document, doc_id)
-            if doc:
-                doc.category = "recipe"
-                doc.source = "ugc"
-                doc.source_id = f"ugc-{doc_id}"
-                doc.verified = False
-                doc.status = "draft"
-                if season:
-                    doc.season = season
-                session.add(doc)
-                session.commit()
-    return {"doc_id": doc_id, "status": "draft", "title": title}
+    return {"doc_id": result.get("doc_id"), "status": "draft", "title": title}
 
 
 def update_recipe(

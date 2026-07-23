@@ -148,19 +148,14 @@ async def seed_recipes(
                 )
                 continue
         try:
+            # P2-3: category 随 doc 原子落库（消除两阶段非原子）
             result = importer.import_text(
                 content=recipe["content"],
                 title=recipe["title"],
                 source_type="seed",
                 file_type="md",
+                category="recipe",
             )
-            if result.get("doc_id"):
-                with get_session() as session:
-                    doc = session.get(Document, result["doc_id"])
-                    if doc:
-                        doc.category = "recipe"
-                        session.add(doc)
-                        session.commit()
             seeded += 1
             items.append({**result, "status": "imported"})
         except Exception as e:

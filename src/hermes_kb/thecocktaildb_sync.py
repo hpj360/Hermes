@@ -302,22 +302,19 @@ def sync_thecocktaildb(
                         continue
 
                 # 导入
+                # P2-3: 治理字段（verified=False 待审核）原子落库，
+                # 消除两阶段非原子（崩溃残留 verified=True 标记未审核外部配方为金标准）。
                 result = importer.import_text(
                     content=recipe["content"],
                     title=recipe["title"],
+                    category="recipe",
+                    source="thecocktaildb",
+                    source_id=recipe["source_id"],
+                    verified=False,
+                    image_url=recipe.get("image_url"),
                 )
                 doc_id = result.get("doc_id") if isinstance(result, dict) else result
                 if doc_id:
-                    with get_session() as session:
-                        doc = session.get(Document, doc_id)
-                        if doc:
-                            doc.category = "recipe"
-                            doc.source = "thecocktaildb"
-                            doc.source_id = recipe["source_id"]
-                            doc.verified = False
-                            doc.image_url = recipe.get("image_url")
-                            session.add(doc)
-                            session.commit()
                     imported += 1
                 else:
                     failed += 1

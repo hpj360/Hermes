@@ -446,10 +446,30 @@ class ImportService:
         file_type: str = "txt",
         source_path: str | None = None,
         allow_empty: bool = False,
+        *,
+        doc_id: str | None = None,
+        category: str = "",
+        source: str | None = None,
+        source_id: str | None = None,
+        verified: bool | None = None,
+        status: str | None = None,
+        image_url: str | None = None,
+        season: str | None = None,
     ) -> dict[str, Any]:
         """导入纯文本。
 
         allow_empty=True 时允许空内容（chunk_count=0），用于文件解析为空的场景。
+
+        治理字段（P2-3 原子化）：``category``/``source``/``source_id``/``verified``
+        /``status``/``image_url``/``season`` 与 doc+chunks+vectors 在**同一事务**内
+        一并写入并 commit，消除"先导入再单独 session 改治理字段"的两阶段非原子
+        （避免崩溃残留 verified=True/status=published 绕过治理意图）。
+
+        Args:
+            doc_id: 可选预生成 doc_id（用于 source_id 依赖 doc_id 的场景，如 UGC）。
+                    为 None 时由模型 default_factory 生成。
+            source/verified/status: 为 None 时保留模型默认（local/True/published），
+                显式传入则覆盖。其余治理字段直接透传（均有模型默认值）。
         """
         from hermes_kb.models import Chunk, Document
 
@@ -473,8 +493,21 @@ class ImportService:
         chunk_texts = [c[2] for c in chunks]
         vectors = self.embedding.embed(chunk_texts) if chunk_texts else []
 
+        # 治理字段：仅收集显式传入的非 None 值，None 走模型默认
+        gov: dict[str, Any] = {"category": category, "image_url": image_url}
+        if source is not None:
+            gov["source"] = source
+        if source_id is not None:
+            gov["source_id"] = source_id
+        if verified is not None:
+            gov["verified"] = verified
+        if status is not None:
+            gov["status"] = status
+        if season is not None:
+            gov["season"] = season
+
         with get_session() as session:
-            doc = Document(
+            doc_kwargs: dict[str, Any] = dict(
                 title=title.strip(),
                 content=content,
                 source_type=source_type,
@@ -482,6 +515,9 @@ class ImportService:
                 source_path=source_path,
                 chunk_count=len(chunks),
             )
+            if doc_id is not None:
+                doc_kwargs["doc_id"] = doc_id
+            doc = Document(**doc_kwargs, **gov)
             session.add(doc)
             session.flush()  # 拿到 doc_id
             doc_id = doc.doc_id

@@ -171,21 +171,18 @@ def sync_iba_dataset(
                 skipped += 1
                 continue
 
+            # P2-3: 治理字段（IBA 金标准 verified=True/status=published）原子落库，
+            # 消除两阶段非原子。
             result = importer.import_text(
                 content=recipe["content"],
                 title=recipe["title"],
+                category="recipe",
+                source="iba",
+                verified=True,  # IBA 金标准
+                status="published",
             )
             doc_id = result.get("doc_id") if isinstance(result, dict) else result
             if doc_id:
-                with get_session() as session:
-                    doc = session.get(Document, doc_id)
-                    if doc:
-                        doc.category = "recipe"
-                        doc.source = "iba"
-                        doc.verified = True  # IBA 金标准
-                        doc.status = "published"
-                        session.add(doc)
-                        session.commit()
                 imported += 1
             else:
                 failed += 1
