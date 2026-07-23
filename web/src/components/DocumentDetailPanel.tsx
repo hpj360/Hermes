@@ -57,9 +57,9 @@ export function DocumentDetailPanel({
       const el = chunkRefs.current[highlightChunk];
       if (el) {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
-        el.classList.add("ring-4", "ring-brand-400", "bg-brand-50");
+        el.classList.add("ring-4", "ring-brand-200", "bg-brand-50");
         setTimeout(() => {
-          el.classList.remove("ring-4", "ring-brand-400", "bg-brand-50");
+          el.classList.remove("ring-4", "ring-brand-200", "bg-brand-50");
         }, 2000);
       }
     }, 300);
@@ -173,7 +173,7 @@ export function DocumentDetailPanel({
                   }}
                   className={`text-xs px-2 py-1 rounded border transition-colors ${
                     editTagIds.includes(t.id)
-                      ? "bg-brand-600 text-white border-brand-700"
+                      ? "bg-brand-700 text-white border-brand-700"
                       : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
                   }`}
                   style={!editTagIds.includes(t.id) ? { borderColor: t.color } : {}}

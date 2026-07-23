@@ -145,11 +145,20 @@ export function ChatPanel({ refreshDocs, onJumpToDoc }: ChatPanelProps) {
   return (
     <div className="flex flex-col h-full">
       {/* 工具栏 */}
-      <div className="flex items-center justify-between px-4 py-2 border-b bg-gray-50">
-        <h2 className="text-sm font-semibold text-gray-700">问答</h2>
+      <div
+        className="flex items-center justify-between px-4 py-2 border-b"
+        style={{ background: "var(--ink-50)", borderColor: "var(--ink-200)" }}
+      >
+        <h2
+          className="text-sm font-semibold"
+          style={{ color: "var(--ink-900)", fontFamily: "var(--font-serif)" }}
+        >
+          问答
+        </h2>
         <button
           onClick={seed}
-          className="text-xs text-brand-700 hover:text-brand-500"
+          className="text-xs hover:opacity-75"
+          style={{ color: "var(--brand-700)" }}
           disabled={loading}
         >
           导入种子知识
@@ -159,10 +168,24 @@ export function ChatPanel({ refreshDocs, onJumpToDoc }: ChatPanelProps) {
       {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 && (
-          <div className="text-center text-gray-400 mt-12">
-            <div className="text-4xl mb-2">🍷</div>
-            <p className="text-sm">向 Hermes 知识库提问吧</p>
-            <p className="text-xs mt-1">试试："金酒的核心风味是什么？"</p>
+          <div className="text-center mt-12">
+            <div className="text-4xl mb-3 reveal-item">🍷</div>
+            <p
+              className="reveal-item delay-2"
+              style={{
+                color: "var(--ink-900)",
+                fontFamily: "var(--font-serif)",
+                fontSize: "1.05rem",
+              }}
+            >
+              向 Hermes 知识库提问吧
+            </p>
+            <p
+              className="text-xs mt-1.5 reveal-item delay-3"
+              style={{ color: "var(--ink-400)", fontFamily: "var(--font-sans)" }}
+            >
+              试试："金酒的核心风味是什么？"
+            </p>
           </div>
         )}
         {messages.map((m, i) => (
@@ -171,37 +194,67 @@ export function ChatPanel({ refreshDocs, onJumpToDoc }: ChatPanelProps) {
             className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
           >
             <div
-              className={`max-w-3xl rounded-lg px-4 py-3 ${
+              className="max-w-3xl rounded-lg px-4 py-3"
+              style={
                 m.role === "user"
-                  ? "bg-brand-600 text-white"
-                  : "bg-white border border-gray-200"
-              }`}
+                  ? {
+                      background: "var(--brand-700)",
+                      color: "#fff",
+                      boxShadow: "var(--shadow-md)",
+                    }
+                  : {
+                      background: "#fff",
+                      border: "1px solid var(--ink-200)",
+                      borderLeft: "3px solid var(--gold-500)",
+                      boxShadow: "var(--shadow-sm)",
+                      fontFamily: "var(--font-sans)",
+                    }
+              }
             >
               {m.role === "user" ? (
                 <p className="whitespace-pre-wrap">{m.content}</p>
               ) : (
                 <>
                   {m.rejected && (
-                    <div className="text-xs bg-red-50 text-red-700 px-2 py-1 rounded mb-2">
+                    <div
+                      className="text-xs px-2 py-1 rounded mb-2"
+                      style={{ background: "#FDECEA", color: "var(--danger)" }}
+                    >
                       已拒绝：检测到越狱尝试
                     </div>
                   )}
                   {m.lowConfidence && (
-                    <div className="text-xs bg-yellow-50 text-yellow-700 px-2 py-1 rounded mb-2">
+                    <div
+                      className="text-xs px-2 py-1 rounded mb-2"
+                      style={{ background: "var(--gold-100)", color: "var(--warning)" }}
+                    >
                       低置信度：知识库中暂无足够相关信息
                     </div>
                   )}
-                  <p className="whitespace-pre-wrap text-gray-800">
+                  <p
+                    className="whitespace-pre-wrap"
+                    style={{ color: "var(--ink-900)", fontFamily: "var(--font-sans)" }}
+                  >
                     {m.content || (m.streaming ? "生成中..." : "")}
                     {m.streaming && (
-                      <span className="inline-block w-2 h-4 ml-1 bg-brand-500 animate-pulse" />
+                      <span
+                        className="inline-block w-2 h-4 ml-1 align-middle animate-pulse"
+                        style={{ background: "var(--brand-500)" }}
+                      />
                     )}
                   </p>
                   {m.citations && m.citations.length > 0 && (
                     <CitationList citations={m.citations} onJumpToDoc={onJumpToDoc} />
                   )}
                   {m.latencyMs !== undefined && !m.streaming && (
-                    <div className="text-xs text-gray-400 mt-2">
+                    <div
+                      className="text-xs mt-2 pt-2 border-t"
+                      style={{
+                        color: "var(--ink-400)",
+                        fontFamily: "var(--font-mono)",
+                        borderColor: "var(--ink-100)",
+                      }}
+                    >
                       {m.modelUsed} · {m.latencyMs}ms
                     </div>
                   )}

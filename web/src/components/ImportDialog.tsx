@@ -118,7 +118,7 @@ export function ImportDialog({ onClose, onImported }: ImportDialogProps) {
             <button
               className={`px-4 py-2 text-sm border-b-2 ${
                 tab === "text"
-                  ? "border-brand-600 text-brand-700"
+                  ? "border-brand-700 text-brand-700"
                   : "border-transparent text-gray-500"
               }`}
               onClick={() => setTab("text")}
@@ -128,7 +128,7 @@ export function ImportDialog({ onClose, onImported }: ImportDialogProps) {
             <button
               className={`px-4 py-2 text-sm border-b-2 ${
                 tab === "file"
-                  ? "border-brand-600 text-brand-700"
+                  ? "border-brand-700 text-brand-700"
                   : "border-transparent text-gray-500"
               }`}
               onClick={() => setTab("file")}
@@ -138,7 +138,7 @@ export function ImportDialog({ onClose, onImported }: ImportDialogProps) {
             <button
               className={`px-4 py-2 text-sm border-b-2 ${
                 tab === "batch"
-                  ? "border-brand-600 text-brand-700"
+                  ? "border-brand-700 text-brand-700"
                   : "border-transparent text-gray-500"
               }`}
               onClick={() => setTab("batch")}
