@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from sqlmodel import select
@@ -112,9 +113,11 @@ def reject_recipe(doc_id: str, reason: str = "") -> bool:
             return False
         doc.status = "rejected"
         doc.verified = False
-        # reason 存到 source_path 字段（复用）或扩展字段
+        # reason 存入 Document.meta（JSON 字段），key=reject_reason
         if reason:
-            doc.source_path = f"reject_reason: {reason}"
+            meta = json.loads(doc.meta) if doc.meta else {}
+            meta["reject_reason"] = reason
+            doc.meta = json.dumps(meta, ensure_ascii=False)
         session.add(doc)
         session.commit()
         return True

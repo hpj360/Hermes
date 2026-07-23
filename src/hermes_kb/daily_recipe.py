@@ -20,6 +20,11 @@ from hermes_kb.recipe_match import batch_first_chunks
 from hermes_kb.recipe_stats import get_hot_recipes
 from hermes_kb.seed_recipes import SEED_RECIPES
 
+# 每日推荐权重（season 优先 > hot 次之 > random 兜底）
+_SEASON_WEIGHT = 0.6
+_HOT_WEIGHT = 0.3
+_RANDOM_WEIGHT = 0.1
+
 
 def _today_utc() -> date:
     """统一的 UTC 当前日期（替代 date.today() 的本地时区依赖）。
@@ -90,7 +95,7 @@ def daily_recipe() -> dict[str, Any] | None:
     season = _current_season()
 
     # 60% 季节池
-    if roll < 0.6:
+    if roll < _SEASON_WEIGHT:
         pool = _seasonal_pool(season)
         if pool:
             choice = rng.choice(pool)
@@ -98,7 +103,7 @@ def daily_recipe() -> dict[str, Any] | None:
             return choice
 
     # 30% 热门池
-    if roll < 0.9:
+    if roll < _SEASON_WEIGHT + _HOT_WEIGHT:
         hot = get_hot_recipes(limit=10, days=30)
         if hot:
             choice = rng.choice(hot)

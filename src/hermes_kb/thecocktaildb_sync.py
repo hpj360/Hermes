@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -172,7 +173,7 @@ _INGREDIENT_OVERRIDES: dict[str, str] = {
 }
 
 API_BASE = "https://www.thecocktaildb.com/api/json/v1/1"
-API_KEY = "1"  # 测试 Key，免费
+API_KEY = os.environ.get("KB_THECOCKTAILDB_API_KEY", "1")  # "1" 是官方公开测试 key，生产应购买 $10 终身 Premium
 
 
 def normalize_ingredient(en_name: str) -> str | None:
