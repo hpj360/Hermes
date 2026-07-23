@@ -1,6 +1,6 @@
 {
   "name": "hermes",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "main_repo_path": "/workspace/OpenClaw/openclaw-main",
   "inherited_from": [
     "/workspace/.trae/skills",
@@ -9,18 +9,13 @@
   "skills": [
     "agent-browser",
     "aipm-news-digest",
-    "awesome-openclaw-skills",
     "brave-search",
-    "claude-skills",
-    "darwin-skill",
     "douyin-reader",
     "find-skills",
     "frontend-design",
     "github",
-    "khazix-skills",
     "loop-engineering",
     "notion",
-    "nuwa-skill",
     "obsidian",
     "product-manager",
     "product-manager-skills",
@@ -35,7 +30,6 @@
     "trello",
     "weather",
     "wechat-reader",
-    "x-research-skill",
     "youtube-watcher"
   ],
   "knowledge": [

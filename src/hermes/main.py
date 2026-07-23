@@ -11,6 +11,7 @@ from hermes.config import get_settings
 from hermes.logging import setup_logging
 from hermes.profile import get_profile_markdown, load_profile
 from hermes.skills import discover_skills, list_knowledge_docs, skills_dir, knowledge_dir
+from hermes.workbench.cli import add_workbench_subparser
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -197,6 +198,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_profile_show = p_profile_sub.add_parser("show", help="Show user profile")
     p_profile_show.add_argument("--json", action="store_true", help="Output raw JSON")
     p_profile_show.set_defaults(func=cmd_profile_show)
+
+    add_workbench_subparser(sub)
 
     return parser
 

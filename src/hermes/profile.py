@@ -41,7 +41,7 @@ def save_profile(profile: dict[str, Any]) -> None:
 def update_field(section: str, key: str, value: Any) -> dict[str, Any]:
     """Update a single field in the profile and save. Returns the updated profile."""
     profile = load_profile()
-    if section not in profile:
+    if section not in profile or not isinstance(profile[section], dict):
         profile[section] = {}
     profile[section][key] = value
     save_profile(profile)

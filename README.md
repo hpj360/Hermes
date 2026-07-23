@@ -1,6 +1,6 @@
 # Hermes
 
-Hermes 是一个独立于主仓库（OpenClaw/openclaw-main）的 Python Agent 层，继承主仓库中常用的账号与 API 环境配置，内置已沉淀的 30 个 skills 与 4 篇知识文档。
+Hermes 是一个独立于主仓库（OpenClaw/openclaw-main）的 Python Agent 层，继承主仓库中常用的账号与 API 环境配置，内置已沉淀的 24 个 skills 与 4 篇知识文档。
 
 ## 目录结构
 
@@ -12,7 +12,7 @@ Hermes/
 │   ├── logging.py       # 结构化日志配置
 │   ├── skills.py        # Skills/知识文档发现与管理
 │   └── main.py          # CLI 入口（argparse 子命令）
-├── skills/              # 从主仓库拉取的沉淀 skill（30 个）
+├── skills/              # 从主仓库拉取的沉淀 skill（24 个）
 ├── knowledge/           # 从主仓库拉取的知识文档（4 篇）
 ├── tests/               # 单元测试
 ├── manifest.json        # skill / knowledge 清单
@@ -115,7 +115,7 @@ for skill in discover_skills():
 
 ## 已沉淀的 Skills
 
-Hermes 已从主仓库拉取 30 个 skills，包括：浏览器自动化、新闻摘要、搜索（Brave/Tavily）、抖音/微信/YouTube 内容读取、前端设计、GitHub/Notion/Obsidian/Trello 集成、Loop Engineering、产品经理、股票分析、Skill 创建/管理/审核、天气查询、自我改进 Agent 等。
+Hermes 已从主仓库拉取 24 个 skills，包括：浏览器自动化、新闻摘要、搜索（Brave/Tavily）、抖音/微信/YouTube 内容读取、前端设计、GitHub/Notion/Obsidian/Trello 集成、Loop Engineering、产品经理、股票分析、Skill 创建/管理/审核、天气查询、自我改进 Agent 等。
 
 ## 开发
 
