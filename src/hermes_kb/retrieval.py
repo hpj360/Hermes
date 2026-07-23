@@ -1,10 +1,15 @@
-"""混合检索：BM25（FTS5）+ 向量（Python 余弦）+ RRF 融合。
+"""混合检索：BM25（FTS5）+ 向量（sqlite-vec ANN，降级 Python 余弦）+ RRF 融合。
 
 中文 BM25 分词策略（P0 修复关键）：
 - 标点切段
 - 中文片段 bigram + 单字
 - 英文保留原词
 - 用 OR 查询，FTS5 unicode61 分词器对中文按字索引，bigram 能命中
+
+向量检索（E3）：
+- 优先 sqlite-vec vec0 ANN 索引（chunk_vec_ann），O(log n) 近似检索
+- 降级条件：sqlite-vec 不可用 / 扩展加载失败 / 维度不匹配 / ANN 查询异常
+- 降级路径：Python 余弦相似度全表扫描（chunk_vec，受 vector_scan_limit 约束）
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
 
 from hermes_kb.config import get_settings
-from hermes_kb.database import get_engine, get_session
+from hermes_kb.database import _SQLITE_VEC_AVAILABLE, get_engine, get_session
 from hermes_kb.embedding import EmbeddingService
 from hermes_kb.models import Chunk, Document
 
@@ -182,13 +187,92 @@ class HybridRetriever:
         return hits
 
     def _vector(self, query: str, k: int) -> list[RetrievalHit]:
-        """向量检索（Python 余弦相似度，A3-1 优化）。"""
+        """向量检索（优先 sqlite-vec ANN，降级 Python 余弦扫描）。"""
         qvec = self.embedding.embed_one(query)
         if not qvec or all(v == 0.0 for v in qvec):
             return []
+        # 优先 ANN 索引（sqlite-vec vec0）
+        if _SQLITE_VEC_AVAILABLE:
+            try:
+                hits = self._vector_ann(qvec, k)
+                if hits:
+                    return hits
+                # ANN 返回空：索引可能未填充，降级到全表扫描兜底
+            except Exception as exc:
+                logger.warning(
+                    "ANN query failed, falling back to Python cosine scan: %s", exc
+                )
+        # 降级：Python 余弦相似度全表扫描
+        return self._vector_scan(qvec, k)
+
+    def _vector_ann(self, qvec: list[float], k: int) -> list[RetrievalHit]:
+        """sqlite-vec vec0 ANN 检索。
+
+        查询返回 (rowid, distance)，distance 越小越相似（欧氏距离）。
+        维度不匹配（query 维度 != 表定义维度）会抛 OperationalError，
+        由调用方捕获后降级到 Python 余弦扫描。
+        """
+        import sqlite_vec
+
+        qbytes = sqlite_vec.serialize_float32(qvec)
         eng = get_engine()
-        settings = get_settings()
-        scan_limit = settings.vector_scan_limit
+        with eng.connect() as conn:
+            rows = conn.execute(
+                sa_text(
+                    "SELECT rowid, distance FROM chunk_vec_ann "
+                    "WHERE embedding MATCH :q ORDER BY distance LIMIT :k"
+                ),
+                {"q": qbytes, "k": k},
+            ).fetchall()
+        if not rows:
+            return []
+        rowids = [int(r[0]) for r in rows]
+        dist_map = {int(r[0]): float(r[1]) for r in rows}
+        # 批量查元数据（消除 N+1）；跳过已删除 chunk（ANN 索引残留 rowid）
+        chunk_meta: dict[int, tuple[str, str]] = {}  # rowid -> (doc_id, text)
+        title_map: dict[str, str] = {}
+        try:
+            with get_session() as session:
+                chunks = session.exec(
+                    select(Chunk).where(Chunk.id.in_(rowids))
+                ).all()
+                chunk_meta = {c.id: (c.doc_id, c.text) for c in chunks}
+                doc_ids = list({d_id for d_id, _ in chunk_meta.values()})
+                if doc_ids:
+                    docs = session.exec(
+                        select(Document).where(Document.doc_id.in_(doc_ids))
+                    ).all()
+                    title_map = {d.doc_id: d.title for d in docs}
+        except SQLAlchemyError as exc:
+            logger.warning(
+                "vector ANN metadata fetch failed (rowids=%s): %s", rowids, exc
+            )
+        hits: list[RetrievalHit] = []
+        for rowid in rowids:
+            meta = chunk_meta.get(rowid)
+            if meta is None:
+                # chunk 已删除（ANN 索引残留），跳过
+                continue
+            doc_id, text = meta
+            dist = dist_map.get(rowid, 0.0)
+            # distance 越小越相似；转为 similarity-like score（越大越好）
+            score = 1.0 / (1.0 + max(dist, 0.0))
+            hits.append(
+                RetrievalHit(
+                    chunk_rowid=rowid,
+                    doc_id=doc_id,
+                    title=title_map.get(doc_id, doc_id),
+                    text=text,
+                    score=score,
+                    source="vector",
+                )
+            )
+        return hits
+
+    def _vector_scan(self, qvec: list[float], k: int) -> list[RetrievalHit]:
+        """Python 余弦相似度全表扫描（fallback，受 vector_scan_limit 约束）。"""
+        eng = get_engine()
+        scan_limit = get_settings().vector_scan_limit
         try:
             with eng.connect() as conn:
                 rows = conn.execute(
@@ -200,11 +284,6 @@ class HybridRetriever:
         except SQLAlchemyError as exc:
             logger.warning("vector scan failed: %s", exc)
             return []
-        if len(rows) >= scan_limit:
-            logger.warning(
-                "vector scan hit limit (%d); increase KB_VECTOR_SCAN_LIMIT to avoid silent truncation",
-                scan_limit,
-            )
         scored: list[tuple[float, int, str]] = []
         for row in rows:
             rowid = int(row[0])

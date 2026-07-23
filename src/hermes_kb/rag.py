@@ -28,7 +28,7 @@ from sqlalchemy import text as sa_text
 from sqlmodel import select
 
 from hermes_kb.config import get_settings
-from hermes_kb.database import get_engine, get_session
+from hermes_kb.database import _SQLITE_VEC_AVAILABLE, get_engine, get_session
 from hermes_kb.embedding import EmbeddingService
 from hermes_kb.llm import LLMClient
 from hermes_kb.models import QueryLog
@@ -498,7 +498,7 @@ class ImportService:
                 session.add(c)
                 session.flush()
                 rowid = c.id
-                # 写向量
+                # 写向量（JSON，向后兼容 + 调试）
                 vec = vectors[i] if i < len(vectors) else [0.0] * self.embedding.dim
                 session.execute(
                     sa_text(
@@ -507,6 +507,19 @@ class ImportService:
                     ),
                     {"rowid": rowid, "doc_id": doc_id, "vec": json.dumps(vec)},
                 )
+                # 写入 ANN 索引（sqlite-vec vec0，维度需匹配表定义）
+                if _SQLITE_VEC_AVAILABLE and len(vec) == settings.embedding_dim:
+                    import sqlite_vec
+                    session.execute(
+                        sa_text(
+                            "INSERT INTO chunk_vec_ann(rowid, embedding) "
+                            "VALUES (:rowid, :emb)"
+                        ),
+                        {
+                            "rowid": rowid,
+                            "emb": sqlite_vec.serialize_float32(vec),
+                        },
+                    )
             session.commit()
 
         return {
