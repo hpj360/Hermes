@@ -234,6 +234,26 @@ def cmd_reset(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_migrate(_args: argparse.Namespace) -> int:
+    """执行 alembic 数据库迁移到 head。
+
+    生产环境用此命令显式升级 schema（替代启动期隐式 create_all）。
+    连接串从 hermes_kb.config.get_settings().db_url 读取。
+    """
+    from hermes_kb.config import get_settings
+    from hermes_kb.database import run_migrations
+
+    settings = get_settings()
+    print(f"[info] 数据库: {settings.db_path}")
+    try:
+        run_migrations()
+    except Exception as e:  # noqa: BLE001
+        print(f"[error] 迁移失败: {e}", file=sys.stderr)
+        return 1
+    print("[info] 迁移完成 (head)")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # 参数解析
 # ---------------------------------------------------------------------------
@@ -297,6 +317,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force", action="store_true", help="确认清空")
     p.set_defaults(func=cmd_reset)
 
+    # migrate
+    p = sub.add_parser("migrate", help="执行 alembic 数据库迁移到 head")
+    p.set_defaults(func=cmd_migrate)
+
     return parser
 
 
@@ -304,6 +328,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)
+
+
+def migrate_main(argv: list[str] | None = None) -> int:
+    """``hermes-kb-migrate`` 脚本入口：等价于 ``hermes-kb migrate``。"""
+    return main(["migrate", *(argv or [])])
 
 
 if __name__ == "__main__":
