@@ -7,6 +7,7 @@ in a structured JSON file under the project data/ directory.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -19,21 +20,139 @@ def _profile_path() -> Path:
     return settings.hermes_profile_path
 
 
+def _working_principles_doc_path() -> Path:
+    """Path to the project-level persisted working principles document."""
+    return Path(__file__).resolve().parents[2] / "knowledge" / "working-principles.md"
+
+
+# Strict pattern: only `## 规则N：` / `## 规则N:` (N = 中文数字 or arabic) is a rule
+# heading. This avoids matching `## 规则补充` / `## 规则附录` (Bug 5).
+_RULE_HEADING_RE = re.compile(r"^##\s*规则[一二三四五六七八九十百\d]+\s*[:：]")
+_HEADING_RE = re.compile(r"^#+\s")
+
+
+def _load_working_principles_from_doc() -> list[str]:
+    """Parse principle entries from knowledge/working-principles.md.
+
+    Each entry is `## 规则N：标题` followed by a body. The body runs until the
+    next rule heading, any other markdown heading (which starts a non-rule
+    section and must NOT leak into the rule body), or end of document.
+    Trailing ``---`` separator lines (markdown thematic breaks that delimit
+    sections but aren't part of the rule content) are stripped from the end
+    of each rule body.
+
+    Fenced code blocks (``` / ~~~) are tracked so `#` comment lines inside
+    them are not mistaken for markdown headings, and `## 规则N：` text inside
+    a code block is not parsed as a rule heading.
+
+    Returns an empty list if the document is missing or unreadable.
+    """
+    path = _working_principles_doc_path()
+    if not path.exists():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    entries: list[str] = []
+    current_title: str | None = None
+    current_body: list[str] = []
+    in_code_block = False
+
+    def _flush() -> None:
+        nonlocal current_title, current_body
+        if current_title is not None:
+            # Strip trailing `---` thematic-break lines (and surrounding blank
+            # lines) that delimit sections but aren't part of the rule's actual
+            # content. A blank line often separates `---` from the next heading.
+            body_lines = list(current_body)
+            while body_lines and body_lines[-1].strip() in ("", "---"):
+                body_lines.pop()
+            body = "\n".join(body_lines).strip()
+            entries.append(current_title if not body else f"{current_title}\n{body}")
+        current_title = None
+        current_body = []
+
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        # Track fenced code blocks — inside ```/~~~ blocks, # lines are
+        # comments, not markdown headings.
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_block = not in_code_block
+            if current_title is not None:
+                current_body.append(line)
+            continue
+        if in_code_block:
+            if current_title is not None:
+                current_body.append(line)
+            continue
+        if _RULE_HEADING_RE.match(line):
+            _flush()
+            current_title = line.lstrip("# ").strip()
+            current_body = []
+        elif _HEADING_RE.match(line):
+            # Any other heading ends the current rule's body so trailing
+            # non-rule sections (e.g. `## 加载机制`) don't leak in.
+            _flush()
+        elif current_title is not None:
+            current_body.append(line)
+    _flush()
+    return entries
+
+
+def _has_meaningful_principles(values: list[Any] | None) -> bool:
+    """True if `values` contains at least one non-empty, non-null string."""
+    if not values:
+        return False
+    return any(isinstance(p, str) and p.strip() for p in values)
+
+
 def load_profile() -> dict[str, Any]:
-    """Load the user profile from disk. Returns an empty skeleton if missing."""
+    """Load the user profile from disk. Returns an empty skeleton if missing.
+
+    If `work_style.working_principles` is empty/meaningless, backfill from the
+    persisted project-level document `knowledge/working-principles.md` so that
+    any cloned environment inherits the rules. A non-empty local value always
+    wins. Backfilled values are NOT persisted by save_profile — the original
+    local value (empty) is preserved so future document updates keep flowing
+    in (fixes Bug 3 where backfill was written back and broke inheritance).
+    """
     path = _profile_path()
     if not path.exists():
-        return dict(_default_profile())
-    with path.open("r", encoding="utf-8") as f:
-        data: dict[str, Any] = json.load(f)
-        return data
+        profile = dict(_default_profile())
+    else:
+        with path.open("r", encoding="utf-8") as f:
+            data: dict[str, Any] = json.load(f)
+            profile = data
+    # Backfill persisted working principles only if local has no meaningful value.
+    work_style = profile.setdefault("work_style", {})
+    local_principles = work_style.get("working_principles")
+    if not _has_meaningful_principles(local_principles):
+        doc_principles = _load_working_principles_from_doc()
+        if doc_principles:
+            # Store backfilled values under a separate key so save_profile can
+            # avoid persisting them (keeps local "empty" state for future doc updates).
+            work_style["working_principles"] = doc_principles
+            work_style["_working_principles_from_doc"] = True
+    return profile
 
 
 def save_profile(profile: dict[str, Any]) -> None:
-    """Persist the user profile to disk and update the timestamp."""
+    """Persist the user profile to disk and update the timestamp.
+
+    Backfilled working_principles (marked with `_working_principles_from_doc`)
+    are stripped before writing so the local profile stays "empty" and future
+    document updates keep flowing in. This preserves the inheritance mechanism
+    (fixes Bug 3 where the first save_profile call poisoned local state).
+    """
     path = _profile_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     profile["updated_at"] = datetime.now(timezone.utc).isoformat()
+    work_style = profile.get("work_style")
+    if isinstance(work_style, dict) and work_style.get("_working_principles_from_doc"):
+        # Restore local to empty so doc updates remain visible on next load.
+        work_style["working_principles"] = []
+        work_style.pop("_working_principles_from_doc", None)
     with path.open("w", encoding="utf-8") as f:
         json.dump(profile, f, ensure_ascii=False, indent=2)
 
@@ -398,6 +517,14 @@ def _render_work_style(lines: list[str], p: dict[str, Any]) -> None:
     lines.append(f"- **工作习惯**: {_join(work.get('work_habits', []))}")
     lines.append(f"- **沟通风格**: {_join(work.get('communication_style', []))}")
     lines.append(f"- **偏好工具**: {_join(work.get('tools_preferred', []))}")
+    principles = work.get("working_principles", []) or []
+    if principles:
+        lines.append("- **工作原则/规则**:")
+        for principle in principles:
+            # Indent embedded newlines so multi-line principle bodies stay
+            # nested under the list item instead of breaking list structure.
+            indented = str(principle).replace("\n", "\n    ")
+            lines.append(f"  - {indented}")
     lines.append("")
 
 
@@ -526,6 +653,7 @@ def _default_profile() -> dict[str, Any]:
             "work_habits": [],
             "communication_style": [],
             "tools_preferred": [],
+            "working_principles": [],
         },
         "personal_projects": [],
         "goals": {

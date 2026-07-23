@@ -61,6 +61,7 @@ logs/
 # Hermes runtime state
 .state/
 .cache/
+.loops/
 
 # User profile (contains personal data, do not commit)
 data/profile.json
