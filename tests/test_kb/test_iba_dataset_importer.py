@@ -177,3 +177,58 @@ def test_sync_iba_dataset_empty_data():
     result = sync_iba_dataset(data=[])
     assert result["imported"] == 0
     assert result["skipped"] == 0
+
+
+def test_diff_iba_official_basic():
+    """G3: 用 mock local + official data 测试 diff 逻辑。"""
+    from hermes_kb.iba_dataset_importer import diff_iba_official
+
+    local_data = [
+        {"title": "Negroni"},
+        {"title": "Mojito"},
+        {"title": "Old Fashioned"},
+    ]
+    official_data = [
+        {"name": "Negroni", "ingredients": [], "type": "The Unforgettables"},
+        {"name": "Mojito", "ingredients": [], "type": "Contemporary Classics"},
+        {"name": "Daiquiri", "ingredients": [], "type": "Contemporary Classics"},
+    ]
+
+    result = diff_iba_official(local_data=local_data, official_data=official_data)
+
+    assert result["local_count"] == 3
+    assert result["official_count"] == 3
+    # 两边都有的
+    assert result["matched"] == ["mojito", "negroni"]
+    # 官方有但本地没有
+    assert result["missing_locally"] == ["daiquiri"]
+    # 本地有但官方没有
+    assert result["extra_locally"] == ["old fashioned"]
+
+
+def test_diff_iba_official_network_fail(monkeypatch):
+    """G3: 网络失败时返回结构正确（official_count=0, missing_locally=[]）。"""
+    from hermes_kb import iba_dataset_importer
+
+    # 模拟远程拉取失败（返回空列表）
+    monkeypatch.setattr(iba_dataset_importer, "_fetch_remote_data", lambda: [])
+
+    local_data = [{"title": "Negroni"}, {"title": "Mojito"}]
+    result = iba_dataset_importer.diff_iba_official(
+        local_data=local_data, official_data=None
+    )
+
+    # 结构完整
+    assert set(result.keys()) == {
+        "local_count",
+        "official_count",
+        "missing_locally",
+        "extra_locally",
+        "matched",
+    }
+    assert result["official_count"] == 0
+    assert result["missing_locally"] == []
+    assert result["local_count"] == 2
+    # 本地全部算作 extra
+    assert sorted(result["extra_locally"]) == ["mojito", "negroni"]
+    assert result["matched"] == []

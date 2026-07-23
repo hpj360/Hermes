@@ -210,3 +210,59 @@ def _fetch_remote_data() -> list[dict[str, Any]]:
     except (httpx.HTTPError, ValueError, OSError) as e:
         _logger.warning("IBA dataset remote fetch failed: %s", e)
         return []
+
+
+def diff_iba_official(
+    local_data: list[dict] | None = None,
+    official_data: list[dict] | None = None,
+) -> dict[str, Any]:
+    """对比本地 IBA 配方与官方数据集，报告差异。
+
+    Args:
+        local_data: 本地 DB 中 source='iba' 的配方列表（None 时从 DB 查询）。
+            每项可为 {"title": ...} 或 IBA 风格 {"name": ...}。
+        official_data: IBA 官方数据集（None 时从 GitHub 拉取）。
+
+    Returns:
+        {
+            "local_count": int,
+            "official_count": int,
+            "missing_locally": list[str],   # 官方有但本地没有的配方名（小写）
+            "extra_locally": list[str],     # 本地有但官方没有的（小写）
+            "matched": list[str],           # 两边都有的（小写）
+        }
+    """
+    # 1. 收集本地配方名
+    if local_data is None:
+        local_rows: list[str] = []
+        with get_session() as session:
+            rows = session.exec(
+                select(Document.title).where(Document.source == "iba")
+            ).all()
+            local_rows = [t for t in rows if t]
+        local_items: list[dict] = [{"title": t} for t in local_rows]
+    else:
+        local_items = list(local_data)
+
+    # 2. 收集官方数据集
+    if official_data is None:
+        official_items = _fetch_remote_data()
+    else:
+        official_items = list(official_data)
+
+    def _title_of(item: dict) -> str:
+        if not isinstance(item, dict):
+            return ""
+        # 官方数据集用 "name"，本地用 "title"；兼容两种
+        return str(item.get("name") or item.get("title") or "").strip()
+
+    local_set = {_title_of(it).lower() for it in local_items if _title_of(it)}
+    official_set = {_title_of(it).lower() for it in official_items if _title_of(it)}
+
+    return {
+        "local_count": len(local_set),
+        "official_count": len(official_set),
+        "missing_locally": sorted(official_set - local_set),
+        "extra_locally": sorted(local_set - official_set),
+        "matched": sorted(local_set & official_set),
+    }
