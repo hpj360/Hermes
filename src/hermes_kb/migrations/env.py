@@ -27,8 +27,10 @@ from sqlmodel import SQLModel
 config = context.config
 
 # 日志配置（若 alembic.ini 中定义了 [loggers] 段）
+# disable_existing_loggers=False：避免 fileConfig 禁用已实例化的 hermes_kb.* logger，
+# 否则测试中 caplog 无法捕获这些 logger 的记录（alembic 官方推荐做法）。
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # 运行时覆盖连接串 —— 单一配置源，禁止硬编码
 config.set_main_option("sqlalchemy.url", get_settings().db_url)

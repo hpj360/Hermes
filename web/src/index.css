@@ -130,6 +130,22 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* === a11y: prefers-reduced-motion 降级 ===
+ * WCAG 2.3.3：前庭功能障碍用户应可关闭非必要动画。
+ * shimmer 无限循环与 reveal 入场在此媒体查询下禁用；
+ * reveal 元素直接显示（opacity:1），避免动画被全局禁用时内容不可见。 */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+  .reveal-item,
+  .reveal-stagger > * {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* === F6: 氛围背景与金箔质感 utility ===
  * 设计宪法："用渐变网格、噪点纹理、几何图案、分层透明、戏剧化阴影营造氛围与深度，而非纯色背景"。
  * 令牌已在 _tokens.css 定义（--noise-bg / --gold-foil / --brand-gradient / --shadow-drama / --shadow-gold），

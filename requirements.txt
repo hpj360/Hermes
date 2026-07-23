@@ -12,5 +12,9 @@ alembic>=1.13
 pypdf>=4.0
 httpx>=0.27
 python-multipart>=0.0.9
+# sqlite-vec ANN 索引（E3）：pysqlite3 提供扩展加载能力（Python 3.14 标准库 sqlite3
+# 在部分构建中禁用了 enable_load_extension），sqlite-vec 提供 vec0 虚拟表。
+pysqlite3-binary>=0.10
+sqlite-vec>=0.1
 
 # Development dependencies (install with: pip install -r requirements.txt -r requirements-dev.txt)

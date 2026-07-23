@@ -182,6 +182,10 @@ def upgrade() -> None:
     )
 
     # === 向量表 chunk_vec（与 database.py._init_vec_table 一致）===
+    # chunk_vec_ann（vec0 虚拟表）+ chunk_ad_vec 触发器不在此创建：
+    # vec0 需要 sqlite-vec 扩展，仅在运行时 per-connection 加载（database.py 事件监听器），
+    # alembic 迁移引擎不加载该扩展。故 chunk_vec_ann 由 database.py._init_vec_table
+    # 以 CREATE VIRTUAL TABLE IF NOT EXISTS 在运行时创建，保证扩展可用时才建表。
     op.execute(
         "CREATE TABLE chunk_vec ("
         "chunk_rowid INTEGER PRIMARY KEY, "

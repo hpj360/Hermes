@@ -212,16 +212,20 @@ def _init_vec_table(eng) -> None:
 
 
 def _migrate_vec_to_ann(eng, dim: int) -> None:
-    """将 chunk_vec 中的 JSON 向量迁移到 chunk_vec_ann（旧库升级时自动执行）。"""
+    """将 chunk_vec 中的 JSON 向量增量迁移到 chunk_vec_ann（旧库升级时自动执行）。
+
+    增量策略：仅迁移尚未在 chunk_vec_ann 中的 rowid（LEFT JOIN ... IS NULL），
+    保证部分迁移被中断后重启仍能补全剩余行（而非因 ann_count>0 整体跳过）。
+    """
     try:
         with eng.connect() as conn:
-            ann_count = conn.execute(
-                sa_text("SELECT COUNT(*) FROM chunk_vec_ann")
-            ).scalar() or 0
-            if ann_count > 0:
-                return
+            # 仅取尚未迁移到 ANN 的行（增量，可恢复）
             rows = conn.execute(
-                sa_text("SELECT chunk_rowid, vec FROM chunk_vec")
+                sa_text(
+                    "SELECT v.chunk_rowid, v.vec FROM chunk_vec v "
+                    "LEFT JOIN chunk_vec_ann a ON v.chunk_rowid = a.rowid "
+                    "WHERE a.rowid IS NULL"
+                )
             ).fetchall()
         if not rows:
             return

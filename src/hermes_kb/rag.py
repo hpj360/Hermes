@@ -508,18 +508,29 @@ class ImportService:
                     {"rowid": rowid, "doc_id": doc_id, "vec": json.dumps(vec)},
                 )
                 # 写入 ANN 索引（sqlite-vec vec0，维度需匹配表定义）
+                # 写路径降级：若 vec0 表维度与当前 embedding 不匹配（如运行中改了
+                # embedding_dim），INSERT 抛 OperationalError。捕获后仅跳过 ANN 写入，
+                # chunk_vec JSON 已写入，读路径仍可降级到 Python 余弦扫描。
                 if _SQLITE_VEC_AVAILABLE and len(vec) == settings.embedding_dim:
-                    import sqlite_vec
-                    session.execute(
-                        sa_text(
-                            "INSERT INTO chunk_vec_ann(rowid, embedding) "
-                            "VALUES (:rowid, :emb)"
-                        ),
-                        {
-                            "rowid": rowid,
-                            "emb": sqlite_vec.serialize_float32(vec),
-                        },
-                    )
+                    try:
+                        import sqlite_vec
+                        session.execute(
+                            sa_text(
+                                "INSERT INTO chunk_vec_ann(rowid, embedding) "
+                                "VALUES (:rowid, :emb)"
+                            ),
+                            {
+                                "rowid": rowid,
+                                "emb": sqlite_vec.serialize_float32(vec),
+                            },
+                        )
+                    except Exception as exc:  # noqa: BLE001 — 写路径降级，不阻塞导入
+                        logger.warning(
+                            "ANN insert failed for chunk rowid=%s (dim mismatch?), "
+                            "falling back to JSON-only vector: %s",
+                            rowid,
+                            exc,
+                        )
             session.commit()
 
         return {
