@@ -459,7 +459,6 @@ def test_dashboard_json_aggregates_state(client, patched_services):
 def test_dashboard_with_trace_groups_episodes(patched_services, client):
     """/dashboard should group episodes by trace_id in the traces list."""
     from hermes.workbench.cli import _make_memory
-    from hermes.workbench.memory import make_episode
     from hermes.workbench.tracing import Tracer
 
     mem = _make_memory()

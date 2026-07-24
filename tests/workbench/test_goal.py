@@ -5,15 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from hermes.workbench.agent_loop import LoopResult, LoopStep, LoopStepResult
 from hermes.workbench.goal import (
     EvaluatorAgent,
     GeneratorAgent,
     Goal,
     GoalBoundary,
-    GoalVerification,
     PlannerAgent,
     SubAgent,
 )

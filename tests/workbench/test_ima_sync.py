@@ -18,10 +18,8 @@ from hermes.workbench.ima_sync import (
     ImaApiError,
     ImaClient,
     ImaConfigError,
-    ImaKnowledgeBase,
     ImaNote,
     ImaSearchResult,
-    ImaSyncResult,
     ImaSyncService,
 )
 from hermes.workbench.memory import MemoryService

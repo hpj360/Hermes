@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from hermes.config import Settings
 from hermes.workbench.llm import (
     LlmApiError,
     LlmClient,

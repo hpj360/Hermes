@@ -89,7 +89,7 @@ def test_span_resets_active_id_after(tmp_path: Path) -> None:
 def test_span_nested_restores_parent(tmp_path: Path) -> None:
     """Nested spans: inner replaces outer; outer restored after inner exits."""
     tracer = Tracer(_make_memory(tmp_path))
-    with tracer.span("outer") as outer_tid:
+    with tracer.span("outer"):
         assert tracer.active_trace_id == "outer"
         with tracer.span("inner") as inner_tid:
             assert inner_tid == "inner"
