@@ -38,6 +38,7 @@ class Task:
         max_rounds: int = 1,
         max_runs: int = 1,
         interval: float = 0.0,
+        goal: dict[str, Any] | None = None,
     ) -> None:
         self.task_id = task_id
         self.plan = plan
@@ -45,6 +46,7 @@ class Task:
         self.max_rounds = max_rounds
         self.max_runs = max_runs
         self.interval = interval
+        self.goal = goal
         self.status = "PENDING"
         self.rounds: list[dict[str, Any]] = []
         self.created_at = time.time()
@@ -57,6 +59,7 @@ class Task:
             "max_rounds": self.max_rounds,
             "max_runs": self.max_runs,
             "interval": self.interval,
+            "goal": self.goal,
             "status": self.status,
             "rounds": self.rounds,
             "created_at": self.created_at,
@@ -129,16 +132,21 @@ class TaskScheduler:
         registry: TaskRegistry,
         runner: SkillRunner,
         memory: MemoryService,
+        llm: Any | None = None,
     ) -> None:
         self.store = store
         self.registry = registry
         self.runner = runner
         self.memory = memory
+        self.llm = llm
 
     def run(self, task_id: str) -> Any:
         task = self.registry.get(task_id)
         if task is None:
             return None
+        if task.mode == "loop":
+            results = self.run_loop(task_id)
+            return results[-1] if results else None
         loop = AgentLoop(runner=self.runner, memory=self.memory)
         plan = [
             LoopStep(
@@ -161,6 +169,117 @@ class TaskScheduler:
         task.status = "COMPLETED" if result.ok else "FAILED"
         self.store.save(task)
         return result
+
+    def run_loop(self, task_id: str) -> list[Any]:
+        """Run task in loop mode: iterate until goal is met or boundary hit.
+
+        Uses Planner/Generator/Evaluator sub-agents for each cycle.
+        Each round opens a tracing span so all episodes recorded by the
+        three sub-agents share a ``trace_id``, making the full chain
+        reconstructable for debugging.
+        Returns the list of LoopResult objects from each run.
+        """
+        from hermes.workbench.goal import (
+            EvaluatorAgent,
+            GeneratorAgent,
+            Goal,
+            GoalBoundary,
+            PlannerAgent,
+        )
+        from hermes.workbench.tracing import Tracer
+
+        task = self.registry.get(task_id)
+        if task is None:
+            return []
+
+        goal = Goal.from_dict(task.goal) if task.goal else None
+        boundary = goal.boundary if goal else GoalBoundary(
+            max_rounds=task.max_runs or 1
+        )
+
+        tracer = Tracer(self.memory)
+        planner = PlannerAgent(self.runner, self.memory, llm=self.llm, tracer=tracer)
+        generator = GeneratorAgent(
+            self.runner, self.memory, llm=self.llm, tracer=tracer
+        )
+        evaluator = EvaluatorAgent(
+            self.runner, self.memory, llm=self.llm, tracer=tracer
+        )
+
+        fallback_plan = [
+            LoopStep(
+                skill=step["skill"],
+                args=list(step.get("args", [])),
+                timeout=step.get("timeout"),
+                abort_on_error=step.get("abort_on_error", False),
+            )
+            for step in task.plan
+        ]
+
+        results: list[Any] = []
+        start_time = time.time()
+        consecutive_failures = 0
+
+        # Bind task_id to log context for the entire loop run.
+        try:
+            from hermes.workbench.structured_logging import log_context
+            loop_ctx = log_context(task_id=task_id, mode="loop")
+        except Exception:  # noqa: BLE001
+            # Fall back to a no-op context manager if structured logging
+            # is unavailable.
+            from contextlib import nullcontext as _null
+            loop_ctx = _null()
+
+        with loop_ctx:
+            for run_num in range(boundary.max_rounds):
+                # Check time boundary
+                if time.time() - start_time > boundary.max_time:
+                    task.status = "TIMEOUT"
+                    break
+                # Check failure boundary
+                if consecutive_failures >= boundary.max_failures:
+                    task.status = "FAILED"
+                    break
+
+                # Each round gets its own trace_id; episodes recorded by the
+                # planner/generator/evaluator within this span all share it.
+                with tracer.span() as trace_id:
+                    plan = planner.plan(goal, fallback_plan)
+                    result = generator.generate(plan)
+                    results.append(result)
+                    verification = evaluator.evaluate(result, goal)
+
+                    task.rounds.append(
+                        {
+                            "run": run_num + 1,
+                            "trace_id": trace_id,
+                            "ok": result.ok,
+                            "achieved": verification.achieved,
+                            "evidence": verification.evidence,
+                            "steps": len(result.steps),
+                            "error": result.error,
+                            "at": time.time(),
+                        }
+                    )
+
+                if verification.achieved:
+                    task.status = "COMPLETED"
+                    break
+                if not result.ok:
+                    consecutive_failures += 1
+                else:
+                    consecutive_failures = 0
+
+                if task.interval > 0 and run_num < boundary.max_rounds - 1:
+                    time.sleep(task.interval)
+
+            if task.status not in ("COMPLETED", "FAILED", "TIMEOUT"):
+                task.status = "COMPLETED" if all(
+                    getattr(r, "ok", False) for r in results
+                ) else "FAILED"
+
+        self.store.save(task)
+        return results
 
     def cancel(self, task_id: str) -> bool:
         task = self.registry.get(task_id)
@@ -206,12 +325,26 @@ def _make_registry() -> TaskRegistry:
     return TaskRegistry()
 
 
+def _make_llm() -> Any | None:
+    """Build an LLM client from settings, or None when unavailable.
+
+    Silently returns None when the provider is unconfigured so that loop
+    mode falls back to the rule-based planner/evaluator without crashing.
+    """
+    try:
+        from hermes.workbench.llm import make_llm_client
+        return make_llm_client()
+    except Exception:  # noqa: BLE001 — config errors are non-fatal here
+        return None
+
+
 def _make_scheduler() -> TaskScheduler:
     return TaskScheduler(
         store=_make_store(),
         registry=_make_registry(),
         runner=_make_runner(),
         memory=_make_memory(),
+        llm=_make_llm(),
     )
 
 
@@ -376,6 +509,7 @@ def cmd_workbench_task_register(args: argparse.Namespace) -> int:
         max_rounds=args.max_rounds,
         max_runs=args.max_runs,
         interval=args.interval,
+        goal=json.loads(args.goal) if getattr(args, "goal", None) else None,
     )
     registry.register(task)
     store.save(task)
@@ -457,6 +591,141 @@ def cmd_workbench_github_sync(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# workbench ima
+# ---------------------------------------------------------------------------
+
+
+def cmd_workbench_ima(args: argparse.Namespace) -> int:
+    """IMA 知识库操作：列出/搜索/推送/同步/笔记管理。"""
+    from hermes.workbench.ima_sync import ImaClient, ImaSyncService
+
+    action = args.ima_action
+
+    # Knowledge-base module actions
+    if action == "list":
+        svc = ImaSyncService()
+        kbs = svc.list_kbs(query=getattr(args, "query", ""))
+        if not kbs:
+            print("(no knowledge bases found)")
+            return 0
+        for kb in kbs:
+            print(f"  {kb.kb_name}  (id={kb.kb_id[:20]}..., {kb.content_count} 条)")
+        return 0
+
+    if action == "search":
+        svc = ImaSyncService()
+        results = svc.pull(args.query, args.kb_id)
+        if not results:
+            print("(no results)")
+            return 0
+        for r in results:
+            print(f"  [{r.title}]")
+            if r.highlight_content:
+                print(f"    {r.highlight_content[:120]}...")
+        return 0
+
+    if action == "push":
+        svc = ImaSyncService()
+        content = args.content
+        if args.file:
+            content = Path(args.file).read_text(encoding="utf-8")
+        result = svc.push(args.kb_id, args.title, content)
+        print(f"pushed: {result}")
+        return 0
+
+    if action == "sync":
+        svc = ImaSyncService()
+        result = svc.sync(args.query, args.kb_id, push_kind=getattr(args, "push_kind", None))
+        print(f"sync: pulled={result.pulled} pushed={result.pushed} errors={len(result.errors)}")
+        for err in result.errors:
+            print(f"  error: {err}", file=sys.stderr)
+        return 0
+
+    if action == "urls-import":
+        svc = ImaSyncService()
+        urls = list(args.urls)
+        result = svc.push_urls(args.kb_id, urls, folder_id=getattr(args, "folder_id", "") or "")
+        print(f"imported: {result}")
+        return 0
+
+    if action == "file-upload":
+        svc = ImaSyncService()
+        result = svc.push_file(
+            args.kb_id,
+            args.file,
+            content_type=getattr(args, "content_type", None),
+            folder_id=getattr(args, "folder_id", "") or "",
+        )
+        print(f"uploaded: media_id={result.get('media_id', '')} file={result.get('file_name', '')}")
+        return 0
+
+    # Notes module actions (note/v1)
+    if action == "notes-list":
+        client = ImaClient()
+        notes, is_end, cursor = client.list_note(limit=getattr(args, "limit", 20))
+        if not notes:
+            print("(no notes found)")
+            return 0
+        for n in notes:
+            print(f"  [{n.note_id}] {n.title}")
+            if n.summary:
+                print(f"    {n.summary[:120]}")
+        if not is_end:
+            print(f"  ... more notes available (cursor={cursor})")
+        return 0
+
+    if action == "notes-search":
+        client = ImaClient()
+        notes, is_end, total = client.search_note_book(
+            args.query,
+            start=0,
+            end=getattr(args, "limit", 20),
+        )
+        if not notes:
+            print("(no notes found)")
+            return 0
+        print(f"  total hits: {total}")
+        for n in notes:
+            print(f"  [{n.note_id}] {n.title}")
+        if not is_end:
+            print("  ... more notes available")
+        return 0
+
+    if action == "notes-get":
+        client = ImaClient()
+        data = client.get_doc_content(args.note_id)
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+        return 0
+
+    if action == "notes-create":
+        client = ImaClient()
+        content = args.content
+        if args.file:
+            content = Path(args.file).read_text(encoding="utf-8")
+        if not content:
+            print("error: --content or --file is required", file=sys.stderr)
+            return 1
+        result = client.import_doc(content=content, title=args.title)
+        print(f"created: {result}")
+        return 0
+
+    if action == "notes-append":
+        client = ImaClient()
+        content = args.content
+        if args.file:
+            content = Path(args.file).read_text(encoding="utf-8")
+        if not content:
+            print("error: --content or --file is required", file=sys.stderr)
+            return 1
+        result = client.append_doc(args.note_id, content)
+        print(f"appended: {result}")
+        return 0
+
+    print(f"unknown action: {action}", file=sys.stderr)
+    return 1
+
+
+# ---------------------------------------------------------------------------
 # Parser registration
 # ---------------------------------------------------------------------------
 
@@ -527,6 +796,7 @@ def _register_task(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> 
     p_reg.add_argument("--max-rounds", type=int, default=1)
     p_reg.add_argument("--max-runs", type=int, default=1)
     p_reg.add_argument("--interval", type=float, default=0.0)
+    p_reg.add_argument("--goal", default=None, help="Goal JSON for loop mode")
     p_reg.set_defaults(func=cmd_workbench_task_register)
     p_list = task_sub.add_parser("list", help="List registered tasks")
     p_list.set_defaults(func=cmd_workbench_task_list)
@@ -555,6 +825,73 @@ def _register_github(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p.set_defaults(func=cmd_workbench_github_sync)
 
 
+def _register_ima(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = sub.add_parser("ima", help="IMA 知识库操作")
+    ima_sub = p.add_subparsers(dest="ima_action", required=True)
+
+    p_list = ima_sub.add_parser("list", help="列出知识库")
+    p_list.add_argument("--query", default="", help="搜索关键词")
+    p_list.set_defaults(func=cmd_workbench_ima)
+
+    p_search = ima_sub.add_parser("search", help="搜索知识库内容")
+    p_search.add_argument("--kb-id", required=True, help="知识库 ID")
+    p_search.add_argument("--query", required=True, help="搜索关键词")
+    p_search.set_defaults(func=cmd_workbench_ima)
+
+    p_push = ima_sub.add_parser("push", help="推送内容到 IMA")
+    p_push.add_argument("--kb-id", required=True, help="知识库 ID")
+    p_push.add_argument("--title", required=True, help="笔记标题")
+    p_push.add_argument("--content", default="", help="笔记内容")
+    p_push.add_argument("--file", default=None, help="从文件读取内容")
+    p_push.set_defaults(func=cmd_workbench_ima)
+
+    p_sync = ima_sub.add_parser("sync", help="双向同步")
+    p_sync.add_argument("--kb-id", required=True, help="知识库 ID")
+    p_sync.add_argument("--query", required=True, help="搜索关键词 (pull)")
+    p_sync.add_argument("--push-kind", default=None, help="推送的 episode 类型")
+    p_sync.set_defaults(func=cmd_workbench_ima)
+
+    # knowledge-base module: content ingestion subcommands
+    p_urls = ima_sub.add_parser("urls-import", help="批量导入网页 URL 到知识库")
+    p_urls.add_argument("--kb-id", required=True, help="目标知识库 ID")
+    p_urls.add_argument("--urls", nargs="+", required=True, help="一个或多个网页 URL")
+    p_urls.add_argument("--folder-id", default=None, help="目标文件夹 ID (可选)")
+    p_urls.set_defaults(func=cmd_workbench_ima)
+
+    p_upload = ima_sub.add_parser("file-upload", help="上传本地文件到知识库 (3 步流程)")
+    p_upload.add_argument("--kb-id", required=True, help="目标知识库 ID")
+    p_upload.add_argument("--file", required=True, help="本地文件路径")
+    p_upload.add_argument("--content-type", default=None, help="MIME 类型 (默认按扩展名推断)")
+    p_upload.add_argument("--folder-id", default=None, help="目标文件夹 ID (可选)")
+    p_upload.set_defaults(func=cmd_workbench_ima)
+
+    # Notes module (note/v1) subcommands
+    p_notes_list = ima_sub.add_parser("notes-list", help="列出笔记")
+    p_notes_list.add_argument("--limit", type=int, default=20, help="返回条数上限")
+    p_notes_list.set_defaults(func=cmd_workbench_ima)
+
+    p_notes_search = ima_sub.add_parser("notes-search", help="按标题搜索笔记")
+    p_notes_search.add_argument("--query", required=True, help="搜索关键词")
+    p_notes_search.add_argument("--limit", type=int, default=20, help="返回条数上限")
+    p_notes_search.set_defaults(func=cmd_workbench_ima)
+
+    p_notes_get = ima_sub.add_parser("notes-get", help="获取笔记完整内容")
+    p_notes_get.add_argument("--note-id", required=True, help="笔记 note_id")
+    p_notes_get.set_defaults(func=cmd_workbench_ima)
+
+    p_notes_create = ima_sub.add_parser("notes-create", help="创建新笔记 (import_doc)")
+    p_notes_create.add_argument("--title", default=None, help="笔记标题 (作为 H1 前置)")
+    p_notes_create.add_argument("--content", default="", help="笔记内容 (markdown)")
+    p_notes_create.add_argument("--file", default=None, help="从文件读取内容")
+    p_notes_create.set_defaults(func=cmd_workbench_ima)
+
+    p_notes_append = ima_sub.add_parser("notes-append", help="追加内容到已有笔记")
+    p_notes_append.add_argument("--note-id", required=True, help="目标笔记 note_id")
+    p_notes_append.add_argument("--content", default="", help="要追加的内容 (markdown)")
+    p_notes_append.add_argument("--file", default=None, help="从文件读取内容")
+    p_notes_append.set_defaults(func=cmd_workbench_ima)
+
+
 def add_workbench_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Register the ``workbench`` subcommand and its nested subcommands."""
     p = sub.add_parser("workbench", help="Hermes Workbench runtime commands")
@@ -566,6 +903,7 @@ def add_workbench_subparser(sub: argparse._SubParsersAction[argparse.ArgumentPar
     _register_task(wb_sub)
     _register_serve(wb_sub)
     _register_github(wb_sub)
+    _register_ima(wb_sub)
 
 
 def register_workbench_commands(parser: argparse.ArgumentParser) -> None:
@@ -577,8 +915,27 @@ def register_workbench_commands(parser: argparse.ArgumentParser) -> None:
 def workbench_main(argv: list[str] | None = None) -> int:
     """Standalone entry point for the workbench CLI."""
     parser = argparse.ArgumentParser(prog="hermes-workbench")
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        help="Log level (DEBUG/INFO/WARNING/ERROR). Default: INFO",
+    )
+    parser.add_argument(
+        "--log-format",
+        default="text",
+        choices=["text", "json"],
+        help="Log format. 'json' emits structured JSON logs. Default: text",
+    )
     register_workbench_commands(parser)
     args = parser.parse_args(argv)
+
+    # One-time structured logging setup.
+    try:
+        from hermes.workbench.structured_logging import configure_logging
+        configure_logging(level=args.log_level, json=(args.log_format == "json"))
+    except Exception:  # noqa: BLE001
+        pass
+
     func: Callable[[argparse.Namespace], int] | None = getattr(args, "func", None)
     if func is None:
         parser.print_help()

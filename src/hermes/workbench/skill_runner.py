@@ -19,6 +19,34 @@ from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
+# Platform helpers
+# ---------------------------------------------------------------------------
+
+# Common Git-for-Windows install locations for sh.exe (checked when not on PATH).
+_WIN_SH_CANDIDATES = (
+    r"C:\Program Files\Git\bin\sh.exe",
+    r"C:\Program Files\Git\usr\bin\sh.exe",
+    r"C:\Program Files (x86)\Git\bin\sh.exe",
+    r"C:\Program Files (x86)\Git\usr\bin\sh.exe",
+)
+
+
+def _find_posix_shell() -> str | None:
+    """Locate a POSIX ``sh`` executable.
+
+    On Unix ``sh`` is always on PATH. On Windows, try PATH first, then
+    fall back to common Git-for-Windows install locations.
+    """
+    sh = shutil.which("sh")
+    if sh:
+        return sh
+    if sys.platform == "win32":
+        for candidate in _WIN_SH_CANDIDATES:
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -274,20 +302,37 @@ class SkillRunner:
                 duration=0.0,
                 error=f"missing bins: {missing}",
             )
-        cmd = self._build_command(spec, args)
+        try:
+            cmd = self._build_command(spec, args)
+        except FileNotFoundError as exc:
+            return RunResult(
+                skill=spec.name,
+                ok=False,
+                stdout="",
+                stderr=str(exc),
+                exit_code=-1,
+                duration=0.0,
+                error=str(exc),
+            )
         env = self._sanitized_env()
         start = time.time()
+        # Platform-specific process-group isolation:
+        # - Unix: start_new_session detaches from controlling terminal
+        # - Windows: CREATE_NEW_PROCESS_GROUP allows Ctrl-Break signal handling
+        popen_kwargs: dict[str, Any] = {
+            "cwd": str(spec.path),
+            "env": env,
+            "capture_output": True,
+            "text": True,
+            "timeout": timeout,
+            "check": False,
+        }
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            popen_kwargs["start_new_session"] = True
         try:
-            proc = subprocess.run(
-                cmd,
-                cwd=str(spec.path),
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                start_new_session=True,
-                check=False,
-            )
+            proc = subprocess.run(cmd, **popen_kwargs)
         except subprocess.TimeoutExpired as exc:
             return RunResult(
                 skill=spec.name,
@@ -326,7 +371,12 @@ class SkillRunner:
         if spec.runtime == "python":
             return [sys.executable, spec.entrypoint, *args]
         if spec.runtime == "shell":
-            return ["sh", spec.entrypoint, *args]
+            sh = _find_posix_shell()
+            if sh is None:
+                raise FileNotFoundError(
+                    "sh: POSIX shell not found on PATH or Git-for-Windows"
+                )
+            return [sh, spec.entrypoint, *args]
         if spec.runtime == "node":
             return ["node", spec.entrypoint, *args]
         return [spec.entrypoint, *args]

@@ -169,9 +169,27 @@ def test_task_to_dict_contains_all_fields() -> None:
     assert d["max_rounds"] == 3
     assert d["max_runs"] == 2
     assert d["interval"] == 5.0
+    assert d["goal"] is None
     assert d["status"] == "PENDING"
     assert d["rounds"] == []
     assert "created_at" in d
+
+
+def test_task_with_goal_serialization() -> None:
+    goal_data = {
+        "description": "deploy",
+        "success_criteria": [{"skill": "check", "expect_exit": 0}],
+        "boundary": {"max_rounds": 3, "max_time": 300, "max_failures": 2},
+    }
+    task = Task(
+        task_id="t-goal",
+        plan=[{"skill": "deploy"}],
+        mode="loop",
+        goal=goal_data,
+    )
+    d = task.to_dict()
+    assert d["goal"] == goal_data
+    assert d["mode"] == "loop"
 
 
 def test_task_default_status_is_pending() -> None:
@@ -360,6 +378,120 @@ def test_scheduler_list_rounds_missing_returns_empty(tmp_path: Path) -> None:
     reg = TaskRegistry()
     sched = TaskScheduler(store=store, registry=reg, runner=runner, memory=mem)
     assert sched.list_rounds("nope") == []
+
+
+# ---------------------------------------------------------------------------
+# TaskScheduler — loop mode
+# ---------------------------------------------------------------------------
+
+
+def test_run_loop_completes_on_first_success(tmp_path: Path) -> None:
+    """Loop mode with a succeeding plan should complete in one round."""
+    runner = FakeRunner(
+        [_spec("alpha")],
+        {"alpha": _run_result_ok("alpha")},
+    )
+    mem = MemoryService(state_dir=tmp_path / "m")
+    store = TaskStore(state_dir=tmp_path / "s")
+    reg = TaskRegistry()
+    sched = TaskScheduler(store=store, registry=reg, runner=runner, memory=mem)
+    task = Task(
+        task_id="loop-1",
+        plan=[{"skill": "alpha"}],
+        mode="loop",
+        max_runs=5,
+    )
+    reg.register(task)
+    sched.run("loop-1")
+    assert task.status == "COMPLETED"
+    assert len(task.rounds) == 1
+    assert task.rounds[0]["ok"] is True
+
+
+def test_run_loop_retries_then_completes(tmp_path: Path) -> None:
+    """Loop mode should retry when goal is not yet achieved."""
+    call_count = {"alpha": 0}
+
+    class FlakyRunner(FakeRunner):
+        def run(self, name, args=None, timeout=None):
+            call_count["alpha"] += 1
+            if call_count["alpha"] < 2:
+                return _run_result_fail(name, "not yet")
+            return _run_result_ok(name, "success")
+
+    runner = FlakyRunner(
+        [_spec("alpha")],
+        {"alpha": _run_result_ok("alpha")},
+    )
+    mem = MemoryService(state_dir=tmp_path / "m")
+    store = TaskStore(state_dir=tmp_path / "s")
+    reg = TaskRegistry()
+    sched = TaskScheduler(store=store, registry=reg, runner=runner, memory=mem)
+    task = Task(
+        task_id="loop-2",
+        plan=[{"skill": "alpha"}],
+        mode="loop",
+        max_runs=5,
+    )
+    reg.register(task)
+    sched.run("loop-2")
+    assert task.status == "COMPLETED"
+    assert len(task.rounds) == 2  # first fail, second success
+
+
+def test_run_loop_hits_max_failures(tmp_path: Path) -> None:
+    """Loop mode should stop after max_failures consecutive failures."""
+    runner = FakeRunner(
+        [_spec("alpha")],
+        {"alpha": _run_result_fail("alpha", "always fails")},
+    )
+    mem = MemoryService(state_dir=tmp_path / "m")
+    store = TaskStore(state_dir=tmp_path / "s")
+    reg = TaskRegistry()
+    sched = TaskScheduler(store=store, registry=reg, runner=runner, memory=mem)
+    goal_data = {
+        "description": "impossible",
+        "success_criteria": [],
+        "boundary": {"max_rounds": 10, "max_time": 3600, "max_failures": 2},
+    }
+    task = Task(
+        task_id="loop-3",
+        plan=[{"skill": "alpha"}],
+        mode="loop",
+        goal=goal_data,
+    )
+    reg.register(task)
+    sched.run("loop-3")
+    assert task.status == "FAILED"
+    assert len(task.rounds) == 2  # stopped after max_failures
+
+
+def test_run_loop_with_goal_achieved_stops(tmp_path: Path) -> None:
+    """Loop mode should stop when goal verification passes."""
+    runner = FakeRunner(
+        [_spec("deploy"), _spec("check")],
+        {"deploy": _run_result_ok("deploy"), "check": _run_result_ok("check")},
+    )
+    mem = MemoryService(state_dir=tmp_path / "m")
+    store = TaskStore(state_dir=tmp_path / "s")
+    reg = TaskRegistry()
+    sched = TaskScheduler(store=store, registry=reg, runner=runner, memory=mem)
+    goal_data = {
+        "description": "deploy and verify",
+        "success_criteria": [{"skill": "check", "expect_exit": 0}],
+        "boundary": {"max_rounds": 5, "max_time": 300, "max_failures": 3},
+    }
+    task = Task(
+        task_id="loop-4",
+        plan=[{"skill": "deploy"}],
+        mode="loop",
+        goal=goal_data,
+    )
+    reg.register(task)
+    sched.run("loop-4")
+    assert task.status == "COMPLETED"
+    assert len(task.rounds) == 1
+    assert task.rounds[0]["achieved"] is True
 
 
 # ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time as _time
 from pathlib import Path
 
 from hermes.workbench.memory import (
@@ -107,6 +108,70 @@ def test_facts_survive_corrupt_file(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# L1 facts — TTL
+# ---------------------------------------------------------------------------
+
+
+def test_fact_ttl_expires(tmp_path: Path, monkeypatch) -> None:
+    """A fact with TTL is purged after the TTL elapses."""
+    import hermes.workbench.memory as mem
+
+    base = _time.time()
+    monkeypatch.setattr(mem.time, "time", lambda: base)
+    svc = _make_service(tmp_path)
+    svc.remember_fact("temp", "secret", ttl=10)
+    assert svc.get_fact("temp") is not None
+    # Advance past TTL
+    monkeypatch.setattr(mem.time, "time", lambda: base + 11)
+    assert svc.get_fact("temp") is None
+
+
+def test_fact_ttl_not_yet_expired(tmp_path: Path, monkeypatch) -> None:
+    """A fact with TTL is still readable before expiry."""
+    import hermes.workbench.memory as mem
+
+    base = _time.time()
+    monkeypatch.setattr(mem.time, "time", lambda: base)
+    svc = _make_service(tmp_path)
+    svc.remember_fact("temp", "value", ttl=100)
+    monkeypatch.setattr(mem.time, "time", lambda: base + 50)
+    assert svc.get_fact("temp") == {"key": "temp", "value": "value"}
+
+
+def test_fact_ttl_purged_from_list(tmp_path: Path, monkeypatch) -> None:
+    """Expired facts are excluded from list_facts."""
+    import hermes.workbench.memory as mem
+
+    base = _time.time()
+    monkeypatch.setattr(mem.time, "time", lambda: base)
+    svc = _make_service(tmp_path)
+    svc.remember_fact("permanent", "keep")
+    svc.remember_fact("temp", "gone", ttl=5)
+    monkeypatch.setattr(mem.time, "time", lambda: base + 6)
+    facts = {f["key"]: f["value"] for f in svc.list_facts()}
+    assert facts == {"permanent": "keep"}
+
+
+def test_fact_without_ttl_persists(tmp_path: Path) -> None:
+    """Facts without TTL are never purged."""
+    svc = _make_service(tmp_path)
+    svc.remember_fact("stable", "val")
+    assert svc.get_fact("stable") == {"key": "stable", "value": "val"}
+
+
+def test_forget_fact_clears_ttl(tmp_path: Path) -> None:
+    """Forgetting a fact also removes its TTL entry."""
+    svc = _make_service(tmp_path)
+    svc.remember_fact("temp", "v", ttl=60)
+    assert svc._fact_ttls_path.exists()
+    svc.forget_fact("temp")
+    # TTL file should not contain the key
+    import json
+    ttls = json.loads(svc._fact_ttls_path.read_text())
+    assert "temp" not in ttls
+
+
+# ---------------------------------------------------------------------------
 # L2 episodes
 # ---------------------------------------------------------------------------
 
@@ -163,6 +228,64 @@ def test_list_episodes_limit_zero_returns_empty(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# L2 episodes — search
+# ---------------------------------------------------------------------------
+
+
+def test_search_episodes_returns_relevant(tmp_path: Path) -> None:
+    """Search returns episodes matching the query, ranked by relevance."""
+    svc = _make_service(tmp_path)
+    svc.record_episode(make_episode("note", "deploy python service to production"))
+    svc.record_episode(make_episode("note", "fix javascript bug in frontend"))
+    svc.record_episode(make_episode("note", "write python unit tests"))
+    results = svc.search_episodes("python", limit=10)
+    summaries = [ep.summary for ep, _ in results]
+    # Both python episodes should be in results
+    assert "deploy python service to production" in summaries
+    assert "write python unit tests" in summaries
+    # The javascript episode should NOT be in results
+    assert "fix javascript bug in frontend" not in summaries
+
+
+def test_search_episodes_empty_query_returns_empty(tmp_path: Path) -> None:
+    svc = _make_service(tmp_path)
+    svc.record_episode(make_episode("k", "hello world"))
+    assert svc.search_episodes("") == []
+    assert svc.search_episodes("   ") == []
+
+
+def test_search_episodes_no_episodes_returns_empty(tmp_path: Path) -> None:
+    svc = _make_service(tmp_path)
+    assert svc.search_episodes("anything") == []
+
+
+def test_search_episodes_filter_by_kind(tmp_path: Path) -> None:
+    svc = _make_service(tmp_path)
+    svc.record_episode(make_episode("loop", "deploy python app"))
+    svc.record_episode(make_episode("note", "deploy python service"))
+    results = svc.search_episodes("python", kind="loop")
+    assert len(results) == 1
+    assert results[0][0].kind == "loop"
+
+
+def test_search_episodes_respects_limit(tmp_path: Path) -> None:
+    svc = _make_service(tmp_path)
+    for i in range(10):
+        svc.record_episode(make_episode("k", f"python task number {i}"))
+    results = svc.search_episodes("python", limit=3)
+    assert len(results) <= 3
+
+
+def test_search_episodes_scores_positive(tmp_path: Path) -> None:
+    svc = _make_service(tmp_path)
+    svc.record_episode(make_episode("k", "deploy python service"))
+    svc.record_episode(make_episode("k", "fix javascript bug"))
+    results = svc.search_episodes("python")
+    for _ep, score in results:
+        assert score > 0.0
+
+
+# ---------------------------------------------------------------------------
 # L3 profile
 # ---------------------------------------------------------------------------
 
@@ -196,3 +319,161 @@ def test_get_user_profile_falls_back_to_hermes_profile(tmp_path: Path, tmp_state
     profile = svc.get_user_profile()
     assert isinstance(profile, dict)
     assert "basic_info" in profile
+
+
+# ---------------------------------------------------------------------------
+# P11: TTL cleanup, RRF search, profile learning, compaction
+# ---------------------------------------------------------------------------
+
+
+def test_cleanup_expired_facts_removes_past_ttl(tmp_path: Path) -> None:
+    """cleanup_expired_facts should purge facts whose TTL has elapsed."""
+    svc = _make_service(tmp_path)
+    svc.remember_fact("temp", "gone", ttl=-1.0)  # already expired
+    svc.remember_fact("perm", "stays", ttl=3600.0)
+    removed = svc.cleanup_expired_facts()
+    assert removed == 1
+    assert svc.get_fact("temp") is None
+    assert svc.get_fact("perm") is not None
+
+
+def test_cleanup_expired_facts_zero_when_none_expired(tmp_path: Path) -> None:
+    """cleanup_expired_facts should return 0 when no facts are expired."""
+    svc = _make_service(tmp_path)
+    svc.remember_fact("perm", "stays", ttl=3600.0)
+    removed = svc.cleanup_expired_facts()
+    assert removed == 0
+
+
+def test_cleanup_expired_facts_zero_when_no_ttls(tmp_path: Path) -> None:
+    """cleanup_expired_facts should return 0 when no TTLs are set."""
+    svc = _make_service(tmp_path)
+    svc.remember_fact("a", 1)  # no TTL
+    removed = svc.cleanup_expired_facts()
+    assert removed == 0
+
+
+def test_search_episodes_rrf_fuses_substring_and_tfidf(tmp_path: Path) -> None:
+    """RRF should return episodes matching either substring or TF-IDF."""
+    svc = _make_service(tmp_path)
+    svc.record_episode(make_episode("note", "deploy python service to production"))
+    svc.record_episode(make_episode("note", "fix javascript bug in frontend"))
+    svc.record_episode(make_episode("note", "write python unit tests"))
+    results = svc.search_episodes_rrf("python", limit=10)
+    summaries = [ep.summary for ep, _ in results]
+    # Both python episodes should appear
+    assert "deploy python service to production" in summaries
+    assert "write python unit tests" in summaries
+    # Scores should be positive
+    for _ep, score in results:
+        assert score > 0.0
+
+
+def test_search_episodes_rrf_exact_match_ranks_higher(tmp_path: Path) -> None:
+    """An episode matching both signals should score higher than one matching one."""
+    svc = _make_service(tmp_path)
+    # "python deploy" matches substring "python" and TF-IDF "python"
+    svc.record_episode(make_episode("k", "python deploy fast"))
+    # "ruby deploy" matches TF-IDF "deploy" only (no "python" substring)
+    svc.record_episode(make_episode("k", "ruby deploy fast"))
+    results = svc.search_episodes_rrf("python", limit=10)
+    assert len(results) >= 1
+    # The python episode should be first (matched both signals)
+    assert "python" in results[0][0].summary
+
+
+def test_search_episodes_rrf_empty_query_returns_empty(tmp_path: Path) -> None:
+    """RRF should return [] for an empty query."""
+    svc = _make_service(tmp_path)
+    svc.record_episode(make_episode("k", "hello world"))
+    assert svc.search_episodes_rrf("") == []
+
+
+def test_search_episodes_rrf_no_episodes_returns_empty(tmp_path: Path) -> None:
+    """RRF should return [] when there are no episodes."""
+    svc = _make_service(tmp_path)
+    assert svc.search_episodes_rrf("anything") == []
+
+
+def test_learn_profile_from_episodes_extracts_skills(tmp_path: Path) -> None:
+    """learn_profile_from_episodes should report most-used skills."""
+    saved: list[dict] = []
+    svc = MemoryService(
+        state_dir=tmp_path / "state",
+        profile_loader=lambda: {"version": 4},
+        profile_saver=saved.append,
+    )
+    svc.record_episode(make_episode("loop", "ran deploy", {"skill": "deploy"}))
+    svc.record_episode(make_episode("loop", "ran test", {"skill": "test"}))
+    svc.record_episode(make_episode("loop", "ran deploy again", {"skill": "deploy"}))
+    insights = svc.learn_profile_from_episodes()
+    skill_names = [s["skill"] for s in insights["top_skills"]]
+    assert "deploy" in skill_names
+    assert "test" in skill_names
+    # deploy should have count 2
+    deploy = next(s for s in insights["top_skills"] if s["skill"] == "deploy")
+    assert deploy["count"] == 2
+    # Profile should have been saved with the insights
+    assert len(saved) == 1
+    assert "learned" in saved[0]
+
+
+def test_learn_profile_from_episodes_counts_kinds(tmp_path: Path) -> None:
+    """learn_profile_from_episodes should report most frequent kinds."""
+    svc = MemoryService(
+        state_dir=tmp_path / "state",
+        profile_loader=lambda: {},
+        profile_saver=lambda p: None,
+    )
+    svc.record_episode(make_episode("loop", "a"))
+    svc.record_episode(make_episode("loop", "b"))
+    svc.record_episode(make_episode("note", "c"))
+    insights = svc.learn_profile_from_episodes()
+    kinds = {k["kind"]: k["count"] for k in insights["top_kinds"]}
+    assert kinds["loop"] == 2
+    assert kinds["note"] == 1
+
+
+def test_compact_episodes_noop_when_under_threshold(tmp_path: Path) -> None:
+    """compact_episodes should be a no-op when episodes <= keep_recent."""
+    svc = _make_service(tmp_path)
+    for i in range(5):
+        svc.record_episode(make_episode("k", f"ep {i}"))
+    result = svc.compact_episodes(keep_recent=10)
+    assert result["removed"] == 0
+    assert result["summaries_added"] == 0
+    # All 5 episodes should still be present
+    assert len(svc.list_episodes()) == 5
+
+
+def test_compact_episodes_aggregates_old_episodes(tmp_path: Path) -> None:
+    """compact_episodes should replace old episodes with per-kind summaries."""
+    svc = _make_service(tmp_path)
+    # Record 10 episodes; keep only the 4 most recent
+    for i in range(10):
+        svc.record_episode(make_episode("loop", f"old ep {i}", {"i": i}))
+    result = svc.compact_episodes(keep_recent=4)
+    assert result["removed"] == 6
+    assert result["summaries_added"] == 1  # one summary for "loop" kind
+    remaining = svc.list_episodes()
+    # 4 recent + 1 summary = 5 total
+    assert len(remaining) == 5
+    # The summary should be the oldest (created_at smallest)
+    summary = [ep for ep in remaining if ep.kind == "loop_summary"]
+    assert len(summary) == 1
+    assert summary[0].details["count"] == 6
+    assert summary[0].details["compacted"] is True
+
+
+def test_compact_episodes_preserves_recent_intact(tmp_path: Path) -> None:
+    """compact_episodes should not alter the recent episodes."""
+    svc = _make_service(tmp_path)
+    for i in range(8):
+        svc.record_episode(make_episode("k", f"ep {i}", {"idx": i}))
+    before = svc.list_episodes(limit=4)
+    svc.compact_episodes(keep_recent=4)
+    after = svc.list_episodes(limit=4)
+    # The 4 most recent summaries should be unchanged
+    before_summaries = [ep.summary for ep in before]
+    after_summaries = [ep.summary for ep in after]
+    assert before_summaries == after_summaries

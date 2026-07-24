@@ -148,6 +148,13 @@ class Settings(BaseSettings):
     trello_api_token: str | None = Field(default=None, alias="TRELLO_API_TOKEN")
     tailscale_auth_key: str | None = Field(default=None, alias="TAILSCALE_AUTH_KEY")
 
+    # IMA 知识库 (Tencent IMA OpenAPI)
+    ima_openapi_clientid: str | None = Field(default=None, alias="IMA_OPENAPI_CLIENTID")
+    ima_openapi_apikey: str | None = Field(default=None, alias="IMA_OPENAPI_APIKEY")
+    ima_openapi_base_url: str = Field(
+        default="https://ima.qq.com", alias="IMA_OPENAPI_BASE_URL"
+    )
+
     # -------------------------------------------------------------------------
     # Skillhub
     # -------------------------------------------------------------------------
@@ -181,6 +188,13 @@ class Settings(BaseSettings):
         default=Path(__file__).resolve().parents[2] / "data" / "profile.json",
         alias="HERMES_PROFILE_PATH",
     )
+    # LLM integration: which provider/model the workbench agent should use.
+    # provider is one of: zai/glm, ollama, openai, openrouter, moonshot, etc.
+    # (any name returned by Settings.configured_providers()).
+    hermes_llm_provider: str = Field(default="ollama", alias="HERMES_LLM_PROVIDER")
+    hermes_llm_model: str = Field(default="gpt-3.5-turbo", alias="HERMES_LLM_MODEL")
+    hermes_llm_timeout: float = Field(default=60.0, alias="HERMES_LLM_TIMEOUT")
+    hermes_llm_temperature: float = Field(default=0.2, alias="HERMES_LLM_TEMPERATURE")
 
     # Search paths that are consulted for inherited .env files.
     inherit_env_paths: ClassVar[list[Path]] = [
