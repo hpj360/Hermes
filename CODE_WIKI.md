@@ -1,7 +1,7 @@
 # Hermes Code Wiki
 
-> 版本：对应 `pyproject.toml` 中 `hermes==0.2.0`（`manifest.json` 同为 `0.2.0`）
-> 生成时间：2026-07-24
+> 版本：对应 `pyproject.toml` 中 `hermes==0.5.0`（`manifest.json` 同为 `0.5.0`）
+> 生成时间：2026-07-25（v0.5.0：Phase 3 调度中心 + Loop Engineering CLI 集成）
 > 范围：`/workspace`（Hermes 独立 Python Agent 层 + Workbench 运行时 + 沉淀的 24 个 skills + 4 篇知识文档 + 内容创作素材）
 
 ---
@@ -14,7 +14,7 @@ Hermes 是一个**独立于主仓库（`/workspace/OpenClaw/openclaw-main`）的
 - **入口**：`hermes` CLI（`[project.scripts] hermes = "hermes.main:main"`）
 - **语言**：Python ≥ 3.10（核心层 + Workbench 层）；skills 自身涉及 Python / Node.js / Shell / 纯 prompt 等多种形态
 - **核心依赖**：`pydantic` / `pydantic-settings` / `python-dotenv`（仅 3 个运行时依赖，Workbench 层纯 stdlib）
-- **关键能力**：多 provider 环境继承、skills/知识发现、用户画像、Agent 循环、三层记忆、任务调度、HTTP API、GitHub Issues 同步
+- **关键能力**：多 provider 环境继承、skills/知识发现、用户画像、Agent 循环、三层记忆、任务调度、**进程内调度中心（Phase 3：Job 队列/Worker 池/Cron 触发/崩溃恢复/DAG 依赖/跨项目路由/资产同步/SSE 流式 API/指标看板）**、HTTP API（38 路由）、GitHub Issues 同步、Loop Engineering CLI（13 子命令）
 
 ---
 
@@ -303,6 +303,11 @@ cmd_workbench_memory_profile_show
 cmd_workbench_task_register / list / run / show / cancel
 cmd_workbench_serve
 cmd_workbench_github_sync
+# Phase 3 调度中心新增：
+cmd_workbench_job_list / show / submit / cancel / retry / metrics
+cmd_workbench_project_list / show / add / remove / ping
+cmd_workbench_trigger_list / show / add / fire / enable / disable
+cmd_workbench_sync
 ```
 
 **CLI 子命令树**：
@@ -322,6 +327,30 @@ hermes workbench
 │   ├── run <task_id>
 │   ├── show <task_id>
 │   └── cancel <task_id>
+├── job                                  (Phase 3 新增)
+│   ├── list
+│   ├── show <job_id>
+│   ├── submit [--plan '<json>' | --plan-file <path>] [--project ID]
+│   │        [--priority 1-10] [--timeout S] [--depends-on ID...]
+│   ├── cancel <job_id>
+│   ├── retry <job_id>
+│   └── metrics
+├── project                              (Phase 3 新增)
+│   ├── list
+│   ├── show <project_id>
+│   ├── add --name N --type {local|github|api} --state-dir D
+│   │     [--skills-dir S] [--max-concurrent N] [--id ID]
+│   ├── remove <project_id>
+│   └── ping <project_id>
+├── trigger                              (Phase 3 新增)
+│   ├── list
+│   ├── show <trigger_id>
+│   ├── add --name N --cron '<5字段>' --plan '<json>'
+│   │     [--project ID] [--priority N] [--disabled]
+│   ├── fire <trigger_id>
+│   ├── enable <trigger_id>
+│   └── disable <trigger_id>
+├── sync --source ID --target ID [--assets skills,memory,profile]  (Phase 3 新增)
 ├── serve [--host H] [--port P]      (默认 127.0.0.1:8000)
 └── github-sync --repo owner/name [--label workbench]
 ```
@@ -332,11 +361,11 @@ hermes workbench
 
 基于 `http.server.ThreadingHTTPServer` 的无状态 RESTful JSON API，所有状态经 `cli.py` 服务工厂流转。
 
-**路由表**（15 条，正则匹配 + 命名组）：
+**路由表**（38 条，正则匹配 + 命名组；Phase 3 新增 23 条标 ★）：
 
 | 方法 | 路径 | 处理函数 | 说明 |
 |------|------|---------|------|
-| GET | `/health` | `h_get_health` | 健康检查 |
+| GET | `/health` | `h_get_health` | 健康检查（含调度器状态） |
 | GET | `/skills` | `h_get_skills` | 列出所有 skills |
 | GET | `/skills/<name>` | `h_get_skill` | skill 详情 |
 | GET | `/memory/facts` | `h_get_facts` | 列出 facts |
@@ -351,10 +380,29 @@ hermes workbench
 | POST | `/tasks/<task_id>/cancel` | `h_post_task_cancel` | 取消任务 |
 | POST | `/tasks/<task_id>/run` | `h_post_task_run` | 运行任务 |
 | GET | `/github/sync` | `h_get_github_sync` | 触发 GitHub 同步（?repo=&label=） |
+| POST | `/jobs` | `h_post_jobs` | ★ 异步提交 job（plan/priority/project/timeout/depends_on） |
+| GET | `/jobs` | `h_get_jobs` | ★ 列出 jobs（?status=&project=） |
+| GET | `/jobs/metrics` | `h_get_jobs_metrics` | ★ 聚合指标（success_rate/p95/queue_depth） |
+| GET | `/jobs/<job_id>` | `h_get_job` | ★ job 详情 |
+| POST | `/jobs/<job_id>/cancel` | `h_post_job_cancel` | ★ 取消 job |
+| POST | `/jobs/<job_id>/retry` | `h_post_job_retry` | ★ 重试失败 job |
+| GET | `/stream/jobs` | `h_get_stream_jobs` | ★ SSE 实时 job 状态流 |
+| POST | `/projects` | `h_post_projects` | ★ 注册项目连接 |
+| GET | `/projects` | `h_get_projects` | ★ 列出项目连接 |
+| GET | `/projects/<project_id>` | `h_get_project` | ★ 项目详情 |
+| DELETE | `/projects/<project_id>` | `h_delete_project` | ★ 移除项目（default 不可删） |
+| POST | `/projects/<project_id>/ping` | `h_post_project_ping` | ★ 项目健康检查 |
+| POST | `/triggers` | `h_post_triggers` | ★ 注册 Cron 触发器 |
+| GET | `/triggers` | `h_get_triggers` | ★ 列出触发器 |
+| GET | `/triggers/<trigger_id>` | `h_get_trigger` | ★ 触发器详情 |
+| POST | `/triggers/<trigger_id>/fire` | `h_post_trigger_fire` | ★ 手动触发 |
+| POST | `/triggers/<trigger_id>/enable` | `h_post_trigger_enable` | ★ 启用 |
+| POST | `/triggers/<trigger_id>/disable` | `h_post_trigger_disable` | ★ 禁用 |
+| POST | `/sync` | `h_post_sync` | ★ 跨项目资产同步（source/target/assets） |
 
-**关键函数**：`make_server(host, port) -> ThreadingHTTPServer`、`run_server(host="127.0.0.1", port=8080)`
+**关键函数**：`make_server(host, port) -> ThreadingHTTPServer`、`run_server(host="127.0.0.1", port=8080)`、`_make_scheduler_center()`（Phase 3 新增，聚合 JobStore/WorkerPool/Router/CronScheduler/RecoveryManager）
 
-**错误处理**：`WorkbenchError` 子类经 `status_code_for()` 映射 HTTP 状态码；其他异常返回 500；未匹配路由返回 404；路径匹配但方法不匹配返回 405。
+**错误处理**：`WorkbenchError` 子类经 `status_code_for()` 映射 HTTP 状态码；其他异常返回 500；未匹配路由返回 404；路径匹配但方法不匹配返回 405。SSE handler 捕获 `BrokenPipeError` 后 unsubscribe 防订阅者泄漏。
 
 ### 4.8 `github_sync.py` [P4] — GitHub Issues 同步层
 
@@ -380,6 +428,88 @@ hermes workbench
 **HTTP 错误映射**：`GitHubClient._request` 捕获 `HTTPError`，经 `_translate_http_error` 映射 —— 401 → `AuthError`，404 → `UpstreamError`，其他 → `UpstreamError`；`URLError` → `UpstreamError`（网络错误）。
 
 **容错策略**：pull 失败记录 error 并返回；单个 task run 失败记录 error 并继续；单个 push 失败记录 error 并继续下一个。
+
+### 4.9 `scheduler.py` [P3.1] — 核心调度中心 (Phase 3 新增)
+
+进程内调度核心，stdlib-only（`threading` / `queue.PriorityQueue` / `concurrent.futures`）。所有 Phase 3 模块围绕此构建。
+
+**核心类型**：
+| 类 | 说明 |
+|----|------|
+| `JobStatus` (Enum) | PENDING/QUEUED/RUNNING/SUCCEEDED/FAILED/CANCELLED/TIMEOUT/ABANDONED；`is_terminal()` 判终态 |
+| `RetryPolicy` | max_attempts / backoff_base / backoff_max，指数退避 |
+| `JobExecution` | 单次执行记录（attempt/started_at/ended_at/exit_code/error） |
+| `ScheduledJob` | job 定义 + attempts[] + 状态机（queued_at/started_at/ended_at） |
+| `JobStore` | 持久化到 `.state/jobs.json`，`threading.Lock` 串行化读改写 |
+| `JobQueue` | `queue.PriorityQueue` + `_seq` 计数器，同优先级 FIFO |
+| `WorkerPool` | daemon 线程池 + `_execute` 循环 + `threading.Timer` 超时 + DAG 回调钩子 |
+| `StatusBus` | SSE 事件总线，emit/subscribe/unsubscribe，Queue 满 put_nowait 丢弃 |
+
+**关键函数**：`compute_metrics(jobs) -> dict`（total/succeeded/failed/success_rate/avg_duration_ms/p95_duration_ms/avg_queue_wait_ms）
+
+**并发安全**：`JobStore` 用 `threading.Lock` 串行化读改写 + `atomic_write_json` 落盘；`WorkerPool` 出队后 `Router.try_acquire` 失败 requeue 不阻塞；`cancel_event` 协作式取消 + `threading.Timer` 超时（同一 event 区分 TIMEOUT/CANCELLED）。
+
+### 4.10 `projects.py` [P3.2] — 跨项目路由与隔离 (Phase 3 新增)
+
+管理多个项目连接（local/github/api），每个项目独立 `ProjectRuntime` 隔离 state_dir/skills/memory。
+
+**核心类型**：
+- `ProjectConnection` dataclass：id/name/project_type/state_dir/skills_dir/config/max_concurrent/health
+- `ProjectRegistry`：持久化到 `.state/projects.json`，`default` 项目不可删（指向 `hermes_state_dir`）
+- `ProjectRuntime`：懒加载 `SkillRunner`/`MemoryService`/`AgentLoop`/`TaskScheduler`，`threading.RLock` 允许 reentrant（scheduler() 调 runner()/memory()）
+- `Router`：`resolve(project_id)` 返回缓存 runtime；`try_acquire`/`release` 原子增减 in-flight 计数，超 `max_concurrent` 返回 False
+
+**健康检查**：`ping(conn_id)` → `{"reachable", "status", "error?"}`；github 类型走 `api.github.com/repos/{owner}/{repo}` HEAD 请求。
+
+### 4.11 `triggers.py` [P3.3] — Cron 定时触发 (Phase 3 新增)
+
+5 字段 cron 表达式解析 + 60s 扫描 daemon 线程。
+
+**核心类型**：
+- `Trigger` dataclass：trigger_id/name/cron/plan/priority/project/disabled/last_fired_at
+- `TriggerStore`：持久化到 `.state/triggers.json`
+- `CronScheduler`：`_matches_cron(expr, dt)` 纯函数（支持 `*` / 数字 / `,` / `-` / `/`），`_loop` daemon 线程 `_stop.wait(60)` 控制扫描间隔，`last_fired_at` 同分钟去重
+
+**表达式格式**：标准 5 字段 `分 时 日 月 周`，例如 `*/5 * * * *`（每 5 分钟）、`0 9 * * 1-5`（工作日 9 点）。
+
+### 4.12 `recovery.py` [P3.4] — 崩溃恢复 (Phase 3 新增)
+
+进程重启后处理未完成 job：QUEUED → 重入队，RUNNING → 标 ABANDONED，PENDING → 保留。
+
+**核心类 `RecoveryManager`**：
+| 方法 | 说明 |
+|------|------|
+| `recover() -> dict` | 返回 `{requeued, abandoned, skipped}`，记 L2 episode 审计 |
+| `enabled` 属性 | 由 `HERMES_SCHEDULER_RECOVERY` 环境变量控制（默认 True） |
+
+**ADR-0002**：RUNNING 一律标 ABANDONED 不重跑（防重复副作用），由用户/重试 API 显式恢复。
+
+### 4.13 `dag.py` [P3.5] — 任务 DAG 依赖 (Phase 3 新增)
+
+job 依赖图管理，DFS 环检测 + 上游失败级联取消。
+
+**核心类 `DependencyGraph`**：
+| 方法 | 说明 |
+|------|------|
+| `register(job_id, depends_on)` | 注册依赖，深度上限 10，环检测抛 `ValidationError` |
+| `ready_to_queue(job_id) -> bool` | 所有上游 SUCCEEDED 才 True |
+| `on_job_done(job_id, status)` | 上游 FAILED/CANCELLED/TIMEOUT → 下游级联 CANCELLED |
+
+**ADR-0003**：级联取消而非级联重试，避免重试风暴；下游 retry 由用户显式触发。
+
+### 4.14 `asset_sync.py` [P3.6] — 跨项目资产同步 (Phase 3 新增)
+
+单向同步 skills/memory/profile，源 → 目标。
+
+**核心类 `AssetSync` + `SyncResult`**：
+| 资产类型 | 策略 |
+|---------|------|
+| skills | 文件复制（覆盖同名） |
+| memory.facts | 合并（源覆盖目标同名 key） |
+| memory.episodes | 追加去重（按 episode id） |
+| profile | 浅合并（源覆盖目标同名字段） |
+
+**错误处理**：source/target 不存在抛 `NotFoundError`；单条同步失败记 error 继续下一条。
 
 ---
 
@@ -535,6 +665,30 @@ hermes workbench task run t1
 hermes workbench task show t1
 hermes workbench task cancel t1
 
+# Workbench - Job 调度中心 (Phase 3 新增)
+hermes workbench job submit --plan '[{"skill":"weather"}]' --project default --priority 5
+hermes workbench job list
+hermes workbench job show <job_id>
+hermes workbench job cancel <job_id>
+hermes workbench job retry <job_id>
+hermes workbench job metrics
+
+# Workbench - 项目管理 (Phase 3 新增)
+hermes workbench project add --name my-repo --type github --state-dir /tmp/myrepo \
+  --config '{"url":"github.com/owner/repo"}' --max-concurrent 2
+hermes workbench project list
+hermes workbench project ping <project_id>
+
+# Workbench - Cron 触发器 (Phase 3 新增)
+hermes workbench trigger add --name daily-weather --cron '0 9 * * *' \
+  --plan '[{"skill":"weather","args":["Beijing"]}]'
+hermes workbench trigger list
+hermes workbench trigger fire <trigger_id>
+hermes workbench trigger disable <trigger_id>
+
+# Workbench - 跨项目资产同步 (Phase 3 新增)
+hermes workbench sync --source proj-a --target proj-b --assets skills,memory,profile
+
 # Workbench - HTTP 服务
 hermes workbench serve --host 127.0.0.1 --port 8080
 
@@ -548,7 +702,7 @@ hermes workbench github-sync --repo owner/name --label workbench
 # 启动服务
 hermes workbench serve --port 8080 &
 
-# 健康检查
+# 健康检查（含调度器状态：worker active/idle + queue_depth + recovery 状态）
 curl http://127.0.0.1:8080/health
 
 # Skills
@@ -565,7 +719,7 @@ curl -X DELETE http://127.0.0.1:8080/memory/facts/city
 curl http://127.0.0.1:8080/memory/episodes?kind=loop
 curl http://127.0.0.1:8080/memory/profile
 
-# Tasks
+# Tasks (向后兼容，内部转 ScheduledJob)
 curl -X POST http://127.0.0.1:8080/tasks \
   -H 'Content-Type: application/json' \
   -d '{"plan":[{"skill":"weather"}],"run":true}'
@@ -573,6 +727,40 @@ curl http://127.0.0.1:8080/tasks
 curl http://127.0.0.1:8080/tasks/<task_id>
 curl -X POST http://127.0.0.1:8080/tasks/<task_id>/run
 curl -X POST http://127.0.0.1:8080/tasks/<task_id>/cancel
+
+# Jobs (Phase 3 新增)
+curl -X POST http://127.0.0.1:8080/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{"plan":[{"skill":"weather"}],"priority":5,"project":"default"}'
+curl http://127.0.0.1:8080/jobs
+curl http://127.0.0.1:8080/jobs/<job_id>
+curl -X POST http://127.0.0.1:8080/jobs/<job_id>/cancel
+curl -X POST http://127.0.0.1:8080/jobs/<job_id>/retry
+curl http://127.0.0.1:8080/jobs/metrics
+curl -N http://127.0.0.1:8080/stream/jobs   # SSE 实时事件流
+
+# Projects (Phase 3 新增)
+curl -X POST http://127.0.0.1:8080/projects \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"my-repo","project_type":"github","state_dir":"/tmp/myrepo","config":{"url":"github.com/owner/repo"},"max_concurrent":2}'
+curl http://127.0.0.1:8080/projects
+curl http://127.0.0.1:8080/projects/<project_id>
+curl -X DELETE http://127.0.0.1:8080/projects/<project_id>
+curl -X POST http://127.0.0.1:8080/projects/<project_id>/ping
+
+# Triggers (Phase 3 新增)
+curl -X POST http://127.0.0.1:8080/triggers \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"daily-weather","cron":"0 9 * * *","plan":[{"skill":"weather","args":["Beijing"]}]}'
+curl http://127.0.0.1:8080/triggers
+curl -X POST http://127.0.0.1:8080/triggers/<trigger_id>/fire
+curl -X POST http://127.0.0.1:8080/triggers/<trigger_id>/enable
+curl -X POST http://127.0.0.1:8080/triggers/<trigger_id>/disable
+
+# Sync (Phase 3 新增)
+curl -X POST http://127.0.0.1:8080/sync \
+  -H 'Content-Type: application/json' \
+  -d '{"source":"proj-a","target":"proj-b","assets":["skills","memory","profile"]}'
 
 # GitHub 同步
 curl 'http://127.0.0.1:8080/github/sync?repo=owner/name&label=workbench'
@@ -628,29 +816,37 @@ print(loop_result.ok, loop_result.duration)
 
 ### 8.1 测试规模
 
-- **13 个测试文件，259 个测试用例**
-- 顶层 55 个（config 5 / logging 9 / main 12 / profile 18 / skills 11）
-- Workbench 204 个（agent_loop 12 / cli 71 / errors 12 / github_sync 21 / memory 21 / persistence 13 / server 24 / skill_runner 30）
+- **21 个测试文件，931 个测试用例 + 15 个 skipped**（v0.5.0）
+- 顶层 92 个（config 5 / logging 9 / main 12 / profile 18 / skills 11 / cli_loop 47）
+- Workbench 601 个（agent_loop 12 / cli 103 / errors 12 / github_sync 21 / memory 21 / persistence 13 / server 68 / skill_runner 30 + **Phase 3 新增 6 模块 175 个**：scheduler 42 / projects 26 / triggers 54 / recovery 16 / dag 22 / asset_sync 15）
+- 其他 238 个（loop / runner / orchestrator / ima_sync / structured_logging / tracing / dashboard / goal 等顶层测试）
 
 ### 8.2 模块覆盖率
 
-**13/13 模块均有对应测试，无缺失。**
+**21/21 模块均有对应测试，无缺失。** Workbench 层整体覆盖率 83%，Phase 3 模块平均 88.5%。
 
-| 模块 | 测试文件 | 用例数 |
-|------|---------|--------|
-| config.py | test_config.py | 5 |
-| logging.py | test_logging.py | 9 |
-| main.py | test_main.py | 12 |
-| profile.py | test_profile.py | 18 |
-| skills.py | test_skills.py | 11 |
-| workbench/agent_loop.py | test_agent_loop.py | 12 |
-| workbench/cli.py | test_cli.py | 71 |
-| workbench/errors.py | test_errors.py | 12 |
-| workbench/github_sync.py | test_github_sync.py | 21 |
-| workbench/memory.py | test_memory.py | 21 |
-| workbench/persistence.py | test_persistence.py | 13 |
-| workbench/server.py | test_server.py | 24 |
-| workbench/skill_runner.py | test_skill_runner.py | 30 |
+| 模块 | 测试文件 | 用例数 | 覆盖率 |
+|------|---------|--------|-------|
+| config.py | test_config.py | 5 | — |
+| logging.py | test_logging.py | 9 | — |
+| main.py | test_main.py | 12 | — |
+| profile.py | test_profile.py | 18 | — |
+| skills.py | test_skills.py | 11 | — |
+| cli_loop.py | test_cli_loop.py | 47 | — |
+| workbench/agent_loop.py | test_agent_loop.py | 12 | 97% |
+| workbench/cli.py | test_cli.py | 103 | 79% |
+| workbench/errors.py | test_errors.py | 12 | 100% |
+| workbench/github_sync.py | test_github_sync.py | 21 | 87% |
+| workbench/memory.py | test_memory.py | 21 | 86% |
+| workbench/persistence.py | test_persistence.py | 13 | 86% |
+| workbench/server.py | test_server.py | 68 | 68% |
+| workbench/skill_runner.py | test_skill_runner.py | 30 | 83% |
+| **workbench/scheduler.py** (P3.1) | test_scheduler.py | 42 | **86%** |
+| **workbench/projects.py** (P3.2) | test_projects.py | 26 | **87%** |
+| **workbench/triggers.py** (P3.3) | test_triggers.py | 54 | **93%** |
+| **workbench/recovery.py** (P3.4) | test_recovery.py | 16 | **93%** |
+| **workbench/dag.py** (P3.5) | test_dag.py | 22 | **93%** |
+| **workbench/asset_sync.py** (P3.6) | test_asset_sync.py | 15 | **79%** |
 
 ### 8.3 测试隔离
 
@@ -662,11 +858,12 @@ print(loop_result.ok, loop_result.duration)
 ### 8.4 运行测试
 
 ```bash
-pytest tests/                          # 全部 259 个
-pytest tests/workbench/                # Workbench 204 个
-pytest tests/workbench/test_github_sync.py -v  # 单个文件
+pytest tests/                          # 全部 931 个
+pytest tests/workbench/                # Workbench 601 个
+pytest tests/workbench/test_scheduler.py -v   # Phase 3 单模块
+pytest tests/workbench/ --cov=src/hermes/workbench --cov-report=term  # 覆盖率
 ruff check src/hermes/ tests/          # lint
-mypy src/hermes/                       # 类型检查
+mypy src/hermes/                       # 类型检查（0 errors）
 ```
 
 ---
