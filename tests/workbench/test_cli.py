@@ -17,6 +17,12 @@ from hermes.workbench.cli import (
     TaskScheduler,
     TaskStore,
     add_workbench_subparser,
+    cmd_workbench_job_cancel,
+    cmd_workbench_job_list,
+    cmd_workbench_job_metrics,
+    cmd_workbench_job_retry,
+    cmd_workbench_job_show,
+    cmd_workbench_job_submit,
     cmd_workbench_loop,
     cmd_workbench_memory_facts_forget,
     cmd_workbench_memory_facts_get,
@@ -24,15 +30,26 @@ from hermes.workbench.cli import (
     cmd_workbench_memory_facts_remember,
     cmd_workbench_memory_episodes_list,
     cmd_workbench_memory_profile_show,
+    cmd_workbench_project_add,
+    cmd_workbench_project_list,
+    cmd_workbench_project_ping,
+    cmd_workbench_project_remove,
+    cmd_workbench_project_show,
     cmd_workbench_run,
     cmd_workbench_serve,
     cmd_workbench_skills_list,
     cmd_workbench_skills_show,
+    cmd_workbench_sync,
     cmd_workbench_task_cancel,
     cmd_workbench_task_list,
     cmd_workbench_task_register,
     cmd_workbench_task_run,
     cmd_workbench_task_show,
+    cmd_workbench_trigger_create,
+    cmd_workbench_trigger_delete,
+    cmd_workbench_trigger_fire,
+    cmd_workbench_trigger_list,
+    cmd_workbench_trigger_show,
     register_workbench_commands,
     workbench_main,
 )
@@ -1102,6 +1119,457 @@ def test_cmd_serve_invokes_run_server(
 
 
 # ---------------------------------------------------------------------------
+# Command handlers: job (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def _patch_scheduler_center(
+    monkeypatch: pytest.MonkeyPatch, state_dir: Path
+) -> Any:
+    """Point the CLI scheduler center at *state_dir* and reset the cache.
+
+    Returns the fresh center so tests can inspect its in-memory state.
+    """
+    monkeypatch.setattr(wb_cli, "_state_dir", lambda: state_dir)
+    wb_cli._reset_scheduler_center()
+    return wb_cli._make_scheduler_center()
+
+
+def test_cmd_job_submit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    plan = json.dumps([{"skill": "alpha"}])
+    rc = cmd_workbench_job_submit(
+        _ns(
+            plan=plan,
+            plan_file=None,
+            project="default",
+            priority=5,
+            timeout=None,
+            mode="oneshot",
+            depends_on=None,
+        )
+    )
+    assert rc == 0
+    out = capsys.readouterr().out.strip()
+    assert out  # prints the job_id
+
+
+def test_cmd_job_submit_no_plan_returns_1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    rc = cmd_workbench_job_submit(
+        _ns(plan=None, plan_file=None, project="default", priority=5,
+            timeout=None, mode="oneshot", depends_on=None)
+    )
+    assert rc == 1
+    assert "plan" in capsys.readouterr().err
+
+
+def test_cmd_job_list_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    rc = cmd_workbench_job_list(_ns(status=None))
+    assert rc == 0
+    assert "no jobs" in capsys.readouterr().out
+
+
+def test_cmd_job_list_after_submit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    plan = json.dumps([{"skill": "alpha"}])
+    cmd_workbench_job_submit(
+        _ns(plan=plan, plan_file=None, project="default", priority=5,
+            timeout=None, mode="oneshot", depends_on=None)
+    )
+    capsys.readouterr()  # drain submit output
+    rc = cmd_workbench_job_list(_ns(status=None))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "QUEUED" in out
+
+
+def test_cmd_job_show_existing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    plan = json.dumps([{"skill": "alpha"}])
+    cmd_workbench_job_submit(
+        _ns(plan=plan, plan_file=None, project="default", priority=5,
+            timeout=None, mode="oneshot", depends_on=None)
+    )
+    job_id = capsys.readouterr().out.strip()
+    rc = cmd_workbench_job_show(_ns(job_id=job_id))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert job_id in out
+
+
+def test_cmd_job_show_missing_returns_1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    rc = cmd_workbench_job_show(_ns(job_id="nonexistent"))
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_cmd_job_cancel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    plan = json.dumps([{"skill": "alpha"}])
+    cmd_workbench_job_submit(
+        _ns(plan=plan, plan_file=None, project="default", priority=5,
+            timeout=None, mode="oneshot", depends_on=None)
+    )
+    job_id = capsys.readouterr().out.strip()
+    rc = cmd_workbench_job_cancel(_ns(job_id=job_id))
+    assert rc == 0
+    assert "cancelled" in capsys.readouterr().out
+
+
+def test_cmd_job_cancel_missing_returns_1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    rc = cmd_workbench_job_cancel(_ns(job_id="nonexistent"))
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_cmd_job_retry_requires_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    plan = json.dumps([{"skill": "alpha"}])
+    cmd_workbench_job_submit(
+        _ns(plan=plan, plan_file=None, project="default", priority=5,
+            timeout=None, mode="oneshot", depends_on=None)
+    )
+    job_id = capsys.readouterr().out.strip()
+    # Job is QUEUED (non-terminal) → retry must refuse.
+    rc = cmd_workbench_job_retry(_ns(job_id=job_id))
+    assert rc == 1
+    assert "not terminal" in capsys.readouterr().err
+
+
+def test_cmd_job_retry_after_cancel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    plan = json.dumps([{"skill": "alpha"}])
+    cmd_workbench_job_submit(
+        _ns(plan=plan, plan_file=None, project="default", priority=5,
+            timeout=None, mode="oneshot", depends_on=None)
+    )
+    job_id = capsys.readouterr().out.strip()
+    cmd_workbench_job_cancel(_ns(job_id=job_id))
+    capsys.readouterr()
+    rc = cmd_workbench_job_retry(_ns(job_id=job_id))
+    assert rc == 0
+    assert "requeued" in capsys.readouterr().out
+
+
+def test_cmd_job_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    plan = json.dumps([{"skill": "alpha"}])
+    cmd_workbench_job_submit(
+        _ns(plan=plan, plan_file=None, project="default", priority=5,
+            timeout=None, mode="oneshot", depends_on=None)
+    )
+    capsys.readouterr()
+    rc = cmd_workbench_job_metrics(_ns())
+    assert rc == 0
+    out = capsys.readouterr().out
+    metrics = json.loads(out)
+    assert metrics["total"] >= 1
+    assert "success_rate" in metrics
+
+
+# ---------------------------------------------------------------------------
+# Command handlers: project (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_project_list_has_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    rc = cmd_workbench_project_list(_ns())
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "default" in out
+
+
+def test_cmd_project_add_and_show(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    proj_dir = tmp_path / "proj-state"
+    proj_dir.mkdir()
+    rc = cmd_workbench_project_add(
+        _ns(name="TestProj", type="local", state_dir=str(proj_dir),
+            skills_dir=None, max_concurrent=2)
+    )
+    assert rc == 0
+    project_id = capsys.readouterr().out.strip()
+    rc = cmd_workbench_project_show(_ns(project_id=project_id))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "TestProj" in out
+
+
+def test_cmd_project_show_missing_returns_1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    rc = cmd_workbench_project_show(_ns(project_id="nonexistent"))
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_cmd_project_remove(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    proj_dir = tmp_path / "proj-state"
+    proj_dir.mkdir()
+    cmd_workbench_project_add(
+        _ns(name="ToRemove", type="local", state_dir=str(proj_dir),
+            skills_dir=None, max_concurrent=1)
+    )
+    project_id = capsys.readouterr().out.strip()
+    rc = cmd_workbench_project_remove(_ns(project_id=project_id))
+    assert rc == 0
+    assert "removed" in capsys.readouterr().out
+
+
+def test_cmd_project_remove_missing_returns_1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    rc = cmd_workbench_project_remove(_ns(project_id="nonexistent"))
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_cmd_project_ping_local(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    rc = cmd_workbench_project_ping(_ns(project_id="default"))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "reachable" in out
+
+
+# ---------------------------------------------------------------------------
+# Command handlers: trigger (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_trigger_list_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    rc = cmd_workbench_trigger_list(_ns())
+    assert rc == 0
+    assert "no triggers" in capsys.readouterr().out
+
+
+def test_cmd_trigger_create_and_show(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    plan = json.dumps([{"skill": "alpha"}])
+    rc = cmd_workbench_trigger_create(
+        _ns(plan=plan, plan_file=None, cron=None)
+    )
+    assert rc == 0
+    trigger_id = capsys.readouterr().out.strip()
+    rc = cmd_workbench_trigger_show(_ns(trigger_id=trigger_id))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert trigger_id in out
+
+
+def test_cmd_trigger_create_with_cron(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    plan = json.dumps([{"skill": "alpha"}])
+    rc = cmd_workbench_trigger_create(
+        _ns(plan=plan, plan_file=None, cron="*/5 * * * *")
+    )
+    assert rc == 0
+    trigger_id = capsys.readouterr().out.strip()
+    rc = cmd_workbench_trigger_show(_ns(trigger_id=trigger_id))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "cron" in out
+
+
+def test_cmd_trigger_show_missing_returns_1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    rc = cmd_workbench_trigger_show(_ns(trigger_id="nonexistent"))
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_cmd_trigger_delete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    plan = json.dumps([{"skill": "alpha"}])
+    cmd_workbench_trigger_create(_ns(plan=plan, plan_file=None, cron=None))
+    trigger_id = capsys.readouterr().out.strip()
+    rc = cmd_workbench_trigger_delete(_ns(trigger_id=trigger_id))
+    assert rc == 0
+    assert "deleted" in capsys.readouterr().out
+
+
+def test_cmd_trigger_delete_missing_returns_1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    rc = cmd_workbench_trigger_delete(_ns(trigger_id="nonexistent"))
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_cmd_trigger_fire_creates_job(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    center = _patch_scheduler_center(monkeypatch, tmp_path)
+    plan = json.dumps([{"skill": "alpha"}])
+    cmd_workbench_trigger_create(_ns(plan=plan, plan_file=None, cron=None))
+    trigger_id = capsys.readouterr().out.strip()
+    rc = cmd_workbench_trigger_fire(_ns(trigger_id=trigger_id))
+    assert rc == 0
+    assert "fired" in capsys.readouterr().out
+    # The fired job must be persisted in the job store.
+    assert len(center.job_store.list()) >= 1
+
+
+def test_cmd_trigger_fire_missing_returns_1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    rc = cmd_workbench_trigger_fire(_ns(trigger_id="nonexistent"))
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Command handlers: sync (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_sync_no_targets_returns_1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_scheduler_center(monkeypatch, tmp_path)
+    rc = cmd_workbench_sync(_ns(source="default", targets=None, scope="all"))
+    assert rc == 1
+    assert "target" in capsys.readouterr().err
+
+
+def test_cmd_sync_memory_between_projects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    center = _patch_scheduler_center(monkeypatch, tmp_path)
+    src_dir = tmp_path / "src-state"
+    src_dir.mkdir()
+    tgt_dir = tmp_path / "tgt-state"
+    tgt_dir.mkdir()
+    cmd_workbench_project_add(
+        _ns(name="Src", type="local", state_dir=str(src_dir),
+            skills_dir=None, max_concurrent=1)
+    )
+    src_id = capsys.readouterr().out.strip()
+    cmd_workbench_project_add(
+        _ns(name="Tgt", type="local", state_dir=str(tgt_dir),
+            skills_dir=None, max_concurrent=1)
+    )
+    tgt_id = capsys.readouterr().out.strip()
+    # Seed a fact in the source project via the router's runtime.
+    src_rt = center.router.resolve(src_id)
+    src_rt.memory().remember_fact("shared_key", "shared_value")
+    rc = cmd_workbench_sync(
+        _ns(source=src_id, targets=[tgt_id], scope="memory")
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "ok=True" in out
+    # The target project should now have the synced fact.
+    tgt_rt = center.router.resolve(tgt_id)
+    assert tgt_rt.memory().get_fact("shared_key") is not None
+
+
+# ---------------------------------------------------------------------------
 # Parser registration
 # ---------------------------------------------------------------------------
 
@@ -1133,6 +1601,29 @@ def test_add_workbench_subparser_registers_all() -> None:
     parser.parse_args(["workbench", "task", "show", "t1"])
     parser.parse_args(["workbench", "task", "cancel", "t1"])
     parser.parse_args(["workbench", "serve"])
+    # Phase 3 subcommands
+    parser.parse_args(["workbench", "job", "submit", "--plan", "[]"])
+    parser.parse_args(["workbench", "job", "list"])
+    parser.parse_args(["workbench", "job", "show", "job-1"])
+    parser.parse_args(["workbench", "job", "cancel", "job-1"])
+    parser.parse_args(["workbench", "job", "retry", "job-1"])
+    parser.parse_args(["workbench", "job", "metrics"])
+    parser.parse_args(["workbench", "project", "list"])
+    parser.parse_args(
+        ["workbench", "project", "add", "--name", "P", "--type", "local",
+         "--state-dir", "/tmp"]
+    )
+    parser.parse_args(["workbench", "project", "show", "proj-1"])
+    parser.parse_args(["workbench", "project", "remove", "proj-1"])
+    parser.parse_args(["workbench", "project", "ping", "proj-1"])
+    parser.parse_args(["workbench", "trigger", "list"])
+    parser.parse_args(["workbench", "trigger", "create", "--plan", "[]"])
+    parser.parse_args(["workbench", "trigger", "show", "trig-1"])
+    parser.parse_args(["workbench", "trigger", "delete", "trig-1"])
+    parser.parse_args(["workbench", "trigger", "fire", "trig-1"])
+    parser.parse_args(
+        ["workbench", "sync", "--source", "default", "target-1"]
+    )
 
 
 def test_register_workbench_commands_standalone() -> None:

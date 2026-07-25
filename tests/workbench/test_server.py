@@ -56,7 +56,19 @@ def patched_services(monkeypatch, skills_dir, tmp_path):
     monkeypatch.setattr(cli_mod, "_make_store", lambda: store)
     monkeypatch.setattr(cli_mod, "_make_registry", lambda: registry)
     monkeypatch.setattr(cli_mod, "_make_scheduler", lambda: scheduler)
-    return {"store": store, "registry": registry, "scheduler": scheduler}
+
+    # Phase 3 scheduler center: build a fresh center pointed at tmp state so
+    # the new /jobs, /projects, /triggers, /sync, /health routes are isolated.
+    monkeypatch.setattr(cli_mod, "_state_dir", lambda: state)
+    cli_mod._reset_scheduler_center()
+    center = cli_mod._SchedulerCenter()
+    monkeypatch.setattr(cli_mod, "_make_scheduler_center", lambda: center)
+    return {
+        "store": store,
+        "registry": registry,
+        "scheduler": scheduler,
+        "center": center,
+    }
 
 
 @pytest.fixture
@@ -549,3 +561,327 @@ def test_get_trace_ignores_untraced_episodes(patched_services, client):
     data = _json(resp)
     assert data["count"] == 1
     assert data["episodes"][0]["summary"] == "with-trace"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: health (scheduler extension)
+# ---------------------------------------------------------------------------
+
+
+def test_health_includes_scheduler(patched_services, client):
+    """AC-20: /health reports scheduler queue depth + job counts."""
+    resp = client("GET", "/health")
+    assert resp.status == 200
+    data = _json(resp)
+    assert data["status"] == "ok"
+    assert "scheduler" in data["services"]
+    assert data["scheduler"]["queue_depth"] == 0
+    assert data["scheduler"]["jobs_total"] == 0
+    assert data["scheduler"]["jobs_active"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: jobs
+# ---------------------------------------------------------------------------
+
+
+def test_jobs_submit_and_list(patched_services, client):
+    """AC-20: POST /jobs creates a QUEUED job; GET /jobs lists it."""
+    resp = client("POST", "/jobs", body={"plan": [{"skill": "alpha"}]})
+    assert resp.status == 201
+    job = _json(resp)
+    assert job["status"] == "QUEUED"
+    assert job["target_project"] == "default"
+    job_id = job["job_id"]
+
+    resp = client("GET", "/jobs")
+    assert resp.status == 200
+    jobs = _json(resp)["jobs"]
+    assert any(j["job_id"] == job_id for j in jobs)
+
+
+def test_jobs_submit_validates_plan(patched_services, client):
+    """AC-20: POST /jobs without plan returns 400."""
+    resp = client("POST", "/jobs", body={})
+    assert resp.status == 400
+
+
+def test_jobs_show(patched_services, client):
+    """AC-20: GET /jobs/{id} returns the job detail."""
+    resp = client("POST", "/jobs", body={"plan": [{"skill": "alpha"}]})
+    job_id = _json(resp)["job_id"]
+    resp = client("GET", f"/jobs/{job_id}")
+    assert resp.status == 200
+    assert _json(resp)["job_id"] == job_id
+
+
+def test_jobs_show_missing_404(patched_services, client):
+    resp = client("GET", "/jobs/nonexistent")
+    assert resp.status == 404
+
+
+def test_jobs_cancel(patched_services, client):
+    """AC-20: POST /jobs/{id}/cancel marks the job CANCELLED."""
+    resp = client("POST", "/jobs", body={"plan": [{"skill": "alpha"}]})
+    job_id = _json(resp)["job_id"]
+    resp = client("POST", f"/jobs/{job_id}/cancel")
+    assert resp.status == 200
+    assert _json(resp)["status"] == "CANCELLED"
+
+
+def test_jobs_retry_requires_terminal(patched_services, client):
+    """AC-20: retrying a non-terminal job returns 400."""
+    resp = client("POST", "/jobs", body={"plan": [{"skill": "alpha"}]})
+    job_id = _json(resp)["job_id"]
+    resp = client("POST", f"/jobs/{job_id}/retry")
+    assert resp.status == 400
+
+
+def test_jobs_retry_after_cancel(patched_services, client):
+    """AC-20: retrying a terminal job requeues it as QUEUED."""
+    resp = client("POST", "/jobs", body={"plan": [{"skill": "alpha"}]})
+    job_id = _json(resp)["job_id"]
+    client("POST", f"/jobs/{job_id}/cancel")
+    resp = client("POST", f"/jobs/{job_id}/retry")
+    assert resp.status == 200
+    assert _json(resp)["status"] == "QUEUED"
+
+
+def test_jobs_metrics(patched_services, client):
+    """AC-21: GET /jobs/metrics returns aggregated counters."""
+    client("POST", "/jobs", body={"plan": [{"skill": "alpha"}]})
+    resp = client("GET", "/jobs/metrics")
+    assert resp.status == 200
+    metrics = _json(resp)
+    assert metrics["total"] >= 1
+    assert "success_rate" in metrics
+    assert "p95_duration_ms" in metrics
+
+
+def test_jobs_list_filter_by_status(patched_services, client):
+    """AC-20: GET /jobs?status=QUEUED filters by status."""
+    client("POST", "/jobs", body={"plan": [{"skill": "alpha"}]})
+    resp = client("GET", "/jobs?status=QUEUED")
+    assert resp.status == 200
+    jobs = _json(resp)["jobs"]
+    assert all(j["status"] == "QUEUED" for j in jobs)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: projects
+# ---------------------------------------------------------------------------
+
+
+def test_projects_list_has_default(patched_services, client):
+    """AC-22: GET /projects always includes the default project."""
+    resp = client("GET", "/projects")
+    assert resp.status == 200
+    data = _json(resp)
+    ids = [p["id"] for p in data["projects"]]
+    assert "default" in ids
+    assert data["total"] >= 1
+
+
+def test_projects_add_and_show(patched_services, client, tmp_path):
+    """AC-22: POST /projects creates a project; GET /projects/{id} shows it."""
+    proj_dir = tmp_path / "proj-state"
+    proj_dir.mkdir()
+    resp = client(
+        "POST",
+        "/projects",
+        body={
+            "name": "TestProj",
+            "type": "local",
+            "state_dir": str(proj_dir),
+            "max_concurrent": 2,
+        },
+    )
+    assert resp.status == 201
+    conn = _json(resp)
+    assert conn["name"] == "TestProj"
+    assert conn["max_concurrent"] == 2
+    proj_id = conn["id"]
+
+    resp = client("GET", f"/projects/{proj_id}")
+    assert resp.status == 200
+    assert _json(resp)["id"] == proj_id
+
+
+def test_projects_add_validates(patched_services, client):
+    """AC-22: POST /projects missing required fields returns 400."""
+    resp = client("POST", "/projects", body={"name": "x"})
+    assert resp.status == 400
+
+
+def test_projects_ping_local(patched_services, client, tmp_path):
+    """AC-22: POST /projects/{id}/ping reports reachable for a local project."""
+    proj_dir = tmp_path / "ping-state"
+    proj_dir.mkdir()
+    resp = client(
+        "POST",
+        "/projects",
+        body={"name": "Pingable", "type": "local", "state_dir": str(proj_dir)},
+    )
+    proj_id = _json(resp)["id"]
+    resp = client("POST", f"/projects/{proj_id}/ping")
+    assert resp.status == 200
+    assert _json(resp)["reachable"] is True
+
+
+def test_projects_delete(patched_services, client, tmp_path):
+    """AC-22: DELETE /projects/{id} removes a non-default project."""
+    proj_dir = tmp_path / "del-state"
+    proj_dir.mkdir()
+    resp = client(
+        "POST",
+        "/projects",
+        body={"name": "Deletable", "type": "local", "state_dir": str(proj_dir)},
+    )
+    proj_id = _json(resp)["id"]
+    resp = client("DELETE", f"/projects/{proj_id}")
+    assert resp.status == 204
+    # Subsequent get returns 404.
+    assert client("GET", f"/projects/{proj_id}").status == 404
+
+
+def test_projects_show_missing_404(patched_services, client):
+    resp = client("GET", "/projects/nonexistent")
+    assert resp.status == 404
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: triggers
+# ---------------------------------------------------------------------------
+
+
+def test_triggers_create_and_list(patched_services, client):
+    """AC-23: POST /triggers creates a trigger; GET /triggers lists it."""
+    resp = client(
+        "POST",
+        "/triggers",
+        body={"plan": [{"skill": "alpha"}], "cron": "*/5 * * * *"},
+    )
+    assert resp.status == 201
+    trigger = _json(resp)
+    assert trigger["trigger_type"] == "cron"
+    assert trigger["config"]["cron"] == "*/5 * * * *"
+    trigger_id = trigger["trigger_id"]
+
+    resp = client("GET", "/triggers")
+    assert resp.status == 200
+    ids = [t["trigger_id"] for t in _json(resp)["triggers"]]
+    assert trigger_id in ids
+
+
+def test_triggers_create_manual(patched_services, client):
+    """AC-23: POST /triggers without cron creates a manual trigger."""
+    resp = client("POST", "/triggers", body={"plan": [{"skill": "alpha"}]})
+    assert resp.status == 201
+    assert _json(resp)["trigger_type"] == "manual"
+
+
+def test_triggers_show(patched_services, client):
+    """AC-23: GET /triggers/{id} returns trigger detail."""
+    resp = client("POST", "/triggers", body={"plan": [{"skill": "alpha"}]})
+    trigger_id = _json(resp)["trigger_id"]
+    resp = client("GET", f"/triggers/{trigger_id}")
+    assert resp.status == 200
+    assert _json(resp)["trigger_id"] == trigger_id
+
+
+def test_triggers_delete(patched_services, client):
+    """AC-23: DELETE /triggers/{id} removes the trigger."""
+    resp = client("POST", "/triggers", body={"plan": [{"skill": "alpha"}]})
+    trigger_id = _json(resp)["trigger_id"]
+    resp = client("DELETE", f"/triggers/{trigger_id}")
+    assert resp.status == 204
+    assert client("GET", f"/triggers/{trigger_id}").status == 404
+
+
+def test_triggers_fire(patched_services, client):
+    """AC-23: POST /triggers/{id}/fire instantiates a job into the queue."""
+    resp = client("POST", "/triggers", body={"plan": [{"skill": "alpha"}]})
+    trigger_id = _json(resp)["trigger_id"]
+    resp = client("POST", f"/triggers/{trigger_id}/fire")
+    assert resp.status == 200
+    assert _json(resp)["fired"] == trigger_id
+    # The fired job should appear in the job store.
+    assert len(_json(client("GET", "/jobs"))["jobs"]) >= 1
+
+
+def test_triggers_fire_missing_404(patched_services, client):
+    resp = client("POST", "/triggers/nonexistent/fire")
+    assert resp.status == 404
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: sync
+# ---------------------------------------------------------------------------
+
+
+def test_sync_memory_between_projects(patched_services, client, tmp_path):
+    """AC-23: POST /sync propagates memory facts from source to target."""
+    # Create source + target local projects with isolated state dirs.
+    src_dir = tmp_path / "src-state"
+    src_dir.mkdir()
+    tgt_dir = tmp_path / "tgt-state"
+    tgt_dir.mkdir()
+    src = _json(
+        client(
+            "POST",
+            "/projects",
+            body={"name": "Src", "type": "local", "state_dir": str(src_dir)},
+        )
+    )["id"]
+    tgt = _json(
+        client(
+            "POST",
+            "/projects",
+            body={"name": "Tgt", "type": "local", "state_dir": str(tgt_dir)},
+        )
+    )["id"]
+
+    # Record a fact in the source project via the router's runtime.
+    center = patched_services["center"]
+    src_rt = center.router.resolve(src)
+    src_rt.memory().remember_fact("shared_key", "shared_value")
+
+    resp = client(
+        "POST",
+        "/sync",
+        body={"source": src, "targets": [tgt], "scope": "memory"},
+    )
+    assert resp.status == 200
+    data = _json(resp)
+    assert data["scope"] == "memory"
+    assert data["synced_count"] >= 1
+    # The target should now have the fact.
+    tgt_rt = center.router.resolve(tgt)
+    assert tgt_rt.memory().get_fact("shared_key") is not None
+
+
+def test_sync_validates_body(patched_services, client):
+    """AC-23: POST /sync without source/targets returns 400."""
+    resp = client("POST", "/sync", body={})
+    assert resp.status == 400
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: job status SSE
+# ---------------------------------------------------------------------------
+
+
+def test_stream_jobs_sse_connects(patched_services, server):
+    """AC-21: GET /stream/jobs opens an SSE connection and sends a comment."""
+    host, port = server.server_address[:2]
+    conn = http.client.HTTPConnection(host, port, timeout=3)
+    conn.request("GET", "/stream/jobs")
+    resp = conn.getresponse()
+    assert resp.status == 200
+    assert resp.getheader("Content-Type") == "text/event-stream"
+    # read1() returns whatever the server has already flushed (the initial
+    # ": connected" comment) without blocking for the full amt — required
+    # because the SSE handler only emits heartbeats every 15s.
+    chunk = resp.read1(64)
+    assert b"connected" in chunk
+    conn.close()

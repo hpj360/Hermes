@@ -25,6 +25,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, List
@@ -42,6 +43,7 @@ __all__ = [
     "ScheduledJob",
     "StatusBus",
     "WorkerPool",
+    "compute_metrics",
 ]
 
 
@@ -601,3 +603,83 @@ class WorkerPool:
                 self._on_job_done(job.job_id, job.status)
             except Exception:  # noqa: BLE001
                 pass  # DAG callback must not break worker
+
+
+# ---------------------------------------------------------------------------
+# Metrics aggregation
+# ---------------------------------------------------------------------------
+
+
+def _parse_iso(ts: str | None) -> datetime | None:
+    """Parse an ISO 8601 timestamp (with trailing ``Z``) into a datetime.
+
+    Returns ``None`` if *ts* is falsy or unparseable. ``_now_iso`` emits
+    ``%Y-%m-%dT%H:%M:%SZ``; ``datetime.fromisoformat`` (3.11+) accepts the
+    trailing ``Z`` directly, but we normalize for older runtimes.
+    """
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+def _percentile(values: list[float], p: float) -> float:
+    """Nearest-rank percentile: index ``int(len * p)`` clamped to ``[0, len-1]``."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    idx = min(int(len(ordered) * p), len(ordered) - 1)
+    return ordered[idx]
+
+
+def compute_metrics(jobs: list[ScheduledJob]) -> dict[str, Any]:
+    """Aggregate job metrics for the dashboard ``/jobs/metrics`` endpoint.
+
+    Returns a flat dict with status counts, success rate, and duration /
+    queue-wait percentiles (avg + p95). Durations are derived from each
+    attempt's ``started_at``/``ended_at``; queue wait is derived from the
+    job-level ``queued_at`` → ``started_at`` delta. All times are in
+    milliseconds. Empty input yields zeroed counters.
+    """
+    total = len(jobs)
+    if total == 0:
+        return {
+            "total": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "success_rate": 0.0,
+            "avg_duration_ms": 0.0,
+            "p95_duration_ms": 0.0,
+            "avg_queue_wait_ms": 0.0,
+            "p95_queue_wait_ms": 0.0,
+        }
+
+    status_counts: dict[str, int] = {s.value: 0 for s in JobStatus}
+    durations: list[float] = []
+    queue_waits: list[float] = []
+    for job in jobs:
+        status_counts[job.status.value] = status_counts.get(job.status.value, 0) + 1
+        for attempt in job.attempts:
+            started = _parse_iso(attempt.started_at)
+            ended = _parse_iso(attempt.ended_at)
+            if started is not None and ended is not None and ended > started:
+                durations.append((ended - started).total_seconds() * 1000.0)
+        queued = _parse_iso(job.queued_at)
+        started_job = _parse_iso(job.started_at)
+        if queued is not None and started_job is not None and started_job > queued:
+            queue_waits.append((started_job - queued).total_seconds() * 1000.0)
+
+    succeeded = status_counts.get(JobStatus.SUCCEEDED.value, 0)
+    failed = status_counts.get(JobStatus.FAILED.value, 0)
+    return {
+        "total": total,
+        "succeeded": succeeded,
+        "failed": failed,
+        "success_rate": succeeded / total if total else 0.0,
+        "avg_duration_ms": sum(durations) / len(durations) if durations else 0.0,
+        "p95_duration_ms": _percentile(durations, 0.95),
+        "avg_queue_wait_ms": sum(queue_waits) / len(queue_waits) if queue_waits else 0.0,
+        "p95_queue_wait_ms": _percentile(queue_waits, 0.95),
+    }

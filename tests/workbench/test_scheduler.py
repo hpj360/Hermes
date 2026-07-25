@@ -21,7 +21,9 @@ from hermes.workbench.scheduler import (
     JobStore,
     RetryPolicy,
     ScheduledJob,
+    StatusBus,
     WorkerPool,
+    compute_metrics,
 )
 from hermes.workbench.cli import Task
 
@@ -542,3 +544,173 @@ class TestWorkerPool:
 # ---------------------------------------------------------------------------
 
 from hermes.workbench.scheduler import EmptyError  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# StatusBus
+# ---------------------------------------------------------------------------
+
+
+class TestStatusBus:
+    def test_subscribe_and_emit(self, sample_task: Task) -> None:
+        """AC: emit delivers a status event to each subscriber queue."""
+        bus = StatusBus()
+        q = bus.subscribe()
+        job = ScheduledJob(task=sample_task)
+        bus.emit(job)
+        event = q.get(timeout=1.0)
+        assert event["job_id"] == job.job_id
+        assert event["status"] == JobStatus.PENDING.value
+        assert "ts" in event
+
+    def test_multiple_subscribers(self, sample_task: Task) -> None:
+        """AC: every subscriber receives the same emitted event."""
+        bus = StatusBus()
+        q1 = bus.subscribe()
+        q2 = bus.subscribe()
+        job = ScheduledJob(task=sample_task)
+        bus.emit(job)
+        e1 = q1.get(timeout=1.0)
+        e2 = q2.get(timeout=1.0)
+        assert e1["job_id"] == job.job_id
+        assert e2["job_id"] == job.job_id
+
+    def test_unsubscribe_stops_delivery(self, sample_task: Task) -> None:
+        """AC: unsubscribed queues no longer receive events."""
+        bus = StatusBus()
+        q = bus.subscribe()
+        bus.unsubscribe(q)
+        job = ScheduledJob(task=sample_task)
+        bus.emit(job)
+        with pytest.raises(_queue.Empty):
+            q.get(timeout=0.2)
+
+    def test_unsubscribe_unknown_queue_no_error(self) -> None:
+        """AC: unsubscribing a never-subscribed queue is a no-op."""
+        bus = StatusBus()
+        foreign: _queue.Queue = _queue.Queue()
+        bus.unsubscribe(foreign)  # must not raise
+
+    def test_emit_after_unsubscribe_does_not_block(self, sample_task: Task) -> None:
+        """AC: emit on a bus with no subscribers completes without blocking."""
+        bus = StatusBus()
+        job = ScheduledJob(task=sample_task)
+        bus.emit(job)  # no subscribers — must not raise
+
+    def test_queue_overflow_drops_oldest(self, sample_task: Task) -> None:
+        """AC: subscriber queue is bounded (maxsize=100); overflow drops oldest."""
+        bus = StatusBus()
+        q = bus.subscribe()
+        # Fill the queue to capacity (100). The 101st emit must drop the oldest
+        # and still deliver the newest, rather than blocking the emitter.
+        for i in range(101):
+            job = ScheduledJob(task=sample_task)
+            job.job_id = f"job-{i}"
+            bus.emit(job)
+        # The queue should still be at maxsize (dropped one oldest to fit newest).
+        assert q.qsize() == 100
+        # Newest event must be present (last emitted).
+        drained: list[dict] = []
+        while True:
+            try:
+                drained.append(q.get_nowait())
+            except _queue.Empty:
+                break
+        assert drained[-1]["job_id"] == "job-100"
+        # Oldest (job-0) was dropped to make room.
+        assert drained[0]["job_id"] != "job-0"
+
+
+# ---------------------------------------------------------------------------
+# compute_metrics
+# ---------------------------------------------------------------------------
+
+
+class TestComputeMetrics:
+    def test_empty_jobs(self) -> None:
+        """AC: empty job list yields zeroed counters."""
+        result = compute_metrics([])
+        assert result == {
+            "total": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "success_rate": 0.0,
+            "avg_duration_ms": 0.0,
+            "p95_duration_ms": 0.0,
+            "avg_queue_wait_ms": 0.0,
+            "p95_queue_wait_ms": 0.0,
+        }
+
+    def test_status_counts_and_success_rate(self, sample_task: Task) -> None:
+        """AC: status counts + success_rate derived from job statuses."""
+        j1 = ScheduledJob(task=sample_task)
+        j1.status = JobStatus.SUCCEEDED
+        j2 = ScheduledJob(task=sample_task)
+        j2.status = JobStatus.SUCCEEDED
+        j3 = ScheduledJob(task=sample_task)
+        j3.status = JobStatus.FAILED
+        result = compute_metrics([j1, j2, j3])
+        assert result["total"] == 3
+        assert result["succeeded"] == 2
+        assert result["failed"] == 1
+        assert result["success_rate"] == pytest.approx(2 / 3)
+
+    def test_duration_from_attempts(self, sample_task: Task) -> None:
+        """AC: duration aggregated from attempts' started_at/ended_at (ms)."""
+        job = ScheduledJob(task=sample_task)
+        job.status = JobStatus.SUCCEEDED
+        job.attempts.append(
+            JobExecution(
+                attempt_num=0,
+                started_at="2026-07-25T00:00:00Z",
+                ended_at="2026-07-25T00:00:02Z",  # 2 seconds = 2000ms
+                status=JobStatus.SUCCEEDED,
+            )
+        )
+        result = compute_metrics([job])
+        assert result["avg_duration_ms"] == pytest.approx(2000.0)
+        assert result["p95_duration_ms"] == pytest.approx(2000.0)
+
+    def test_queue_wait_from_job_timestamps(self, sample_task: Task) -> None:
+        """AC: queue wait derived from queued_at -> started_at (ms)."""
+        job = ScheduledJob(task=sample_task)
+        job.status = JobStatus.SUCCEEDED
+        job.queued_at = "2026-07-25T00:00:00Z"
+        job.started_at = "2026-07-25T00:00:05Z"  # 5 seconds = 5000ms
+        result = compute_metrics([job])
+        assert result["avg_queue_wait_ms"] == pytest.approx(5000.0)
+        assert result["p95_queue_wait_ms"] == pytest.approx(5000.0)
+
+    def test_p95_nearest_rank(self, sample_task: Task) -> None:
+        """AC: p95 uses nearest-rank percentile across multiple durations."""
+        jobs: list[ScheduledJob] = []
+        # 20 attempts of 1..20 seconds; p95 index = int(20*0.95) = 19 → 20.0s
+        for i in range(1, 21):
+            j = ScheduledJob(task=sample_task)
+            j.status = JobStatus.SUCCEEDED
+            j.attempts.append(
+                JobExecution(
+                    attempt_num=0,
+                    started_at="2026-07-25T00:00:00Z",
+                    ended_at=f"2026-07-25T00:00:{i:02d}Z",
+                    status=JobStatus.SUCCEEDED,
+                )
+            )
+            jobs.append(j)
+        result = compute_metrics(jobs)
+        assert result["p95_duration_ms"] == pytest.approx(20000.0)
+
+    def test_ignores_incomplete_attempts(self, sample_task: Task) -> None:
+        """AC: attempts without ended_at contribute no duration."""
+        job = ScheduledJob(task=sample_task)
+        job.status = JobStatus.RUNNING
+        job.attempts.append(
+            JobExecution(attempt_num=0, started_at="2026-07-25T00:00:00Z")
+        )  # no ended_at
+        result = compute_metrics([job])
+        assert result["avg_duration_ms"] == 0.0
+        assert result["p95_duration_ms"] == 0.0
+
+
+# Import queue for StatusBus overflow tests
+import queue as _queue  # noqa: E402

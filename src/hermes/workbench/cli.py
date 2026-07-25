@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -345,6 +346,89 @@ def _make_scheduler() -> TaskScheduler:
         memory=_make_memory(),
         llm=_make_llm(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 scheduler center (JobStore/Queue/StatusBus/Router/Trigger/DAG)
+# ---------------------------------------------------------------------------
+
+
+class _SchedulerCenter:
+    """Bundle of the Phase 3.1-3.6 services that must share in-memory state.
+
+    ``JobQueue`` and ``StatusBus`` are inherently in-memory (priority queue +
+    pub/sub), so a single cached instance must back the whole server/CLI run.
+    ``JobStore`` / ``ProjectRegistry`` / ``TriggerStore`` re-read from disk on
+    first construction but are then cached so concurrent handlers see a
+    consistent snapshot.
+    """
+
+    __slots__ = (
+        "job_store",
+        "job_queue",
+        "status_bus",
+        "project_registry",
+        "router",
+        "trigger_store",
+        "cron_scheduler",
+        "dag",
+    )
+
+    def __init__(self) -> None:
+        from hermes.workbench.dag import DependencyGraph
+        from hermes.workbench.projects import ProjectRegistry, Router
+        from hermes.workbench.scheduler import JobQueue, JobStore, JobStatus, StatusBus
+        from hermes.workbench.triggers import CronScheduler, TriggerStore
+
+        self.job_store = JobStore(state_dir=_state_dir())
+        self.job_queue = JobQueue()
+        self.status_bus = StatusBus()
+        self.project_registry = ProjectRegistry(state_dir=_state_dir())
+        self.router = Router(self.project_registry)
+        self.trigger_store = TriggerStore(state_dir=_state_dir())
+
+        # Fired jobs must be persisted (so they are visible in /jobs and
+        # recoverable on crash) before being handed to the queue.
+        def _submit_fired_job(job: Any) -> None:
+            job.status = JobStatus.QUEUED
+            self.job_store.save(job)
+            self.job_queue.put(job)
+            self.status_bus.emit(job)
+
+        self.cron_scheduler = CronScheduler(self.trigger_store, _submit_fired_job)
+        self.dag = DependencyGraph(
+            self.job_store, self.job_queue, self.status_bus
+        )
+
+
+_center_lock: threading.Lock = threading.Lock()
+_center: _SchedulerCenter | None = None
+
+
+def _make_scheduler_center() -> _SchedulerCenter:
+    """Return the cached scheduler center, building it lazily on first call.
+
+    Tests can reset the cache via :func:`_reset_scheduler_center` or monkeypatch
+    this function to inject a center pointed at a tmp state dir.
+    """
+    global _center
+    if _center is None:
+        with _center_lock:
+            if _center is None:
+                _center = _SchedulerCenter()
+    return _center
+
+
+def _reset_scheduler_center() -> None:
+    """Drop the cached scheduler center (used by tests for state isolation)."""
+    global _center
+    with _center_lock:
+        _center = None
+
+
+def _make_dag() -> Any:
+    """Return the shared :class:`DependencyGraph` from the scheduler center."""
+    return _make_scheduler_center().dag
 
 
 # ---------------------------------------------------------------------------
@@ -725,6 +809,263 @@ def cmd_workbench_ima(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Phase 3 job / project / trigger / sync commands
+# ---------------------------------------------------------------------------
+
+
+def cmd_workbench_job_submit(args: argparse.Namespace) -> int:
+    from hermes.workbench.scheduler import JobStatus, ScheduledJob
+
+    plan_data = _resolve_plan(args)
+    if plan_data is None:
+        print("error: provide --plan JSON or --plan-file PATH", file=sys.stderr)
+        return 1
+    task = Task(
+        task_id=f"job-{uuid.uuid4().hex[:8]}",
+        plan=plan_data,
+        mode=getattr(args, "mode", "oneshot"),
+    )
+    depends_on = list(getattr(args, "depends_on", None) or [])
+    job = ScheduledJob(
+        task=task,
+        target_project=getattr(args, "project", "default"),
+        priority=getattr(args, "priority", 5),
+        timeout=getattr(args, "timeout", None),
+        depends_on=depends_on,
+    )
+    center = _make_scheduler_center()
+    center.job_store.save(job)
+    if depends_on:
+        center.dag.register(job.job_id, depends_on)
+    # Enqueue immediately if no deps (or deps already satisfied).
+    if center.dag.ready_to_queue(job.job_id):
+        job.status = JobStatus.QUEUED
+        center.job_store.save(job)
+        center.job_queue.put(job)
+        center.status_bus.emit(job)
+    print(job.job_id)
+    return 0
+
+
+def cmd_workbench_job_list(args: argparse.Namespace) -> int:
+    center = _make_scheduler_center()
+    jobs = center.job_store.list()
+    status_filter = getattr(args, "status", None)
+    if status_filter:
+        jobs = [j for j in jobs if j.status.value == status_filter]
+    if not jobs:
+        print("(no jobs)")
+        return 0
+    for j in jobs:
+        print(f"{j.job_id}\t{j.status.value}\t{j.target_project}\tP{j.priority}")
+    return 0
+
+
+def cmd_workbench_job_show(args: argparse.Namespace) -> int:
+    center = _make_scheduler_center()
+    job = center.job_store.get(args.job_id)
+    if job is None:
+        print(f"job not found: {args.job_id}", file=sys.stderr)
+        return 1
+    print(json.dumps(job.to_dict(), ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
+def cmd_workbench_job_cancel(args: argparse.Namespace) -> int:
+    from hermes.workbench.scheduler import JobStatus
+
+    center = _make_scheduler_center()
+    job = center.job_store.get(args.job_id)
+    if job is None:
+        print(f"job not found: {args.job_id}", file=sys.stderr)
+        return 1
+    job.cancel_event.set()
+    if not job.status.is_terminal():
+        job.status = JobStatus.CANCELLED
+        center.job_store.save(job)
+        center.status_bus.emit(job)
+    print(f"cancelled: {args.job_id}")
+    return 0
+
+
+def cmd_workbench_job_retry(args: argparse.Namespace) -> int:
+    from hermes.workbench.scheduler import JobStatus
+
+    center = _make_scheduler_center()
+    job = center.job_store.get(args.job_id)
+    if job is None:
+        print(f"job not found: {args.job_id}", file=sys.stderr)
+        return 1
+    if not job.status.is_terminal():
+        print(f"job not terminal: {job.status.value}", file=sys.stderr)
+        return 1
+    job.status = JobStatus.QUEUED
+    job.cancel_event.clear()
+    center.job_store.save(job)
+    center.job_queue.put(job)
+    center.status_bus.emit(job)
+    print(f"requeued: {args.job_id}")
+    return 0
+
+
+def cmd_workbench_job_metrics(args: argparse.Namespace) -> int:
+    from hermes.workbench.scheduler import compute_metrics
+
+    center = _make_scheduler_center()
+    jobs = center.job_store.list()
+    metrics = compute_metrics(jobs)
+    print(json.dumps(metrics, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_workbench_project_list(args: argparse.Namespace) -> int:
+    center = _make_scheduler_center()
+    projects = center.project_registry.list()
+    if not projects:
+        print("(no projects)")
+        return 0
+    for p in projects:
+        print(f"{p.id}\t{p.name}\t{p.project_type}\t{p.health}")
+    return 0
+
+
+def cmd_workbench_project_add(args: argparse.Namespace) -> int:
+    center = _make_scheduler_center()
+    try:
+        conn = center.project_registry.add(
+            name=args.name,
+            project_type=args.type,
+            state_dir=args.state_dir,
+            skills_dir=getattr(args, "skills_dir", None),
+            max_concurrent=getattr(args, "max_concurrent", 1),
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(conn.id)
+    return 0
+
+
+def cmd_workbench_project_show(args: argparse.Namespace) -> int:
+    center = _make_scheduler_center()
+    conn = center.project_registry.get(args.project_id)
+    if conn is None:
+        print(f"project not found: {args.project_id}", file=sys.stderr)
+        return 1
+    print(json.dumps(conn.to_dict(), ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_workbench_project_remove(args: argparse.Namespace) -> int:
+    center = _make_scheduler_center()
+    try:
+        ok = center.project_registry.remove(args.project_id)
+    except Exception as e:  # noqa: BLE001
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    if not ok:
+        print(f"project not found: {args.project_id}", file=sys.stderr)
+        return 1
+    print(f"removed: {args.project_id}")
+    return 0
+
+
+def cmd_workbench_project_ping(args: argparse.Namespace) -> int:
+    center = _make_scheduler_center()
+    result = center.project_registry.ping(args.project_id)
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if result.get("reachable") else 1
+
+
+def cmd_workbench_trigger_list(args: argparse.Namespace) -> int:
+    center = _make_scheduler_center()
+    triggers = center.trigger_store.list()
+    if not triggers:
+        print("(no triggers)")
+        return 0
+    for t in triggers:
+        cron = t.config.get("cron", "")
+        print(f"{t.trigger_id}\t{t.trigger_type}\t{cron}\tenabled={t.enabled}")
+    return 0
+
+
+def cmd_workbench_trigger_create(args: argparse.Namespace) -> int:
+    from hermes.workbench.triggers import Trigger
+
+    plan_data = _resolve_plan(args)
+    if plan_data is None:
+        print("error: provide --plan JSON or --plan-file PATH", file=sys.stderr)
+        return 1
+    cron = getattr(args, "cron", None)
+    config: dict[str, Any] = {}
+    if cron:
+        config["cron"] = cron
+    trigger = Trigger(
+        job_template={"plan": plan_data},
+        trigger_type="cron" if cron else "manual",
+        config=config,
+    )
+    center = _make_scheduler_center()
+    center.trigger_store.save(trigger)
+    print(trigger.trigger_id)
+    return 0
+
+
+def cmd_workbench_trigger_show(args: argparse.Namespace) -> int:
+    center = _make_scheduler_center()
+    trigger = center.trigger_store.get(args.trigger_id)
+    if trigger is None:
+        print(f"trigger not found: {args.trigger_id}", file=sys.stderr)
+        return 1
+    print(json.dumps(trigger.to_dict(), ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_workbench_trigger_delete(args: argparse.Namespace) -> int:
+    center = _make_scheduler_center()
+    if not center.trigger_store.delete(args.trigger_id):
+        print(f"trigger not found: {args.trigger_id}", file=sys.stderr)
+        return 1
+    print(f"deleted: {args.trigger_id}")
+    return 0
+
+
+def cmd_workbench_trigger_fire(args: argparse.Namespace) -> int:
+    center = _make_scheduler_center()
+    if not center.cron_scheduler.fire(args.trigger_id):
+        print(f"trigger not found or fire failed: {args.trigger_id}", file=sys.stderr)
+        return 1
+    print(f"fired: {args.trigger_id}")
+    return 0
+
+
+def cmd_workbench_sync(args: argparse.Namespace) -> int:
+    from hermes.workbench.asset_sync import AssetSync
+
+    center = _make_scheduler_center()
+    targets = list(getattr(args, "targets", None) or [])
+    if not targets:
+        print("error: at least one target project id is required", file=sys.stderr)
+        return 1
+    sync = AssetSync(center.router)
+    try:
+        result = sync.sync(
+            source=args.source, targets=targets, scope=getattr(args, "scope", "all")
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(
+        f"sync: ok={result.ok} scope={result.scope} "
+        f"targets={len(result.targets)} synced={result.synced_count} "
+        f"errors={len(result.errors)}"
+    )
+    for err in result.errors:
+        print(f"  error: {err}", file=sys.stderr)
+    return 0 if result.ok else 1
+
+
+# ---------------------------------------------------------------------------
 # Parser registration
 # ---------------------------------------------------------------------------
 
@@ -891,6 +1232,111 @@ def _register_ima(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> N
     p_notes_append.set_defaults(func=cmd_workbench_ima)
 
 
+def _register_job(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = sub.add_parser("job", help="Manage scheduled jobs (Phase 3)")
+    job_sub = p.add_subparsers(dest="workbench_job_cmd", required=True)
+
+    p_submit = job_sub.add_parser("submit", help="Submit a new job")
+    p_submit.add_argument("--plan", default=None, help="JSON plan string")
+    p_submit.add_argument("--plan-file", default=None, help="Path to JSON plan file")
+    p_submit.add_argument("--project", default="default", help="Target project id")
+    p_submit.add_argument("--priority", type=int, default=5, help="Job priority (1-10, lower=urgent)")
+    p_submit.add_argument("--timeout", type=float, default=None, help="Per-job timeout (seconds)")
+    p_submit.add_argument("--mode", default="oneshot", help="Task mode")
+    p_submit.add_argument(
+        "--depends-on", nargs="*", default=None, help="Upstream job ids this job depends on"
+    )
+    p_submit.set_defaults(func=cmd_workbench_job_submit)
+
+    p_list = job_sub.add_parser("list", help="List jobs")
+    p_list.add_argument("--status", default=None, help="Filter by status (e.g. QUEUED)")
+    p_list.set_defaults(func=cmd_workbench_job_list)
+
+    p_show = job_sub.add_parser("show", help="Show job detail")
+    p_show.add_argument("job_id")
+    p_show.set_defaults(func=cmd_workbench_job_show)
+
+    p_cancel = job_sub.add_parser("cancel", help="Cancel a job")
+    p_cancel.add_argument("job_id")
+    p_cancel.set_defaults(func=cmd_workbench_job_cancel)
+
+    p_retry = job_sub.add_parser("retry", help="Retry a terminal job")
+    p_retry.add_argument("job_id")
+    p_retry.set_defaults(func=cmd_workbench_job_retry)
+
+    p_metrics = job_sub.add_parser("metrics", help="Aggregate job metrics")
+    p_metrics.set_defaults(func=cmd_workbench_job_metrics)
+
+
+def _register_project(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = sub.add_parser("project", help="Manage project connections (Phase 3)")
+    proj_sub = p.add_subparsers(dest="workbench_project_cmd", required=True)
+
+    p_list = proj_sub.add_parser("list", help="List projects")
+    p_list.set_defaults(func=cmd_workbench_project_list)
+
+    p_add = proj_sub.add_parser("add", help="Add a project connection")
+    p_add.add_argument("--name", required=True, help="Project display name")
+    p_add.add_argument("--type", required=True, help="local | github | api")
+    p_add.add_argument("--state-dir", required=True, help="Project state directory")
+    p_add.add_argument("--skills-dir", default=None, help="Project skills directory")
+    p_add.add_argument("--max-concurrent", type=int, default=1, help="Max concurrent jobs")
+    p_add.set_defaults(func=cmd_workbench_project_add)
+
+    p_show = proj_sub.add_parser("show", help="Show project detail")
+    p_show.add_argument("project_id")
+    p_show.set_defaults(func=cmd_workbench_project_show)
+
+    p_remove = proj_sub.add_parser("remove", help="Remove a project")
+    p_remove.add_argument("project_id")
+    p_remove.set_defaults(func=cmd_workbench_project_remove)
+
+    p_ping = proj_sub.add_parser("ping", help="Health-check a project")
+    p_ping.add_argument("project_id")
+    p_ping.set_defaults(func=cmd_workbench_project_ping)
+
+
+def _register_trigger(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = sub.add_parser("trigger", help="Manage job triggers (Phase 3)")
+    trig_sub = p.add_subparsers(dest="workbench_trigger_cmd", required=True)
+
+    p_list = trig_sub.add_parser("list", help="List triggers")
+    p_list.set_defaults(func=cmd_workbench_trigger_list)
+
+    p_create = trig_sub.add_parser("create", help="Create a trigger")
+    p_create.add_argument("--plan", default=None, help="JSON plan string")
+    p_create.add_argument("--plan-file", default=None, help="Path to JSON plan file")
+    p_create.add_argument("--cron", default=None, help="5-field cron expression")
+    p_create.set_defaults(func=cmd_workbench_trigger_create)
+
+    p_show = trig_sub.add_parser("show", help="Show trigger detail")
+    p_show.add_argument("trigger_id")
+    p_show.set_defaults(func=cmd_workbench_trigger_show)
+
+    p_delete = trig_sub.add_parser("delete", help="Delete a trigger")
+    p_delete.add_argument("trigger_id")
+    p_delete.set_defaults(func=cmd_workbench_trigger_delete)
+
+    p_fire = trig_sub.add_parser("fire", help="Manually fire a trigger")
+    p_fire.add_argument("trigger_id")
+    p_fire.set_defaults(func=cmd_workbench_trigger_fire)
+
+
+def _register_sync(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = sub.add_parser("sync", help="Cross-project asset sync (Phase 3)")
+    p.add_argument("--source", required=True, help="Source project id")
+    p.add_argument(
+        "targets", nargs="+", help="One or more target project ids"
+    )
+    p.add_argument(
+        "--scope",
+        default="all",
+        choices=["skills", "memory", "profile", "all"],
+        help="Asset scope to sync (default: all)",
+    )
+    p.set_defaults(func=cmd_workbench_sync)
+
+
 def add_workbench_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Register the ``workbench`` subcommand and its nested subcommands."""
     p = sub.add_parser("workbench", help="Hermes Workbench runtime commands")
@@ -903,6 +1349,10 @@ def add_workbench_subparser(sub: argparse._SubParsersAction[argparse.ArgumentPar
     _register_serve(wb_sub)
     _register_github(wb_sub)
     _register_ima(wb_sub)
+    _register_job(wb_sub)
+    _register_project(wb_sub)
+    _register_trigger(wb_sub)
+    _register_sync(wb_sub)
 
 
 def register_workbench_commands(parser: argparse.ArgumentParser) -> None:
