@@ -1104,7 +1104,7 @@ def analyze_sector_performance(data: StockData, verbose: bool = False) -> Sector
 def analyze_earnings_timing(data: StockData) -> EarningsTiming | None:
     """Check earnings timing and flag pre/post-earnings periods."""
     try:
-        from datetime import datetime, timedelta
+        from datetime import datetime
 
         if data.earnings_history is None or data.earnings_history.empty:
             return None
@@ -2206,10 +2206,10 @@ def main():
     breaking_news = None
     if not args.fast:
         if args.verbose:
-            print(f"Checking breaking news (last 24h)...", file=sys.stderr)
+            print("Checking breaking news (last 24h)...", file=sys.stderr)
         breaking_news = check_breaking_news(verbose=args.verbose)
     elif args.verbose:
-        print(f"Skipping breaking news check (--fast mode)", file=sys.stderr)
+        print("Skipping breaking news check (--fast mode)", file=sys.stderr)
     if breaking_news and args.verbose:
         print(f"  Found {len(breaking_news)} breaking news alert(s)\n", file=sys.stderr)
 
@@ -2235,7 +2235,7 @@ def main():
         is_crypto = data.asset_type == "crypto"
 
         if args.verbose and is_crypto:
-            print(f"  Asset type: CRYPTO (using crypto-specific analysis)", file=sys.stderr)
+            print("  Asset type: CRYPTO (using crypto-specific analysis)", file=sys.stderr)
 
         # Analyze components (different for crypto vs stock)
         if is_crypto:
@@ -2249,7 +2249,7 @@ def main():
 
             # Crypto fundamentals (market cap, category, BTC correlation)
             if args.verbose:
-                print(f"Analyzing crypto fundamentals...", file=sys.stderr)
+                print("Analyzing crypto fundamentals...", file=sys.stderr)
             crypto_fundamentals = analyze_crypto_fundamentals(data, verbose=args.verbose)
 
             # Convert crypto fundamentals to regular Fundamentals for synthesize_signal
@@ -2273,27 +2273,27 @@ def main():
 
             # Analyze earnings timing (stocks only)
             if args.verbose:
-                print(f"Checking earnings timing...", file=sys.stderr)
+                print("Checking earnings timing...", file=sys.stderr)
             earnings_timing = analyze_earnings_timing(data)
 
             # Analyze sector performance (stocks only)
             if args.verbose:
-                print(f"Analyzing sector performance...", file=sys.stderr)
+                print("Analyzing sector performance...", file=sys.stderr)
             sector = analyze_sector_performance(data, verbose=args.verbose)
 
         # Market context (both crypto and stock)
         if args.verbose:
-            print(f"Analyzing market context...", file=sys.stderr)
+            print("Analyzing market context...", file=sys.stderr)
         market_context = analyze_market_context(verbose=args.verbose)
 
         # Momentum (both crypto and stock)
         if args.verbose:
-            print(f"Analyzing momentum...", file=sys.stderr)
+            print("Analyzing momentum...", file=sys.stderr)
         momentum = analyze_momentum(data)
 
         # Sentiment (stocks get full sentiment, crypto gets limited)
         if args.verbose:
-            print(f"Analyzing market sentiment...", file=sys.stderr)
+            print("Analyzing market sentiment...", file=sys.stderr)
         if is_crypto:
             # Skip insider trading and put/call for crypto
             sentiment = None
@@ -2314,12 +2314,12 @@ def main():
             )
 
         if args.verbose:
-            print(f"Components analyzed:", file=sys.stderr)
+            print("Components analyzed:", file=sys.stderr)
             if is_crypto:
                 print(f"  Crypto Fundamentals: {'✓' if fundamentals else '✗'}", file=sys.stderr)
                 print(f"  Market Context: {'✓' if market_context else '✗'}", file=sys.stderr)
                 print(f"  Momentum: {'✓' if momentum else '✗'}", file=sys.stderr)
-                print(f"  (Earnings, Sector, Sentiment: N/A for crypto)\n", file=sys.stderr)
+                print("  (Earnings, Sector, Sentiment: N/A for crypto)\n", file=sys.stderr)
             else:
                 print(f"  Earnings: {'✓' if earnings else '✗'}", file=sys.stderr)
                 print(f"  Fundamentals: {'✓' if fundamentals else '✗'}", file=sys.stderr)
@@ -2386,9 +2386,6 @@ def generate_portfolio_summary(
     period: str | None = None,
 ) -> dict:
     """Generate portfolio summary data."""
-    # Map results by ticker
-    result_map = {r.ticker: r for r in results}
-
     # Calculate portfolio metrics
     total_cost = 0.0
     total_value = 0.0

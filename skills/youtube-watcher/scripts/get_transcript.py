@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import os
 import re
 import subprocess
 import sys
@@ -14,8 +13,7 @@ def clean_vtt(content: str) -> str:
     """
     lines = content.splitlines()
     text_lines = []
-    seen = set()
-    
+
     timestamp_pattern = re.compile(r'\d{2}:\d{2}:\d{2}\.\d{3}\s-->\s\d{2}:\d{2}:\d{2}\.\d{3}')
     
     for line in lines:

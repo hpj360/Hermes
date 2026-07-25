@@ -10,7 +10,6 @@ Skill 打包验证器
 
 import argparse
 import json
-import os
 import sys
 import zipfile
 from pathlib import Path

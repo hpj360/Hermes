@@ -19,18 +19,18 @@ from pathlib import Path
 
 def _run_playwright_screenshot(url: str, output: str, full_page: bool = True) -> bool:
     """通过 Playwright 截图。"""
-    node_script = f"""
-    const {{ chromium }} = require('playwright');
-    (async () => {{
+    node_script = """
+    const { chromium } = require('playwright');
+    (async () => {
       const browser = await chromium.launch();
-      const page = await browser.newPage({{ viewport: {{ width: 1280, height: 720 }} }});
-      try {{
-        await page.goto(process.env.TARGET_URL, {{ waitUntil: 'networkidle', timeout: 30000 }});
-        await page.screenshot({{ path: process.env.SCREENSHOT_PATH, fullPage: process.env.FULL_PAGE === '1' }});
-      }} finally {{
+      const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+      try {
+        await page.goto(process.env.TARGET_URL, { waitUntil: 'networkidle', timeout: 30000 });
+        await page.screenshot({ path: process.env.SCREENSHOT_PATH, fullPage: process.env.FULL_PAGE === '1' });
+      } finally {
         await browser.close();
-      }}
-    }})();
+      }
+    })();
     """
     script_path = "/tmp/screenshot_runner.js"
     Path(script_path).write_text(node_script, encoding="utf-8")

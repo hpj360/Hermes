@@ -14,7 +14,6 @@ Usage: python3 rumor_scanner.py
 import json
 import os
 import subprocess
-import sys
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,7 +51,7 @@ def fetch_url(url, timeout=15):
             if resp.info().get('Content-Encoding') == 'gzip':
                 data = gzip.decompress(data)
             return data.decode('utf-8', errors='ignore')
-    except Exception as e:
+    except Exception:
         return None
 
 def search_twitter_rumors():
@@ -98,7 +97,7 @@ def search_twitter_rumors():
                             })
                 except json.JSONDecodeError:
                     pass
-        except Exception as e:
+        except Exception:
             pass
     
     # Dedupe by text similarity
@@ -151,7 +150,7 @@ def search_twitter_buzz():
                             })
                 except json.JSONDecodeError:
                     pass
-        except Exception as e:
+        except Exception:
             pass
     
     # Sort by engagement

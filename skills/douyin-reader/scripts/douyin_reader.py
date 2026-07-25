@@ -19,7 +19,6 @@ import re
 import subprocess
 import sys
 import tempfile
-from urllib.parse import urlparse
 
 
 def run_cmd(cmd, timeout=120):
@@ -67,9 +66,7 @@ def download_video(url, output_dir):
     
     if code != 0:
         return None, None, f"yt-dlp 元数据获取失败: {stderr}"
-    
-    title = stdout.strip() if stdout else "未知标题"
-    
+
     # 下载视频
     cmd_download = [
         "yt-dlp",
@@ -95,7 +92,7 @@ def download_video(url, output_dir):
         try:
             with open(info_path, 'r', encoding='utf-8') as f:
                 info = json.load(f)
-        except:
+        except Exception:
             pass
     
     return video_path, info, None
@@ -245,7 +242,7 @@ def main():
         if result.get('description'):
             print(f"描述: {result['description'][:200]}")
         if transcription:
-            print(f"\n--- 转写文字 ---")
+            print("\n--- 转写文字 ---")
             print(transcription['full_text'])
         print(f"{'='*50}")
 

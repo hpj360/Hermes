@@ -12,7 +12,6 @@ audit.py - Token 一致性与 AI 味反模式扫描
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 

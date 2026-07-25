@@ -7,7 +7,6 @@ select.py - 组件库加权评分推荐
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 

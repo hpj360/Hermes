@@ -91,7 +91,7 @@ def init_storybook(project_dir: str, output_dir: str) -> dict:
     (out / "preview.ts").write_text(STORYBOOK_PREVIEW, encoding="utf-8")
 
     # 写 README
-    readme = f"""# Storybook 配置
+    readme = """# Storybook 配置
 
 ## 启动
 ```bash
@@ -101,7 +101,7 @@ npm run chromatic   # 跑视觉回归（需 CHROMATIC_PROJECT_TOKEN）
 ```
 
 ## 添加新组件
-在 `src/{{ComponentName}}/{{ComponentName}}.stories.tsx` 写故事。
+在 `src/{ComponentName}/{ComponentName}.stories.tsx` 写故事。
 
 ## 视觉回归
 每次 push/PR 自动跑 Chromatic，截图对比。

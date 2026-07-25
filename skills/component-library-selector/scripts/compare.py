@@ -16,7 +16,7 @@ def main():
     data_path = Path(__file__).parent.parent / "data" / "libraries.json"
     data = json.loads(data_path.read_text(encoding="utf-8"))
 
-    libs = {l["id"]: l for l in data["libraries"]}
+    libs = {line["id"]: line for line in data["libraries"]}
     if args.a not in libs or args.b not in libs:
         print(f"❌ 库 id 无效: {args.a} / {args.b}", file=sys.stderr)
         print(f"   可用: {', '.join(libs.keys())}", file=sys.stderr)

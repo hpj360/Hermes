@@ -12,7 +12,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import List
 
 
 def load_patterns(patterns_path: Path) -> dict:

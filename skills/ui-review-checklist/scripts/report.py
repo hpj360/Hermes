@@ -3,7 +3,6 @@
 
 import argparse
 import json
-import sys
 from collections import Counter
 from pathlib import Path
 
@@ -27,7 +26,7 @@ def main():
     a11y_by_id = Counter(f["id"] for f in a11y)
 
     lines = [
-        f"# UI 评审报告",
+        "# UI 评审报告",
         "",
         f"**目标**: `{scan['target']}`",
         f"**文件数**: {scan['files_scanned']}",

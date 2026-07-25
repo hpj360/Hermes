@@ -3,9 +3,7 @@
 
 import argparse
 import json
-import os
 import shutil
-import sys
 from pathlib import Path
 
 
@@ -192,8 +190,8 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     
     # list command
-    list_parser = subparsers.add_parser("list", help="List installed skills")
-    
+    subparsers.add_parser("list", help="List installed skills")
+
     # install command
     install_parser = subparsers.add_parser("install", help="Install a skill")
     install_parser.add_argument("slug", help="Skill slug")

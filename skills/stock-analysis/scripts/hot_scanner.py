@@ -9,7 +9,6 @@ import urllib.request
 import urllib.error
 import xml.etree.ElementTree as ET
 import gzip
-import io
 import subprocess
 import os
 from datetime import datetime, timezone
@@ -233,7 +232,7 @@ class HotScanner:
                         self.mentions[ticker]["count"] += 1
                         self.mentions[ticker]["sources"].append("Google News Crypto")
             
-            print(f"    ✅ Processed crypto news")
+            print("    ✅ Processed crypto news")
         except Exception as e:
             print(f"    ❌ Google News Crypto: {e}")
     
