@@ -44,7 +44,7 @@ class RecoveryManager:
         self._memory = memory
         self._enabled = enabled
 
-    def recover(self) -> dict:
+    def recover(self) -> dict[str, Any]:
         """Execute recovery, returning ``{requeued, abandoned, skipped}``.
 
         Iterates over a snapshot of all jobs in the store and applies the

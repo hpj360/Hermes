@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, List
 
 from hermes.workbench.errors import ValidationError
 from hermes.workbench.persistence import atomic_write_json, safe_read_json
@@ -106,9 +106,9 @@ class Trigger:
     """A job template + firing rule (cron expression or manual-only)."""
 
     trigger_id: str = ""
-    job_template: dict = field(default_factory=dict)
+    job_template: dict[str, Any] = field(default_factory=dict)
     trigger_type: str = "cron"
-    config: dict = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
     created_at: str = ""
 
@@ -172,12 +172,12 @@ class TriggerStore:
             data = self._triggers.get(trigger_id)
         return Trigger.from_dict(data) if data else None
 
-    def list(self) -> list[Trigger]:
+    def list(self) -> "List[Trigger]":
         with self._lock:
             snapshot = list(self._triggers.values())
         return [Trigger.from_dict(d) for d in snapshot]
 
-    def list_enabled_cron(self) -> list[Trigger]:
+    def list_enabled_cron(self) -> "List[Trigger]":
         with self._lock:
             snapshot = [
                 d
