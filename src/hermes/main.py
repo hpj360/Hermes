@@ -7,6 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
+from hermes.cli_loop import add_loop_subparser
 from hermes.config import get_settings
 from hermes.logging import setup_logging
 from hermes.profile import get_profile_markdown, load_profile
@@ -200,6 +201,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_profile_show.set_defaults(func=cmd_profile_show)
 
     add_workbench_subparser(sub)
+
+    add_loop_subparser(sub)
 
     return parser
 
