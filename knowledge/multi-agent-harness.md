@@ -118,11 +118,68 @@ multi-agent 系统的健康度不只是"任务完成没有"，还包括协作质
 ### 雏形边界（未来工作）
 
 - variant 生成目前是手动的（调用方提供 variants）
-- 未集成到 `record_round` 钩子（需后续 wire-up）
+- ~~未集成到 `record_round` 钩子（需后续 wire-up）~~ **已在 Stage 5 完成**（commit 27625a5）
 - 未实现 LLM 驱动的变体生成
 - 未实现跨项目 promotion
 
 **注意**：上述未来工作作为独立 feature 规划，不混入日常迭代。当前雏形已建立可审计的自进化框架，为后续迭代提供基础。
+
+---
+
+## 提升 5：L3 denylist 路径强制执行（Stage 6，安全红线）✅ 已实现
+
+### 现状（已修复）
+
+L3 无人值守模式下 builder 可能修改受保护路径（`auth/` `payment/` `security/` `.env` `*.key`），此前仅有 `LOOP_PATTERNS` 中的 denylist 声明，**无代码级强制执行**。这是安全红线——L3 自动化必须有事前拦截 + 事后审计双重保障，否则不应进入 L3。
+
+### 风险（已消除）
+
+- builder 绕过 denylist 修改 `auth/login.py` 引入后门
+- builder 误写 `.env` 泄漏密钥
+- builder 修改 `payment/checkout.py` 引入支付漏洞
+- 自动化 PR 合并未受保护路径修改，造成不可逆损失
+
+### 实现内容（commit 0ea53c6）
+
+[src/hermes/orchestrator.py](file:///workspace/src/hermes/orchestrator.py)：
+
+1. `AgentTask` 新增 `denylist: list[str]` + `path_violations: list[str]` 字段（向后兼容默认空）
+2. `_matches_denylist(path, denylist)` 静态方法，支持三种 pattern 语义：
+   - 目录前缀（`"auth/"`）→ 路径前缀匹配
+   - glob（`"*.key"`）→ fnmatch 匹配
+   - 精确文件名（`".env"`、`"CHANGELOG.md"`）→ basename 或 full path 等值
+   - 修复 `lstrip("./")` 字符类剥离 bug（会错误把 `.env` 剥成 `env`）
+3. `_audit_path_violations(task, messages)` 静态方法，扫描两条信号：
+   - 信号 1：`tool_calls` 中的 Write/Edit/MultiEdit 调用，解析 `file_path`/`path` 参数
+   - 信号 2（兜底）：`content` 中 `Write`/`Edit` + 受保护路径正则匹配
+   - 跳过逻辑：`denylist` 为空时不审计（向后兼容）；`checker` 角色跳过（无 Write 权限）
+4. `aggregate_results` 对 builder 的 `path_violations` **强制 `all_passed=False` + `builder_failed=True`**，无视 `task.status`——这是安全红线，不可降级
+5. `spawn_agent` 接受 `denylist` 参数，传入 Gateway payload（前向兼容：Gateway 支持则强制执行，不支持则忽略，Hermes 侧事后审计兜底）
+
+[src/hermes/runner.py](file:///workspace/src/hermes/runner.py)：
+
+6. `_run_builder_checker` 从 `LOOP_PATTERNS[loop.pattern]["denylist"]` 读取并注入到 `run_builder_checker_round(denylist=...)`
+7. `run_builder_checker_round` 只把 denylist 传给 builder task，**不传给 checker**（checker 无 Write 权限，节省审计开销）
+
+### 测试覆盖（18 个新测试）
+
+- `_matches_denylist`：目录前缀 / glob / 精确文件名 / 空输入 / 反斜杠规范化（5 个）
+- `_audit_path_violations`：skip 无 denylist / skip checker / 检测 tool_calls / 检测 content / 坏数据容错 / mcp_ 前缀工具名（6 个）
+- `aggregate_results`：路径违规强制 failed / 计数入 summary / 无违规省略（3 个）
+- `AgentTask.to_dict`：denylist + path_violations 序列化（2 个）
+- 链路验证：`run_builder_checker_round` 注入 builder 不注入 checker + runner 从 LOOP_PATTERNS 注入（2 个）
+
+### 安全设计哲学（第一性原理）
+
+L3 自动化的本质是"无人值守修改代码"。要让这种自动化可接受，必须满足：
+
+1. **可声明**：denylist 在 `LOOP_PATTERNS` 中按 pattern 声明，与 loop 模式绑定（不同模式不同保护级别）
+2. **事前拦截**：spawn payload 携带 denylist，Gateway 可在 sub-agent 侧拦截 Write/Edit 调用
+3. **事后审计**：fan_in 扫描 messages 兜底，防止 Gateway 未强制执行或绕过
+4. **强制失败**：审计命中即 `aggregate_results` 强制 builder failed，无视 status——这是不可降级的安全红线
+5. **可观测**：`path_violations` 字段记录具体违规路径 + 命中的 pattern，写入 failure_items 和 summary
+
+只有这五层都到位，L3 自动化才可接受。当前实现满足全部五层。
 
 ---
 

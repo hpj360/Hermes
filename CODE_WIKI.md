@@ -14,7 +14,7 @@ Hermes 是一个**独立于主仓库（`/workspace/OpenClaw/openclaw-main`）的
 - **入口**：`hermes` CLI（`[project.scripts] hermes = "hermes.main:main"`）
 - **语言**：Python ≥ 3.10（核心层 + Workbench 层）；skills 自身涉及 Python / Node.js / Shell / 纯 prompt 等多种形态
 - **核心依赖**：`pydantic` / `pydantic-settings` / `python-dotenv`（仅 3 个运行时依赖，Workbench 层纯 stdlib）
-- **关键能力**：多 provider 环境继承、skills/知识发现、用户画像、Agent 循环、三层记忆、任务调度、**进程内调度中心（Phase 3：Job 队列/Worker 池/Cron 触发/崩溃恢复/DAG 依赖/跨项目路由/资产同步/SSE 流式 API/指标看板）**、HTTP API（38 路由）、GitHub Issues 同步、Loop Engineering CLI（13 子命令）
+- **关键能力**：多 provider 环境继承、skills/知识发现、用户画像、Agent 循环、三层记忆、任务调度、**进程内调度中心（Phase 3：Job 队列/Worker 池/Cron 触发/崩溃恢复/DAG 依赖/跨项目路由/资产同步/SSE 流式 API/指标看板）**、HTTP API（38 路由）、GitHub Issues 同步、Loop Engineering CLI（14 子命令：list/init/run/continuous/resume/audit/status/metrics/stop-rules/budget/advance/history/patterns/gepa）、**多 Agent 安全架构（P0 MCP 分舱 / P1 Token 熔断 / P2 协作指标 / P3 GEPA 自进化 / Stage 5 钩子接入 / Stage 6 L3 denylist 路径强制执行）**
 
 ---
 
@@ -92,6 +92,24 @@ Hermes 是一个**独立于主仓库（`/workspace/OpenClaw/openclaw-main`）的
 4. **错误即 HTTP 状态码**：`errors.py` 的异常层级与 HTTP 状态码一一映射（400/401/404/409/502/500），CLI 退出码与 Dashboard API 共用同一套语义。
 5. **服务工厂中心**：`cli.py` 的模块级 `_make_*` 工厂函数是所有服务实例化的唯一入口，便于测试 monkeypatch 与配置注入。
 6. **Lazy Import 打破循环**：`github_sync.py` ↔ `cli.py`、`server.py` ↔ `cli.py` 的循环依赖全部通过函数内 import 打破，模块加载时无循环。
+
+### 1.3 多 Agent 安全与自进化架构（Loop Engineering 演进）
+
+Loop Engineering 不止是脚手架——L3 无人值守模式必须有代码级强制执行才能落地。下表汇总 4 个已实现的安全/进化 Stage，每一项都有代码 + 测试 + 文档三件套：
+
+| Stage | 模块 | 功能 | 测试覆盖 |
+|-------|------|------|---------|
+| **P0 MCP 分舱** | `orchestrator.py` `ROLE_MCP_WHITELIST` | builder 只读 GitHub（拦截 `create_pr`/`post_pr_comment`），checker/synthesizer 禁止所有 MCP；fan_in 审计 `mcp_violations` | 6 个测试（白名单填充/保留/违规检测） |
+| **P1 Token 熔断** | `orchestrator.py` `AgentTask.token_limit` | 单 agent 默认 50000 token 上限，超限强制 `status=failed`；防止单 agent 烧光预算 | 4 个测试（超限 failed/未超 completed） |
+| **P2 协作指标** | `orchestrator.py` `_compute_collaboration_metrics` | 互斥 `failure_attribution`（builder/checker/mixed/none）+ `checker_builder_agreement` 三态 + `token_by_role` 归因 | 5 个测试（attribution 各分支 + 指标填充） |
+| **P3 GEPA 自进化** | `gepa.py` + `loop.py:_maybe_run_gepa` | Generate-Evaluate-Promote-Apply 周期；loop 到终态自动触发，evaluator 通过 `set_gepa_evaluator` 注入；实验持久化到 `.gepa/` | 26 个测试（评分/cycle/持久化/崩溃隔离/record_round 钩子） |
+| **Stage 5 钩子接入** | `loop.py:_maybe_run_gepa` + `cli_loop.py:cmd_loop_gepa` | GEPA 周期在 `record_round` 终态（COMPLETED/NEEDS_HUMAN/BUDGET_EXCEEDED）自动触发；新增 `hermes loop gepa [--run] [--json]` 子命令 | 11 个测试（终态触发/非终态跳过/无 evaluator 跳过/CLI 子命令） |
+| **Stage 6 L3 denylist** | `orchestrator.py:_matches_denylist` + `_audit_path_violations` + `runner._run_builder_checker` | builder 写代码受路径黑名单约束（`auth/` `payment/` `security/` `.env` `*.key`）；fan_in 审计 Write/Edit 工具调用路径，命中受保护路径强制 builder `failed`；spawn payload 前向兼容 Gateway 强制执行 | 18 个测试（pattern 三种语义 + 审计 skip 逻辑 + tool_calls/content 两条信号 + aggregate 强制 failed + runner 注入链路） |
+
+**安全设计哲学**（第一性原理）：
+- **L3 自动化 = 事前拦截 + 事后审计双重保障**：spawn_agent 把 denylist 传入 Gateway payload（事前），fan_in 再扫描 messages 兜底（事后）。任一信号命中即强制 failed。
+- **checker 无 Write 权限，不注入 denylist**：节省审计开销，且 MCP 白名单已限制 checker 不能调用 Write 类工具。
+- **MCP 分舱铁律**：builder 不能写 GitHub（防止绕过 reviewer 直接合并 PR）；这是 P0 安全红线，不可降级。
 
 ---
 
@@ -816,10 +834,10 @@ print(loop_result.ok, loop_result.duration)
 
 ### 8.1 测试规模
 
-- **21 个测试文件，931 个测试用例 + 15 个 skipped**（v0.5.0）
+- **21 个测试文件，969 个测试用例 + 15 个 skipped**（v0.5.0）
 - 顶层 92 个（config 5 / logging 9 / main 12 / profile 18 / skills 11 / cli_loop 47）
 - Workbench 601 个（agent_loop 12 / cli 103 / errors 12 / github_sync 21 / memory 21 / persistence 13 / server 68 / skill_runner 30 + **Phase 3 新增 6 模块 175 个**：scheduler 42 / projects 26 / triggers 54 / recovery 16 / dag 22 / asset_sync 15）
-- 其他 238 个（loop / runner / orchestrator / ima_sync / structured_logging / tracing / dashboard / goal 等顶层测试）
+- 其他 276 个（loop / runner / orchestrator / ima_sync / structured_logging / tracing / dashboard / goal 等顶层测试，含 Stage 5 GEPA + Stage 6 L3 denylist 共 38 个新测试）
 
 ### 8.2 模块覆盖率
 
@@ -858,7 +876,7 @@ print(loop_result.ok, loop_result.duration)
 ### 8.4 运行测试
 
 ```bash
-pytest tests/                          # 全部 931 个
+pytest tests/                          # 全部 969 个
 pytest tests/workbench/                # Workbench 601 个
 pytest tests/workbench/test_scheduler.py -v   # Phase 3 单模块
 pytest tests/workbench/ --cov=src/hermes/workbench --cov-report=term  # 覆盖率
