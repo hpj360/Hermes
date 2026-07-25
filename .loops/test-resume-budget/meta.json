@@ -4,22 +4,21 @@
   "stage": "l1_report",
   "status": "needs_human",
   "created_at": "2026-07-24T13:33:17.296284+00:00",
-  "last_run": "2026-07-24T21:49:27.090378+00:00",
+  "last_run": "2026-07-25T07:03:25.704689+00:00",
   "current_round": 2,
   "max_rounds": 2,
   "rounds": [
     {
       "round_num": 1,
-      "timestamp": "2026-07-24T21:49:27.063284+00:00",
+      "timestamp": "2026-07-25T07:03:25.655606+00:00",
       "action": "L1 knowledge hygiene scan",
-      "result_summary": "High: 1, Watch: 4, Noise: 10",
-      "verifier_result": "{'high_priority_count': 1, 'watch_list_count': 4, 'noise_count': 10}",
+      "result_summary": "High: 1, Watch: 3, Noise: 10",
+      "verifier_result": "{'high_priority_count': 1, 'watch_list_count': 3, 'noise_count': 10}",
       "passed": false,
       "next_action": "",
-      "failure_count": 5,
+      "failure_count": 4,
       "failure_items": [
         "Skill 'pskoett' missing SKILL.md",
-        "Knowledge 'ima-ai-knowledge-index.md' exists but not in manifest.json",
         "Knowledge 'DECISIONS.md' exists but not in manifest.json",
         "Knowledge 'multi-agent-harness.md' exists but not in manifest.json",
         "README.md doesn't mention Skill Sync feature yet"
@@ -31,16 +30,15 @@
     },
     {
       "round_num": 2,
-      "timestamp": "2026-07-24T21:49:27.084662+00:00",
+      "timestamp": "2026-07-25T07:03:25.693170+00:00",
       "action": "L1 knowledge hygiene scan",
-      "result_summary": "High: 1, Watch: 4, Noise: 10",
-      "verifier_result": "{'high_priority_count': 1, 'watch_list_count': 4, 'noise_count': 10}",
+      "result_summary": "High: 1, Watch: 3, Noise: 10",
+      "verifier_result": "{'high_priority_count': 1, 'watch_list_count': 3, 'noise_count': 10}",
       "passed": false,
       "next_action": "",
-      "failure_count": 5,
+      "failure_count": 4,
       "failure_items": [
         "Skill 'pskoett' missing SKILL.md",
-        "Knowledge 'ima-ai-knowledge-index.md' exists but not in manifest.json",
         "Knowledge 'DECISIONS.md' exists but not in manifest.json",
         "Knowledge 'multi-agent-harness.md' exists but not in manifest.json",
         "README.md doesn't mention Skill Sync feature yet"
@@ -53,7 +51,6 @@
         "max_rounds": 2,
         "failed_items": [
           "Skill 'pskoett' missing SKILL.md",
-          "Knowledge 'ima-ai-knowledge-index.md' exists but not in manifest.json",
           "Knowledge 'DECISIONS.md' exists but not in manifest.json",
           "Knowledge 'multi-agent-harness.md' exists but not in manifest.json",
           "README.md doesn't mention Skill Sync feature yet"
@@ -62,12 +59,12 @@
           {
             "round": 1,
             "action": "L1 knowledge hygiene scan",
-            "result": "High: 1, Watch: 4, Noise: 10"
+            "result": "High: 1, Watch: 3, Noise: 10"
           },
           {
             "round": 2,
             "action": "L1 knowledge hygiene scan",
-            "result": "High: 1, Watch: 4, Noise: 10"
+            "result": "High: 1, Watch: 3, Noise: 10"
           }
         ]
       }
