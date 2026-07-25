@@ -12,6 +12,7 @@ Key components:
 
 from __future__ import annotations
 
+import fnmatch
 import http.client
 import json
 import logging
@@ -21,7 +22,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from hermes.config import get_settings
@@ -128,6 +129,13 @@ class AgentTask:
     # P1: 单 agent token 上限。fan_in 时若 tokens_used > token_limit 标记 failed。
     # 0 = 不限制（向后兼容）。默认 50000（约 $0.15 GPT-4 单次）。
     token_limit: int = 50000
+    # Stage 6: L3 denylist 路径强制执行。由 runner 从 LOOP_PATTERNS 注入。
+    # 非空时 fan_in 审计 Write/Edit 工具调用的 path 参数，命中 denylist
+    # pattern 即记 path_violation，aggregate_results 强制 builder failed。
+    # 空 list = 不限制（向后兼容）；仅对有 Write 权限的 role（builder 等）生效。
+    denylist: list[str] = field(default_factory=list)
+    # fan_in 审计后填充：检测到的违规文件路径写入操作列表。
+    path_violations: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -145,6 +153,8 @@ class AgentTask:
             "allowed_mcp_tools": self.allowed_mcp_tools,
             "mcp_violations": self.mcp_violations,
             "token_limit": self.token_limit,
+            "denylist": self.denylist,
+            "path_violations": self.path_violations,
         }
 
 
@@ -250,6 +260,7 @@ class OpenClawClient:
         model: str | None = None,
         isolated: bool = True,
         allowed_tools: list[str] | None = None,
+        denylist: list[str] | None = None,
     ) -> str | None:
         """Spawn a sub-agent and return its session ID.
 
@@ -262,6 +273,10 @@ class OpenClawClient:
             allowed_tools: MCP 工具白名单（P0 分舱）。None=不限制；
                 空列表=禁止所有 MCP；非空=只允许列出的工具。Gateway 可据此
                 在 sub-agent 侧强制限制工具权限。
+            denylist: L3 路径黑名单（Stage 6 安全强制执行）。非空时传入
+                Gateway payload，Gateway 可在 sub-agent 侧拦截 Write/Edit 对
+                受保护路径的修改。None 或空 = 不限制。Hermes 侧另有事后
+                审计兜底（_audit_path_violations）。
 
         Returns:
             Session ID string, or None if the gateway is unavailable.
@@ -283,6 +298,8 @@ class OpenClawClient:
             payload["model"] = model
         if allowed_tools is not None:
             payload["allowed_tools"] = allowed_tools
+        if denylist:  # Stage 6: 前向兼容——Gateway 支持则强制执行，不支持则忽略
+            payload["denylist"] = denylist
 
         result = self._request("POST", "/api/subagent/spawn", data=payload, timeout=60.0)
         if result and "session_id" in result:
@@ -367,7 +384,7 @@ class Orchestrator:
         return tasks
 
     def _prepare_and_spawn(self, task: AgentTask) -> None:
-        """填充默认白名单并 spawn 单个 task（P0 分舱）。"""
+        """填充默认白名单并 spawn 单个 task（P0 分舱 + Stage 6 denylist）。"""
         # 白名单未显式指定时，按角色填充默认值
         if task.allowed_mcp_tools is None:
             task.allowed_mcp_tools = _get_role_whitelist(task.role)
@@ -379,6 +396,7 @@ class Orchestrator:
             task=task.task_description,
             context=task.context,
             allowed_tools=task.allowed_mcp_tools,
+            denylist=task.denylist or None,
         )
         task.session_id = session_id
         if session_id is None:
@@ -423,6 +441,8 @@ class Orchestrator:
                 self._check_token_limit(task)
                 # P0: 审计 MCP 工具调用违规
                 self._audit_mcp_violations(task, messages)
+                # Stage 6: 审计 denylist 路径违规（L3 安全强制执行）
+                self._audit_path_violations(task, messages)
 
         return tasks
 
@@ -489,6 +509,128 @@ class Orchestrator:
             logger.warning(
                 "MCP 违规: role=%s 调用了未授权工具 %s (白名单=%s)",
                 task.role, violations, task.allowed_mcp_tools,
+            )
+
+    @staticmethod
+    def _matches_denylist(path: str, denylist: list[str]) -> str | None:
+        """检查文件路径是否命中 denylist pattern。
+
+        匹配语义（与 LOOP_PATTERNS 中 denylist 的声明对齐）：
+        - "auth/" → 目录前缀匹配（路径以 auth/ 开头或包含 /auth/）
+        - ".env" → 精确文件名匹配（basename 等于 .env）
+        - "*.key" → glob 后缀匹配（fnmatch）
+        - "CHANGELOG.md" → 精确文件名匹配
+
+        返回命中的 pattern（便于审计日志），未命中返回 None。
+        """
+        if not path or not denylist:
+            return None
+        # 规范化：统一用 / 分隔，去除前导 ./（注意不能用 lstrip——它是字符类剥离，
+        # 会把 ".env" 错误地剥成 "env"）。只剥离字面量 "./" 前缀。
+        clean = path.replace("\\", "/")
+        if clean.startswith("./"):
+            clean = clean[2:]
+        pure = PurePosixPath(clean)
+        basename = pure.name
+        full = str(pure)
+
+        for pattern in denylist:
+            if not pattern:
+                continue
+            # 目录前缀：pattern 以 / 结尾（如 "auth/"）
+            if pattern.endswith("/"):
+                prefix = pattern.rstrip("/")
+                if full == prefix or full.startswith(prefix + "/") or f"/{prefix}/" in f"/{full}":
+                    return pattern
+                continue
+            # glob：pattern 含 * 或 ?（如 "*.key"）
+            if "*" in pattern or "?" in pattern:
+                if fnmatch.fnmatch(basename, pattern) or fnmatch.fnmatch(full, pattern):
+                    return pattern
+                continue
+            # 精确匹配：basename 或 full 等于 pattern（如 ".env", "CHANGELOG.md"）
+            if basename == pattern or full == pattern:
+                return pattern
+        return None
+
+    @staticmethod
+    def _audit_path_violations(task: AgentTask, messages: list[dict[str, Any]]) -> None:
+        """扫描 session 消息中 Write/Edit 类工具调用，检查路径是否命中 denylist。
+
+        Stage 6 L3 安全强制执行：builder 等有 Write 权限的 role 若修改了
+        denylist 保护的路径（auth/ payment/ security/ .env *.key），
+        记录 path_violation。aggregate_results 据此强制 builder failed。
+
+        检测信号：
+        1. tool_calls 中的 Write/Edit/MultiEdit 调用，解析 file_path/path 参数
+        2. content 中 "<function=name>" + 路径模式（兜底，防 Gateway 不返回 tool_calls）
+
+        仅当 task.denylist 非空时审计（空 = 不限制，向后兼容）。
+        """
+        if not task.denylist:
+            return  # 无 denylist = 不限制，跳过审计
+
+        # 只审计有 Write 权限的 role（builder / synthesizer / perspective_*）
+        # checker 系列无 Write 权限（MCP 白名单已限制），跳过以省开销
+        if task.role.startswith("checker"):
+            return
+
+        violations: list[str] = []
+        # Write/Edit 类工具名集合（匹配内置工具 +可能的变体）
+        write_tools = {"write", "edit", "multiedit", "str_replace_editor", "create_file"}
+
+        for msg in messages:
+            # 信号 1: tool_calls 字段
+            tool_calls = msg.get("tool_calls") or []
+            for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                func = tc.get("function") or {}
+                name = str(func.get("name", "")).lower()
+                if not name:
+                    continue
+                # 只看 Write/Edit 类工具（Read/Grep/Glob 不审计）
+                tool_basename = name.split(".")[-1]  # 处理 "mcp_xx.write" 形式
+                if tool_basename not in write_tools and name not in write_tools:
+                    continue
+                # 解析 path 参数（多种可能字段名）
+                args_raw = func.get("arguments")
+                if isinstance(args_raw, str):
+                    try:
+                        args = json.loads(args_raw)
+                    except (json.JSONDecodeError, ValueError):
+                        args = {}
+                elif isinstance(args_raw, dict):
+                    args = args_raw
+                else:
+                    args = {}
+                path = (
+                    args.get("file_path") or args.get("path")
+                    or args.get("filename") or ""
+                )
+                if not isinstance(path, str):
+                    path = str(path)
+                hit = Orchestrator._matches_denylist(path, task.denylist)
+                if hit:
+                    violations.append(f"{name}: {path} (matched: {hit})")
+
+            # 信号 2: content 中的 Write/Edit 路径（兜底）
+            content = str(msg.get("content", ""))
+            # 匹配 "Write" / "Edit" 工具调用块中出现的路径
+            for match in re.finditer(
+                r"\b(?:Write|Edit|MultiEdit|create_file)\b[^\n]*?['\"]([^'\"]+\.(?:py|js|ts|md|json|env|key|yml|yaml|toml|cfg|sh|txt))['\"]",
+                content,
+            ):
+                path = match.group(1)
+                hit = Orchestrator._matches_denylist(path, task.denylist)
+                if hit:
+                    violations.append(f"content-path: {path} (matched: {hit})")
+
+        task.path_violations = violations
+        if violations:
+            logger.warning(
+                "路径违规: role=%s 修改了受保护路径 %s (denylist=%s)",
+                task.role, violations, task.denylist,
             )
 
     def aggregate_results(
@@ -558,6 +700,12 @@ class Orchestrator:
                 structured = _parse_structured_failures(task.result, task.role)
                 failure_items.extend(structured)
             elif task.role == "builder":
+                # Stage 6: denylist 路径违规 → 强制 failed（安全红线）
+                if task.path_violations:
+                    all_passed = False
+                    builder_failed = True
+                    for pv in task.path_violations:
+                        failure_items.append(f"builder: DENYLIST VIOLATION — {pv}")
                 if task.status == "failed":
                     all_passed = False
                     builder_failed = True
@@ -569,6 +717,8 @@ class Orchestrator:
 
         # P2: 统计 MCP 角色违规调用总数
         role_violation_count = sum(len(t.mcp_violations) for t in tasks)
+        # Stage 6: 统计 denylist 路径违规总数
+        path_violation_count = sum(len(t.path_violations) for t in tasks)
 
         # P2: 计算协作评估指标
         collaboration_metrics = self._compute_collaboration_metrics(
@@ -590,6 +740,8 @@ class Orchestrator:
             summary_parts.append(f"Failures: {len(failure_items)}")
         if role_violation_count:
             summary_parts.append(f"MCP violations: {role_violation_count}")
+        if path_violation_count:
+            summary_parts.append(f"Path violations: {path_violation_count}")
         attribution = collaboration_metrics.get("failure_attribution", "none")
         if attribution != "none":
             summary_parts.append(f"Attribution: {attribution}")
@@ -664,6 +816,7 @@ class Orchestrator:
         builder_task: str,
         checker_context: str = "",
         parallel_checks: bool = True,
+        denylist: list[str] | None = None,
     ) -> RoundResult:
         """Execute one builder-checker round.
 
@@ -671,6 +824,10 @@ class Orchestrator:
         2. Wait for builder to complete
         3. Spawn checker(s) to verify (parallel if enabled)
         4. Aggregate results (don't filter checker report)
+
+        Stage 6: denylist 非空时注入 builder AgentTask，fan_in 审计 Write/Edit
+        路径违规，命中受保护路径（auth/ payment/ security/ .env *.key）强制
+        builder failed。checker 无 Write 权限，不注入 denylist。
         """
         builder_file = str(loop_dir / "builder.md")
         checker_file = str(loop_dir / "checker.md")
@@ -682,6 +839,7 @@ class Orchestrator:
             task_description=builder_task,
             context=checker_context,  # Previous checker report (raw, unfiltered)
             parallel=False,
+            denylist=denylist or [],
         )
 
         tasks = [builder]

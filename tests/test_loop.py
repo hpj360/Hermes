@@ -2361,8 +2361,8 @@ def test_fan_out_fills_default_whitelist_by_role():
             return True
 
         def spawn_agent(self, agent_file, task, context="", model=None,
-                        isolated=True, allowed_tools=None):
-            captured_payloads.append({"allowed_tools": allowed_tools})
+                        isolated=True, allowed_tools=None, denylist=None):
+            captured_payloads.append({"allowed_tools": allowed_tools, "denylist": denylist})
             return "session-1"
 
     orch.client = FakeClient()
@@ -2392,7 +2392,7 @@ def test_fan_out_preserves_explicit_whitelist():
             return True
 
         def spawn_agent(self, agent_file, task, context="", model=None,
-                        isolated=True, allowed_tools=None):
+                        isolated=True, allowed_tools=None, denylist=None):
             return "session-1"
 
     orch.client = FakeClient()
@@ -2474,6 +2474,392 @@ def test_audit_mcp_violations_detects_tool_calls_field():
     Orchestrator._audit_mcp_violations(task, messages)
 
     assert len(task.mcp_violations) == 2
+
+
+# ── Stage 6: L3 denylist code-level enforcement ────────────────────────
+
+
+def test_matches_denylist_directory_prefix():
+    """目录前缀 pattern（以 / 结尾）匹配路径前缀。"""
+    from hermes.orchestrator import Orchestrator
+
+    denylist = ["auth/", "payment/"]
+    assert Orchestrator._matches_denylist("auth/login.py", denylist) == "auth/"
+    assert Orchestrator._matches_denylist("src/auth/login.py", denylist) == "auth/"
+    assert Orchestrator._matches_denylist("./auth/models/user.py", denylist) == "auth/"
+    assert Orchestrator._matches_denylist("payment/checkout.py", denylist) == "payment/"
+    # 不匹配
+    assert Orchestrator._matches_denylist("utils/auth_helper.py", denylist) is None
+    assert Orchestrator._matches_denylist("authorized.py", denylist) is None  # 前缀但非目录
+
+
+def test_matches_denylist_glob_pattern():
+    """glob pattern（含 * 或 ?）用 fnmatch 匹配。"""
+    from hermes.orchestrator import Orchestrator
+
+    denylist = ["*.key", "*.env"]
+    assert Orchestrator._matches_denylist("secret.key", denylist) == "*.key"
+    assert Orchestrator._matches_denylist("config/prod.key", denylist) == "*.key"
+    # fnmatch 语义：* 匹配任意字符（含空），所以 .env 也命中 *.env
+    # 这对安全是有利的——denylist 应尽可能拦截
+    assert Orchestrator._matches_denylist(".env", denylist) == "*.env"
+    # ? 通配
+    denylist_q = ["config-?.yml"]
+    assert Orchestrator._matches_denylist("config-1.yml", denylist_q) == "config-?.yml"
+    assert Orchestrator._matches_denylist("config-12.yml", denylist_q) is None
+
+
+def test_matches_denylist_exact_filename():
+    """精确文件名 pattern 匹配 basename 或 full path。"""
+    from hermes.orchestrator import Orchestrator
+
+    denylist = [".env", "CHANGELOG.md"]
+    assert Orchestrator._matches_denylist(".env", denylist) == ".env"
+    assert Orchestrator._matches_denylist("config/.env", denylist) == ".env"
+    assert Orchestrator._matches_denylist("CHANGELOG.md", denylist) == "CHANGELOG.md"
+    assert Orchestrator._matches_denylist("docs/CHANGELOG.md", denylist) == "CHANGELOG.md"
+    # 不匹配
+    assert Orchestrator._matches_denylist(".environment", denylist) is None
+    assert Orchestrator._matches_denylist("CHANGELOG.txt", denylist) is None
+
+
+def test_matches_denylist_empty_inputs_return_none():
+    """空路径或空 denylist 返回 None（不限制）。"""
+    from hermes.orchestrator import Orchestrator
+
+    assert Orchestrator._matches_denylist("", ["auth/"]) is None
+    assert Orchestrator._matches_denylist("auth/login.py", []) is None
+    assert Orchestrator._matches_denylist("", []) is None
+    # denylist 中包含空字符串 pattern 也应跳过
+    assert Orchestrator._matches_denylist("foo.py", ["", "auth/"]) is None
+
+
+def test_matches_denylist_normalizes_backslashes():
+    """Windows 风格路径（反斜杠）规范化后匹配。"""
+    from hermes.orchestrator import Orchestrator
+
+    # 路径用 \ 时也匹配（规范化为 / 后再比较）
+    denylist = ["auth/"]
+    assert Orchestrator._matches_denylist("auth\\login.py", denylist) == "auth/"
+    assert Orchestrator._matches_denylist("src\\auth\\x.py", denylist) == "auth/"
+
+
+def test_audit_path_violations_skips_when_no_denylist():
+    """denylist 为空时跳过审计（向后兼容）。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    task = AgentTask(role="builder")  # denylist 默认为空 []
+    messages = [
+        {"role": "assistant", "content": 'Write to "auth/login.py"'},
+    ]
+
+    Orchestrator._audit_path_violations(task, messages)
+
+    assert task.path_violations == []
+
+
+def test_audit_path_violations_skips_for_checker_role():
+    """checker 角色无 Write 权限，跳过审计（省开销）。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    task = AgentTask(role="checker_lint", denylist=["auth/"])
+    messages = [
+        {"role": "assistant", "content": 'Write to "auth/login.py"'},
+    ]
+
+    Orchestrator._audit_path_violations(task, messages)
+
+    assert task.path_violations == []
+
+
+def test_audit_path_violations_detects_tool_calls_write():
+    """检测 tool_calls 中的 Write 调用命中 denylist。"""
+    import json as _json
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    task = AgentTask(role="builder", denylist=["auth/", "*.key"])
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "write",
+                        "arguments": _json.dumps({"file_path": "auth/login.py"}),
+                    }
+                },
+                {
+                    "function": {
+                        "name": "edit",
+                        "arguments": {"file_path": "config/prod.key"},
+                    }
+                },
+                # 不违规：utils 路径
+                {
+                    "function": {
+                        "name": "write",
+                        "arguments": {"file_path": "utils/helper.py"},
+                    }
+                },
+            ],
+        },
+    ]
+
+    Orchestrator._audit_path_violations(task, messages)
+
+    assert len(task.path_violations) == 2
+    assert any("auth/login.py" in v for v in task.path_violations)
+    assert any("prod.key" in v for v in task.path_violations)
+
+
+def test_audit_path_violations_detects_content_write():
+    """兜底信号：content 中出现 Write/Edit + 受保护路径。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    task = AgentTask(role="builder", denylist=["auth/", ".env"])
+    messages = [
+        {
+            "role": "assistant",
+            "content": 'I will Write the file "auth/login.py" now. Then Edit ".env" file.',
+        },
+    ]
+
+    Orchestrator._audit_path_violations(task, messages)
+
+    # 至少检测到 auth/login.py 违规（.env 也可能命中，关键是 auth 命中）
+    assert len(task.path_violations) >= 1
+    assert any("auth/login.py" in v for v in task.path_violations)
+
+
+def test_audit_path_violations_handles_malformed_tool_calls():
+    """tool_calls 格式异常时不崩溃，跳过该条目。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    task = AgentTask(role="builder", denylist=["auth/"])
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                "not a dict",  # 非字典
+                {"function": {"name": "write", "arguments": "not json"}},  # 坏 JSON
+                {"function": {"name": "write"}},  # 缺 arguments
+                {"function": {"name": "write", "arguments": {"file_path": "auth/x.py"}}},  # 正常
+            ],
+        },
+    ]
+
+    Orchestrator._audit_path_violations(task, messages)
+
+    # 只有最后一条正常解析且命中 denylist
+    assert len(task.path_violations) == 1
+    assert "auth/x.py" in task.path_violations[0]
+
+
+def test_audit_path_violations_detects_mcp_prefixed_tool_names():
+    """工具名带 mcp_ 前缀（如 mcp_fs.write）也能识别 basename。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    task = AgentTask(role="builder", denylist=["auth/"])
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "mcp_filesystem.write",
+                        "arguments": {"file_path": "auth/secrets.py"},
+                    }
+                },
+            ],
+        },
+    ]
+
+    Orchestrator._audit_path_violations(task, messages)
+
+    assert len(task.path_violations) == 1
+    assert "auth/secrets.py" in task.path_violations[0]
+
+
+def test_aggregate_results_builder_path_violation_forces_failed():
+    """builder 命中 denylist 路径违规时强制 failed，无视 status。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+
+    builder = AgentTask(role="builder", status="completed", result="done")
+    builder.path_violations = ["write: auth/login.py (matched: auth/)"]
+
+    checker = AgentTask(role="checker_lint", status="completed", result="ALL GREEN")
+
+    rr = orch.aggregate_results([builder, checker], round_num=1)
+
+    assert rr.all_passed is False
+    assert any("DENYLIST VIOLATION" in fi for fi in rr.failure_items)
+    assert "Path violations: 1" in rr.summary
+
+
+def test_aggregate_results_path_violation_count_in_summary():
+    """summary 包含 Path violations 计数（仅当 >0 时）。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+
+    builder = AgentTask(role="builder", status="completed", result="done")
+    builder.path_violations = ["v1", "v2"]
+    checker = AgentTask(role="checker_lint", status="completed", result="ALL GREEN")
+
+    rr = orch.aggregate_results([builder, checker], round_num=1)
+
+    assert "Path violations: 2" in rr.summary
+
+
+def test_aggregate_results_no_path_violation_omits_summary():
+    """无路径违规时 summary 不包含 Path violations 字段。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+    builder = AgentTask(role="builder", status="completed", result="done")
+    checker = AgentTask(role="checker_lint", status="completed", result="ALL GREEN")
+
+    rr = orch.aggregate_results([builder, checker], round_num=1)
+
+    assert "Path violations" not in rr.summary
+
+
+def test_agent_task_to_dict_includes_denylist_fields():
+    """AgentTask.to_dict 包含 denylist 和 path_violations 字段。"""
+    from hermes.orchestrator import AgentTask
+
+    task = AgentTask(
+        role="builder",
+        denylist=["auth/", "*.key"],
+        path_violations=["write: auth/x.py (matched: auth/)"],
+    )
+    d = task.to_dict()
+
+    assert d["denylist"] == ["auth/", "*.key"]
+    assert d["path_violations"] == ["write: auth/x.py (matched: auth/)"]
+
+
+def test_agent_task_denylist_defaults_to_empty():
+    """AgentTask 默认 denylist 和 path_violations 为空 list（向后兼容）。"""
+    from hermes.orchestrator import AgentTask
+
+    task = AgentTask(role="builder")
+    assert task.denylist == []
+    assert task.path_violations == []
+
+
+def test_run_builder_checker_round_passes_denylist_to_builder():
+    """run_builder_checker_round 把 denylist 注入 builder task，不注入 checker。"""
+    import tempfile
+    from pathlib import Path
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+
+    captured_tasks: list[AgentTask] = []
+
+    class FakeClient:
+        def health_check(self):
+            return True
+
+        def spawn_agent(self, agent_file, task, context="", model=None,
+                        isolated=True, allowed_tools=None, denylist=None):
+            return "session-1"
+
+        def wait_for_completion(self, session_id, timeout=300.0):
+            return {"status": "completed", "tokens_used": 1000}
+
+        def get_session_messages(self, session_id):
+            return [{"role": "assistant", "content": "done"}]
+
+    orch.client = FakeClient()
+
+    # 拦截 fan_in 来检查 task.denylist
+    def spy_fan_in(tasks, **kwargs):
+        captured_tasks.extend(tasks)
+        return tasks
+
+    orch.fan_in = spy_fan_in  # type: ignore[assignment]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        loop_dir = Path(tmp)
+        (loop_dir / "builder.md").write_text("builder")
+        (loop_dir / "checker.md").write_text("checker")
+
+        orch.run_builder_checker_round(
+            loop_dir=loop_dir,
+            round_num=1,
+            builder_task="build it",
+            checker_context="",
+            parallel_checks=False,
+            denylist=["auth/", "*.key"],
+        )
+
+    # builder 必须收到 denylist
+    builder = next(t for t in captured_tasks if t.role == "builder")
+    assert builder.denylist == ["auth/", "*.key"]
+    # checker 不应收到 denylist（无 Write 权限）
+    checker = next(t for t in captured_tasks if t.role.startswith("checker"))
+    assert checker.denylist == []
+
+
+def test_runner_wires_denylist_from_loop_patterns(monkeypatch):
+    """runner._run_builder_checker 从 LOOP_PATTERNS[pattern]['denylist'] 注入。"""
+    import tempfile
+    from pathlib import Path
+    from typing import Any
+    from hermes import runner
+    from hermes.loop import LOOP_PATTERNS, LoopState, LoopStage, LoopStatus
+    from hermes.orchestrator import RoundResult
+
+    # 准备一个 builder-checker loop state（必填字段全部给出）
+    loop = LoopState(
+        name="test-denylist-wire",
+        pattern="builder-checker",
+        stage=LoopStage.L2_ASSIST,
+        status=LoopStatus.IDLE,
+        config_path=Path("/tmp/LOOP.md"),
+        state_path=Path("/tmp/STATE.md"),
+        budget_path=Path("/tmp/budget.md"),
+        created_at="",
+        max_rounds=5,
+    )
+
+    expected_denylist = list(LOOP_PATTERNS["builder-checker"]["denylist"])
+    assert expected_denylist  # 确保测试 pattern 有 denylist
+
+    captured: dict[str, Any] = {}
+
+    class FakeOrchestrator:
+        def __init__(self):
+            self.client = None
+
+        def is_available(self):
+            return True
+
+        def run_builder_checker_round(self, *, loop_dir, round_num, builder_task,
+                                       checker_context, parallel_checks, denylist):
+            captured["denylist"] = denylist
+            return RoundResult(
+                round_num=round_num,
+                tasks=[],
+                all_passed=True,
+                summary="ok",
+            )
+
+    monkeypatch.setattr(runner, "Orchestrator", FakeOrchestrator)
+    monkeypatch.setattr(runner, "record_round", lambda *a, **kw: {"success": True})
+    monkeypatch.setattr(runner, "check_stop_rules", lambda *a, **kw: {"should_stop": True, "rule_name": "all_green"})
+
+    with tempfile.TemporaryDirectory() as tmp:
+        runner._run_builder_checker("test", loop, 1, "now", Path(tmp))
+
+    assert captured["denylist"] == expected_denylist
 
 
 def test_aggregate_results_counts_role_violations():
