@@ -252,7 +252,11 @@ class ProjectRuntime:
                     from hermes.skills import skills_dir as _global_skills_dir
                     from hermes.workbench.skill_runner import SkillRunner
 
-                    base_dir = self.conn.skills_dir or str(_global_skills_dir())
+                    base_dir = (
+                        Path(self.conn.skills_dir)
+                        if self.conn.skills_dir
+                        else _global_skills_dir()
+                    )
                     self._runner = SkillRunner(base_dir=base_dir)
         return self._runner
 
