@@ -350,6 +350,125 @@ def cmd_loop_patterns(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_loop_gepa(args: argparse.Namespace) -> int:
+    """Show or run GEPA self-evolution experiments for a loop.
+
+    Without --run: list experiments whose benchmark_task matches the loop.
+    With --run: manually trigger a GEPA cycle (requires gepa_variants declared
+    on the loop + an evaluator injected via set_gepa_evaluator).
+    """
+    loop = get_loop(args.name)
+    if loop is None:
+        print(f"Loop '{args.name}' not found.")
+        return 1
+
+    if args.run:
+        # Manual trigger: call _maybe_run_gepa directly (bypasses terminal-state
+        # check since user explicitly asked). But still needs variants + evaluator.
+        from hermes.loop import _maybe_run_gepa, _GEPA_TRIGGER_STATUSES, get_gepa_evaluator
+        from hermes.loop import LoopRound
+
+        if not loop.gepa_variants:
+            print(f"Loop '{args.name}' has no gepa_variants declared.")
+            print("  Add variants to meta.json: gepa_variants: [{variant_id, agent_file}, ...]")
+            return 1
+
+        if get_gepa_evaluator() is None:
+            print("No GEPA evaluator injected. Runner injects one when Gateway is available.")
+            print("  In guidance mode, GEPA cannot run (no agent execution backend).")
+            return 1
+
+        # Force terminal status for manual trigger (user explicitly asked to run)
+        if loop.status not in _GEPA_TRIGGER_STATUSES:
+            print(
+                f"Note: loop status is '{loop.status.value}' (non-terminal). "
+                "Running GEPA anyway (--run flag)."
+            )
+
+        # Build a minimal round_data for _maybe_run_gepa (it needs round_data
+        # but _maybe_run_gepa doesn't actually use round_data's content — only
+        # loop state matters for the GEPA trigger).
+        dummy_round = LoopRound(
+            round_num=loop.current_round,
+            timestamp="",
+            action="gepa-manual-trigger",
+            result_summary="manual GEPA trigger",
+            verifier_result="",
+            passed=False,
+        )
+        # Temporarily set status to a terminal state if not already, so
+        # _maybe_run_gepa's guard passes. Restore after.
+        original_status = loop.status
+        if loop.status not in _GEPA_TRIGGER_STATUSES:
+            from hermes.loop import LoopStatus
+            loop.status = LoopStatus.COMPLETED
+        try:
+            result = _maybe_run_gepa(loop, dummy_round)
+        finally:
+            loop.status = original_status
+
+        if args.json:
+            _print_json(result)
+            return 0 if result.get("ran") else 1
+
+        if not result.get("ran"):
+            print(f"GEPA did not run: {result.get('reason', 'unknown')}")
+            return 1
+
+        print(f"GEPA cycle completed for loop '{args.name}'.")
+        print(f"  Experiment: {result.get('experiment_id', '?')}")
+        winner = result.get("winner_id")
+        if winner:
+            print(f"  Winner: {winner}")
+        else:
+            print("  Winner: (none — no variant succeeded)")
+        print(f"  Reason: {result.get('promotion_reason', '?')}")
+        print(f"  Variants evaluated: {result.get('variants_evaluated', 0)}")
+        return 0
+
+    # Default: list experiments for this loop
+    from hermes.gepa import list_experiments
+
+    experiments = list_experiments()
+    # Filter: benchmark_task contains the loop name (set by _maybe_run_gepa)
+    loop_experiments = [
+        e for e in experiments
+        if f"loop:{args.name}" in e.benchmark_task
+    ]
+
+    if args.json:
+        _print_json([
+            {
+                "experiment_id": e.experiment_id,
+                "benchmark_task": e.benchmark_task,
+                "winner_id": e.winner_id,
+                "promotion_reason": e.promotion_reason,
+                "created_at": e.created_at,
+                "completed_at": e.completed_at,
+                "variants_count": len(e.variants),
+                "results_count": len(e.results),
+            }
+            for e in loop_experiments
+        ])
+        return 0
+
+    if not loop_experiments:
+        print(f"No GEPA experiments for loop '{args.name}'.")
+        print(f"  Variants declared: {len(loop.gepa_variants)}")
+        if loop.gepa_variants:
+            print("  To run manually: hermes loop gepa <name> --run")
+        else:
+            print("  Declare gepa_variants in meta.json to enable self-evolution.")
+        return 0
+
+    print(f"GEPA experiments for loop '{args.name}' ({len(loop_experiments)}):")
+    for e in loop_experiments:
+        winner = e.winner_id or "(none)"
+        print(f"  {e.experiment_id[:8]}  winner={winner}  created={e.created_at}")
+        print(f"    {e.promotion_reason}")
+    return 0
+
+
 # ── Subparser registration ──────────────────────────────────────────
 
 
@@ -439,3 +558,10 @@ def add_loop_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser])
     p_patterns = loop_sub.add_parser("patterns", help="List available loop patterns")
     p_patterns.add_argument("--json", action="store_true", help="Output JSON")
     p_patterns.set_defaults(func=cmd_loop_patterns)
+
+    # gepa (Stage 5: GEPA self-evolution wire-up)
+    p_gepa = loop_sub.add_parser("gepa", help="Show/run GEPA self-evolution experiments")
+    p_gepa.add_argument("name", help="Loop name")
+    p_gepa.add_argument("--run", action="store_true", help="Manually trigger a GEPA cycle")
+    p_gepa.add_argument("--json", action="store_true", help="Output JSON")
+    p_gepa.set_defaults(func=cmd_loop_gepa)

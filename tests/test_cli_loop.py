@@ -70,12 +70,13 @@ def test_loop_subcommand_requires_subcommand() -> None:
 @pytest.mark.parametrize("sub", [
     "list", "init", "run", "continuous", "resume", "audit",
     "status", "metrics", "stop-rules", "budget", "advance", "history", "patterns",
+    "gepa",
 ])
 def test_all_loop_subcommands_registered(sub: str) -> None:
-    """All 13 loop subcommands are registered and parseable."""
+    """All 14 loop subcommands are registered and parseable."""
     parser = build_parser()
     # Commands that need a name arg
-    if sub in ("init", "run", "continuous", "resume", "status", "metrics", "budget", "advance", "history"):
+    if sub in ("init", "run", "continuous", "resume", "status", "metrics", "budget", "advance", "history", "gepa"):
         args = parser.parse_args(["loop", sub, "test-loop"])
     elif sub == "audit":
         args = parser.parse_args(["loop", sub])  # name is optional
@@ -389,3 +390,111 @@ def test_add_loop_subparser_is_callable() -> None:
     add_loop_subparser(sub)
     args = parser.parse_args(["loop", "list"])
     assert args.loop_cmd == "list"
+
+
+# ── gepa (Stage 5) ──────────────────────────────────────────────────
+
+
+def test_loop_gepa_nonexistent_returns_1(tmp_loops, capsys) -> None:
+    """`hermes loop gepa` on missing loop returns 1."""
+    rc = main(["loop", "gepa", "ghost"])
+    assert rc == 1
+    assert "not found" in capsys.readouterr().out
+
+
+def test_loop_gepa_list_no_experiments(tmp_loops, capsys) -> None:
+    """`hermes loop gepa <name>` with no experiments shows helpful message."""
+    main(["loop", "init", "g-loop"])
+    rc = main(["loop", "gepa", "g-loop"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "No GEPA experiments" in out
+    assert "Declare gepa_variants" in out
+
+
+def test_loop_gepa_list_json_output(tmp_loops, capsys) -> None:
+    """`--json` flag produces valid JSON array (empty when no experiments)."""
+    main(["loop", "init", "gj-loop"])
+    capsys.readouterr()
+    assert main(["loop", "gepa", "gj-loop", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert isinstance(data, list)
+    assert len(data) == 0
+
+
+def test_loop_gepa_run_no_variants_returns_1(tmp_loops, capsys) -> None:
+    """`hermes loop gepa <name> --run` without variants returns 1 with guidance."""
+    main(["loop", "init", "gv-loop"])
+    rc = main(["loop", "gepa", "gv-loop", "--run"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "no gepa_variants" in out
+
+
+def test_loop_gepa_run_no_evaluator_returns_1(tmp_loops, capsys) -> None:
+    """`hermes loop gepa <name> --run` with variants but no evaluator returns 1."""
+    from hermes.loop import get_loop, _save_loop_meta
+    main(["loop", "init", "ge-loop"])
+    loop = get_loop("ge-loop")
+    loop.gepa_variants = [{"variant_id": "v1", "agent_file": "a.md"}]
+    _save_loop_meta(loop)
+
+    rc = main(["loop", "gepa", "ge-loop", "--run"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "No GEPA evaluator injected" in out
+
+
+def test_loop_gepa_run_with_evaluator_succeeds(tmp_loops, capsys) -> None:
+    """`hermes loop gepa <name> --run` with variants + evaluator runs cycle."""
+    from hermes.loop import get_loop, _save_loop_meta, set_gepa_evaluator
+    import hermes.gepa as gepa_mod
+
+    # 隔离 .gepa 目录到 tmp_loops 的兄弟目录
+    gepa_tmp = tmp_loops.parent / ".gepa"
+    original_gepa_dir = gepa_mod.gepa_dir
+    gepa_mod.gepa_dir = lambda: gepa_tmp
+
+    main(["loop", "init", "grun-loop"])
+    loop = get_loop("grun-loop")
+    loop.gepa_variants = [{"variant_id": "v1", "agent_file": "a.md"}]
+    _save_loop_meta(loop)
+
+    set_gepa_evaluator(lambda v, t, c: {"success": True, "tokens_used": 50, "rounds_to_converge": 1})
+    try:
+        rc = main(["loop", "gepa", "grun-loop", "--run"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "GEPA cycle completed" in out
+        assert "Winner: v1" in out
+    finally:
+        set_gepa_evaluator(None)
+        gepa_mod.gepa_dir = original_gepa_dir
+
+
+def test_loop_gepa_list_after_run_shows_experiment(tmp_loops, capsys) -> None:
+    """After `--run`, `hermes loop gepa <name>` lists the experiment."""
+    from hermes.loop import get_loop, _save_loop_meta, set_gepa_evaluator
+    import hermes.gepa as gepa_mod
+
+    gepa_tmp = tmp_loops.parent / ".gepa"
+    original_gepa_dir = gepa_mod.gepa_dir
+    gepa_mod.gepa_dir = lambda: gepa_tmp
+
+    main(["loop", "init", "glist-loop"])
+    loop = get_loop("glist-loop")
+    loop.gepa_variants = [{"variant_id": "v1", "agent_file": "a.md"}]
+    _save_loop_meta(loop)
+
+    set_gepa_evaluator(lambda v, t, c: {"success": True, "tokens_used": 50, "rounds_to_converge": 1})
+    try:
+        main(["loop", "gepa", "glist-loop", "--run"])
+        capsys.readouterr()
+        rc = main(["loop", "gepa", "glist-loop"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "GEPA experiments for loop 'glist-loop'" in out
+        assert "winner=v1" in out
+    finally:
+        set_gepa_evaluator(None)
+        gepa_mod.gepa_dir = original_gepa_dir

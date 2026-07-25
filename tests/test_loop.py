@@ -3364,3 +3364,318 @@ def test_record_round_renders_per_round_collaboration_in_state_md(tmp_path, monk
     assert "checker_builder=agree" in state_md
     assert "completed=2/failed=0" in state_md
 
+
+# ── Stage 5: GEPA wire-up tests ──────────────────────────────────────
+
+
+def test_gepa_variants_persist_roundtrip(tmp_path, monkeypatch):
+    """meta.json 读写 gepa_variants（端到端持久化）。"""
+    from hermes import loop as loop_mod
+    from hermes.loop import LoopStage, LoopStatus, _load_loop_meta, _save_loop_meta, LoopState
+
+    monkeypatch.setattr(loop_mod, "loops_dir", lambda: tmp_path)
+    loop_dir = tmp_path / "test-gepa-rt"
+    loop_dir.mkdir(parents=True)
+
+    variants = [
+        {"variant_id": "v1", "agent_file": "builder.md", "description": "baseline"},
+        {"variant_id": "v2", "agent_file": "builder-v2.md", "description": "aggressive"},
+    ]
+    state = LoopState(
+        name="test-gepa-rt",
+        pattern="builder-checker",
+        stage=LoopStage.L2_ASSIST,
+        status=LoopStatus.IDLE,
+        config_path=loop_dir / "LOOP.md",
+        state_path=loop_dir / "STATE.md",
+        budget_path=loop_dir / "loop-budget.md",
+        created_at="2024-01-01T00:00:00Z",
+        gepa_variants=variants,
+    )
+
+    _save_loop_meta(state)
+    import json
+    meta = json.loads((loop_dir / "meta.json").read_text(encoding="utf-8"))
+    assert meta["gepa_variants"] == variants
+
+    restored = _load_loop_meta(meta, "test-gepa-rt")
+    assert restored is not None
+    assert len(restored.gepa_variants) == 2
+    assert restored.gepa_variants[0]["variant_id"] == "v1"
+    assert restored.gepa_variants[1]["agent_file"] == "builder-v2.md"
+
+
+def test_load_gepa_variants_filters_invalid():
+    """_load_gepa_variants 丢弃缺字段或类型错误的项。"""
+    from hermes.loop import _load_gepa_variants
+
+    raw = [
+        {"variant_id": "ok", "agent_file": "a.md"},
+        {"variant_id": "", "agent_file": "b.md"},  # empty id
+        {"variant_id": "no-file"},  # missing agent_file
+        {"variant_id": 123, "agent_file": "c.md"},  # wrong type
+        "not-a-dict",
+        {"variant_id": "ok2", "agent_file": "d.md", "description": "extra"},
+    ]
+    result = _load_gepa_variants(raw)
+    assert len(result) == 2
+    ids = [v["variant_id"] for v in result]
+    assert "ok" in ids and "ok2" in ids
+
+
+def test_load_gepa_variants_none_returns_empty():
+    """_load_gepa_variants(None) 返回空 list（向后兼容旧 meta.json）。"""
+    from hermes.loop import _load_gepa_variants
+    assert _load_gepa_variants(None) == []
+    assert _load_gepa_variants("not-a-list") == []
+
+
+def test_set_get_gepa_evaluator():
+    """set_gepa_evaluator / get_gepa_evaluator 注入与读取。"""
+    from hermes.loop import set_gepa_evaluator, get_gepa_evaluator
+
+    original = get_gepa_evaluator()
+    try:
+        def fake_eval(variant, task, ctx):
+            return {"success": True}
+        set_gepa_evaluator(fake_eval)
+        assert get_gepa_evaluator() is fake_eval
+        set_gepa_evaluator(None)
+        assert get_gepa_evaluator() is None
+    finally:
+        set_gepa_evaluator(original)  # 恢复全局状态
+
+
+def test_maybe_run_gepa_skips_non_terminal(tmp_path, monkeypatch):
+    """_maybe_run_gepa: 非终态时跳过。"""
+    from hermes import loop as loop_mod
+    from hermes.loop import LoopState, LoopStage, LoopStatus, _maybe_run_gepa, set_gepa_evaluator
+
+    monkeypatch.setattr(loop_mod, "loops_dir", lambda: tmp_path)
+    loop_dir = tmp_path / "test-gepa"
+    loop_dir.mkdir(parents=True)
+    loop = LoopState(
+        name="test-gepa", pattern="custom", stage=LoopStage.L1_REPORT,
+        status=LoopStatus.RUNNING,  # 非终态
+        config_path=loop_dir / "LOOP.md", state_path=loop_dir / "STATE.md",
+        budget_path=loop_dir / "loop-budget.md", created_at="",
+        gepa_variants=[{"variant_id": "v1", "agent_file": "a.md"}],
+    )
+    round_data = _make_round(1)
+
+    set_gepa_evaluator(lambda v, t, c: {"success": True})
+    try:
+        result = _maybe_run_gepa(loop, round_data)
+        assert result["ran"] is False
+        assert "non-terminal" in result["reason"]
+    finally:
+        set_gepa_evaluator(None)
+
+
+def test_maybe_run_gepa_skips_no_variants(tmp_path, monkeypatch):
+    """_maybe_run_gepa: 无 gepa_variants 时跳过。"""
+    from hermes import loop as loop_mod
+    from hermes.loop import LoopState, LoopStage, LoopStatus, _maybe_run_gepa, set_gepa_evaluator
+
+    monkeypatch.setattr(loop_mod, "loops_dir", lambda: tmp_path)
+    loop_dir = tmp_path / "test-gepa"
+    loop_dir.mkdir(parents=True)
+    loop = LoopState(
+        name="test-gepa", pattern="custom", stage=LoopStage.L1_REPORT,
+        status=LoopStatus.COMPLETED,  # 终态
+        config_path=loop_dir / "LOOP.md", state_path=loop_dir / "STATE.md",
+        budget_path=loop_dir / "loop-budget.md", created_at="",
+        gepa_variants=[],  # 空
+    )
+    set_gepa_evaluator(lambda v, t, c: {"success": True})
+    try:
+        result = _maybe_run_gepa(loop, _make_round(1))
+        assert result["ran"] is False
+        assert "no gepa_variants" in result["reason"]
+    finally:
+        set_gepa_evaluator(None)
+
+
+def test_maybe_run_gepa_skips_no_evaluator(tmp_path, monkeypatch):
+    """_maybe_run_gepa: 无 evaluator 时跳过并记日志。"""
+    from hermes import loop as loop_mod
+    from hermes.loop import LoopState, LoopStage, LoopStatus, _maybe_run_gepa, set_gepa_evaluator
+
+    monkeypatch.setattr(loop_mod, "loops_dir", lambda: tmp_path)
+    loop_dir = tmp_path / "test-gepa"
+    loop_dir.mkdir(parents=True)
+    loop = LoopState(
+        name="test-gepa", pattern="custom", stage=LoopStage.L1_REPORT,
+        status=LoopStatus.COMPLETED,
+        config_path=loop_dir / "LOOP.md", state_path=loop_dir / "STATE.md",
+        budget_path=loop_dir / "loop-budget.md", created_at="",
+        gepa_variants=[{"variant_id": "v1", "agent_file": "a.md"}],
+    )
+    set_gepa_evaluator(None)  # 明确无 evaluator
+    result = _maybe_run_gepa(loop, _make_round(1))
+    assert result["ran"] is False
+    assert "no evaluator" in result["reason"]
+
+
+def test_maybe_run_gepa_runs_when_all_conditions_met(tmp_path, monkeypatch):
+    """_maybe_run_gepa: 终态 + 有 variants + 有 evaluator → 跑 GEPA 周期。"""
+    from hermes import loop as loop_mod
+    from hermes.loop import LoopState, LoopStage, LoopStatus, _maybe_run_gepa, set_gepa_evaluator
+
+    # 隔离 .gepa 目录
+    monkeypatch.setattr("hermes.gepa.gepa_dir", lambda: tmp_path / ".gepa")
+
+    monkeypatch.setattr(loop_mod, "loops_dir", lambda: tmp_path)
+    loop_dir = tmp_path / "test-gepa"
+    loop_dir.mkdir(parents=True)
+    loop = LoopState(
+        name="test-gepa", pattern="builder-checker", stage=LoopStage.L2_ASSIST,
+        status=LoopStatus.COMPLETED,
+        config_path=loop_dir / "LOOP.md", state_path=loop_dir / "STATE.md",
+        budget_path=loop_dir / "loop-budget.md", created_at="",
+        current_round=2, max_rounds=5,
+        budget_used_tokens=1000, budget_limit_tokens=5000,
+        gepa_variants=[
+            {"variant_id": "v1", "agent_file": "builder.md", "description": "baseline"},
+            {"variant_id": "v2", "agent_file": "builder-v2.md", "description": "aggressive"},
+        ],
+    )
+
+    call_log = []
+    def fake_eval(variant, task, context):
+        call_log.append(variant["variant_id"])
+        # v1 成功且省 token，v2 成功但费 token → v1 应胜出
+        if variant["variant_id"] == "v1":
+            return {"success": True, "tokens_used": 500, "rounds_to_converge": 1}
+        return {"success": True, "tokens_used": 2000, "rounds_to_converge": 3}
+
+    set_gepa_evaluator(fake_eval)
+    try:
+        result = _maybe_run_gepa(loop, _make_round(2, passed=True))
+        assert result["ran"] is True
+        assert "experiment_id" in result
+        assert result["winner_id"] == "v1"  # 省 token 的胜出
+        assert result["variants_evaluated"] == 2
+        assert call_log == ["v1", "v2"]  # 两个 variant 都被评估
+    finally:
+        set_gepa_evaluator(None)
+
+    # 实验已持久化到 .gepa/
+    gepa_files = list((tmp_path / ".gepa").glob("*.json"))
+    assert len(gepa_files) == 1
+
+
+def test_maybe_run_gepa_evaluator_crash_isolated(tmp_path, monkeypatch):
+    """_maybe_run_gepa: evaluator 抛异常时记录为 failed variant，不崩 cycle。"""
+    from hermes import loop as loop_mod
+    from hermes.loop import LoopState, LoopStage, LoopStatus, _maybe_run_gepa, set_gepa_evaluator
+
+    monkeypatch.setattr("hermes.gepa.gepa_dir", lambda: tmp_path / ".gepa")
+    monkeypatch.setattr(loop_mod, "loops_dir", lambda: tmp_path)
+    loop_dir = tmp_path / "test-gepa"
+    loop_dir.mkdir(parents=True)
+    loop = LoopState(
+        name="test-gepa", pattern="custom", stage=LoopStage.L1_REPORT,
+        status=LoopStatus.NEEDS_HUMAN,
+        config_path=loop_dir / "LOOP.md", state_path=loop_dir / "STATE.md",
+        budget_path=loop_dir / "loop-budget.md", created_at="",
+        gepa_variants=[
+            {"variant_id": "crash", "agent_file": "a.md"},
+            {"variant_id": "ok", "agent_file": "b.md"},
+        ],
+    )
+
+    def crashy_eval(variant, task, ctx):
+        if variant["variant_id"] == "crash":
+            raise RuntimeError("boom")
+        return {"success": True, "tokens_used": 100, "rounds_to_converge": 1}
+
+    set_gepa_evaluator(crashy_eval)
+    try:
+        result = _maybe_run_gepa(loop, _make_round(1))
+        assert result["ran"] is True
+        # 只有 "ok" 成功，所以 winner 是 "ok"
+        assert result["winner_id"] == "ok"
+    finally:
+        set_gepa_evaluator(None)
+
+
+def test_maybe_run_gepa_gepa_module_crash_doesnt_affect_record_round(tmp_path, monkeypatch):
+    """_maybe_run_gepa: evaluator 返回垃圾数据时 variant 被记为 failed，cycle 仍完成。
+
+    GEPA 的崩溃隔离设计：单 variant 崩溃不阻断 cycle。_evaluate 适配器
+    对非 dict 返回值抛 AttributeError，run_gepa_cycle 捕获后记为 failed
+    VariantResult。cycle 正常完成，winner_id=None（无 variant 成功）。
+    这证明 _maybe_run_gepa 的 try/except 兜底有效——但更重要的是，
+    GEPA 自身的崩溃隔离让大多数 evaluator 错误不会走到 _maybe_run_gepa
+    的 except 分支。
+    """
+    from hermes import loop as loop_mod
+    from hermes.loop import LoopState, LoopStage, LoopStatus, _maybe_run_gepa, set_gepa_evaluator
+
+    monkeypatch.setattr("hermes.gepa.gepa_dir", lambda: tmp_path / ".gepa")
+    monkeypatch.setattr(loop_mod, "loops_dir", lambda: tmp_path)
+    loop_dir = tmp_path / "test-gepa"
+    loop_dir.mkdir(parents=True)
+    loop = LoopState(
+        name="test-gepa", pattern="custom", stage=LoopStage.L1_REPORT,
+        status=LoopStatus.COMPLETED,
+        config_path=loop_dir / "LOOP.md", state_path=loop_dir / "STATE.md",
+        budget_path=loop_dir / "loop-budget.md", created_at="",
+        gepa_variants=[{"variant_id": "v1", "agent_file": "a.md"}],
+    )
+
+    def eval_that_returns_garbage(variant, task, ctx):
+        # 返回无法转为 VariantResult 的东西，触发 _evaluate 内部异常
+        return "not-a-dict"
+
+    set_gepa_evaluator(eval_that_returns_garbage)
+    try:
+        # _evaluate 适配器抛 AttributeError，run_gepa_cycle 捕获后记为 failed
+        # cycle 仍完成（崩溃隔离），winner_id=None
+        result = _maybe_run_gepa(loop, _make_round(1))
+        assert result["ran"] is True  # cycle 跑完了
+        assert result["winner_id"] is None  # 无 variant 成功
+    finally:
+        set_gepa_evaluator(None)
+
+
+def test_record_round_includes_gepa_result_in_return(tmp_path, monkeypatch):
+    """record_round 返回值含 gepa 字段（即使未触发也有 ran=False）。"""
+    from hermes import loop as loop_mod
+    from hermes.loop import init_loop, record_round, set_gepa_evaluator
+
+    monkeypatch.setattr(loop_mod, "loops_dir", lambda: tmp_path)
+    monkeypatch.setattr("hermes.gepa.gepa_dir", lambda: tmp_path / ".gepa")
+    init_loop("test-gepa-rr", pattern="knowledge-hygiene")
+
+    set_gepa_evaluator(None)  # 无 evaluator
+    round_data = _make_round(1, passed=True)
+    result = record_round("test-gepa-rr", round_data, tokens_used=100)
+    assert result["success"] is True
+    assert "gepa" in result
+    assert result["gepa"]["ran"] is False
+
+
+def test_record_round_triggers_gepa_on_terminal_with_variants(tmp_path, monkeypatch):
+    """record_round: 终态 + 有 variants + 有 evaluator → 返回 gepa.ran=True。"""
+    from hermes import loop as loop_mod
+    from hermes.loop import get_loop, init_loop, record_round, set_gepa_evaluator, _save_loop_meta
+
+    monkeypatch.setattr(loop_mod, "loops_dir", lambda: tmp_path)
+    monkeypatch.setattr("hermes.gepa.gepa_dir", lambda: tmp_path / ".gepa")
+    init_loop("test-gepa-trigger", pattern="knowledge-hygiene")
+    loop = get_loop("test-gepa-trigger")
+    loop.gepa_variants = [{"variant_id": "v1", "agent_file": "a.md"}]
+    _save_loop_meta(loop)
+
+    set_gepa_evaluator(lambda v, t, c: {"success": True, "tokens_used": 50, "rounds_to_converge": 1})
+    try:
+        round_data = _make_round(1, passed=True)  # passed=True → COMPLETED 终态
+        result = record_round("test-gepa-trigger", round_data, tokens_used=100)
+        assert result["status"] == "completed"
+        assert result["gepa"]["ran"] is True
+        assert result["gepa"]["winner_id"] == "v1"
+    finally:
+        set_gepa_evaluator(None)
+
