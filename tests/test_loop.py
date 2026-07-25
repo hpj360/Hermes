@@ -2304,3 +2304,201 @@ def test_estimate_cost_filters_zero_token_rounds_for_avg() -> None:
         test_dir = loops_dir() / "test-cost-filter"
         if test_dir.exists():
             shutil.rmtree(test_dir)
+
+
+# ── P0: MCP 工具按角色分舱测试 ──────────────────────────────────
+
+
+def test_role_mcp_whitelist_defaults():
+    """ROLE_MCP_WHITELIST 为已知角色定义了白名单。"""
+    from hermes.orchestrator import ROLE_MCP_WHITELIST
+
+    # builder 只能读 GitHub，禁止写操作
+    assert "github.create_pr" not in ROLE_MCP_WHITELIST["builder"]
+    assert "github.post_pr_comment" not in ROLE_MCP_WHITELIST["builder"]
+    assert "github.get_pr" in ROLE_MCP_WHITELIST["builder"]
+
+    # checker/synthesizer 无 MCP 工具
+    assert ROLE_MCP_WHITELIST["checker"] == []
+    assert ROLE_MCP_WHITELIST["checker_lint"] == []
+    assert ROLE_MCP_WHITELIST["synthesizer"] == []
+
+
+def test_get_role_whitelist_prefix_match():
+    """_get_role_whitelist 对 perspective_* 等动态角色做前缀匹配。"""
+    from hermes.orchestrator import _get_role_whitelist
+
+    # 已知角色精确匹配
+    assert _get_role_whitelist("builder") == ["github.get_pr", "github.list_prs", "github.get_issue"]
+    assert _get_role_whitelist("checker") == []
+
+    # 未知角色返回 None（不限制）
+    assert _get_role_whitelist("unknown_role") is None
+
+
+def test_agent_task_mcp_fields_default():
+    """AgentTask 默认 allowed_mcp_tools=None, mcp_violations=[]。"""
+    from hermes.orchestrator import AgentTask
+
+    task = AgentTask(role="builder")
+    assert task.allowed_mcp_tools is None
+    assert task.mcp_violations == []
+
+    d = task.to_dict()
+    assert "allowed_mcp_tools" in d
+    assert "mcp_violations" in d
+
+
+def test_fan_out_fills_default_whitelist_by_role():
+    """fan_out 为未指定白名单的 task 按 role 填充默认值。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+    captured_payloads: list[dict] = []
+
+    class FakeClient:
+        def health_check(self):
+            return True
+
+        def spawn_agent(self, agent_file, task, context="", model=None,
+                        isolated=True, allowed_tools=None):
+            captured_payloads.append({"allowed_tools": allowed_tools})
+            return "session-1"
+
+    orch.client = FakeClient()
+
+    builder = AgentTask(role="builder", task_description="build", parallel=False)
+    checker = AgentTask(role="checker_lint", task_description="lint", parallel=False)
+
+    orch.fan_out([builder, checker])
+
+    # builder 填充了只读白名单
+    assert builder.allowed_mcp_tools == ["github.get_pr", "github.list_prs", "github.get_issue"]
+    # checker 填充了空白名单（禁止所有 MCP）
+    assert checker.allowed_mcp_tools == []
+    # spawn_agent 收到了白名单
+    assert captured_payloads[0]["allowed_tools"] == ["github.get_pr", "github.list_prs", "github.get_issue"]
+    assert captured_payloads[1]["allowed_tools"] == []
+
+
+def test_fan_out_preserves_explicit_whitelist():
+    """显式指定的 allowed_mcp_tools 不被默认值覆盖。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+
+    class FakeClient:
+        def health_check(self):
+            return True
+
+        def spawn_agent(self, agent_file, task, context="", model=None,
+                        isolated=True, allowed_tools=None):
+            return "session-1"
+
+    orch.client = FakeClient()
+
+    custom = ["custom_tool"]
+    task = AgentTask(role="builder", allowed_mcp_tools=custom, parallel=False)
+    orch.fan_out([task])
+
+    assert task.allowed_mcp_tools == custom
+
+
+def test_audit_mcp_violations_detects_write_tool_by_content():
+    """审计检测到 builder 在 content 中调用了 github.create_pr（违规）。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    task = AgentTask(role="builder")
+    task.allowed_mcp_tools = ["github.get_pr", "github.list_prs", "github.get_issue"]
+
+    messages = [
+        {"role": "assistant", "content": "I called github.create_pr to merge the code."},
+    ]
+
+    Orchestrator._audit_mcp_violations(task, messages)
+
+    assert len(task.mcp_violations) == 1
+    assert "github.create_pr" in task.mcp_violations[0]
+
+
+def test_audit_mcp_violations_allows_whitelisted_tool():
+    """审计不报白名单内的工具调用。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    task = AgentTask(role="builder")
+    task.allowed_mcp_tools = ["github.get_pr", "github.list_prs", "github.get_issue"]
+
+    messages = [
+        {"role": "assistant", "content": "I called github.get_pr to read PR #42."},
+    ]
+
+    Orchestrator._audit_mcp_violations(task, messages)
+
+    assert task.mcp_violations == []
+
+
+def test_audit_mcp_violations_skips_when_no_whitelist():
+    """allowed_mcp_tools=None 时不审计（向后兼容）。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    task = AgentTask(role="unknown")
+    task.allowed_mcp_tools = None  # 不限制
+
+    messages = [
+        {"role": "assistant", "content": "github.create_pr called here."},
+    ]
+
+    Orchestrator._audit_mcp_violations(task, messages)
+
+    assert task.mcp_violations == []
+
+
+def test_audit_mcp_violations_detects_tool_calls_field():
+    """审计检测 tool_calls 字段中的违规调用（OpenAI 格式）。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    task = AgentTask(role="checker_lint")
+    task.allowed_mcp_tools = []  # checker 禁止所有 MCP
+
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "mcp_github_create_pr"}},
+                {"function": {"name": "mcp_github_get_pr"}},
+            ],
+        },
+    ]
+
+    Orchestrator._audit_mcp_violations(task, messages)
+
+    assert len(task.mcp_violations) == 2
+
+
+def test_aggregate_results_counts_role_violations():
+    """aggregate_results 统计 role_violation_count。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+
+    builder = AgentTask(role="builder", status="completed", result="done")
+    builder.mcp_violations = ["github.create_pr"]  # 1 个违规
+
+    checker = AgentTask(role="checker_lint", status="completed", result="ALL GREEN")
+    checker.mcp_violations = []  # 无违规
+
+    rr = orch.aggregate_results([builder, checker], round_num=1)
+
+    assert rr.role_violation_count == 1
+    assert "MCP violations: 1" in rr.summary
+
+
+def test_round_result_to_dict_includes_violation_count():
+    """RoundResult.to_dict 包含 role_violation_count 字段。"""
+    from hermes.orchestrator import RoundResult
+
+    rr = RoundResult(round_num=1, role_violation_count=3)
+    d = rr.to_dict()
+    assert d["role_violation_count"] == 3
+

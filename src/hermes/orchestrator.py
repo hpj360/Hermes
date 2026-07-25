@@ -75,6 +75,35 @@ def _parse_structured_failures(checker_result: str, role: str) -> list[str]:
     return [f"{role}: [UNPARSEABLE FAILURE]"]
 
 
+# MCP 工具按角色分舱白名单（P0 安全提升）。
+# 铁律：builder 只能读 GitHub 不能写（create_pr/post_pr_comment 被拦截），
+# 防止 builder 绕过 reviewer 人工检查直接合并代码。
+# checker/synthesizer 不需要任何 MCP 工具。
+# 格式："{server}.{method}"，如 "github.create_pr"。
+ROLE_MCP_WHITELIST: dict[str, list[str]] = {
+    # builder: 只读 GitHub（查 PR/issue 做上下文），禁止写操作
+    "builder": ["github.get_pr", "github.list_prs", "github.get_issue"],
+    # checker 系列: 无 MCP（只跑本地 lint/type/test）
+    "checker": [],
+    "checker_lint": [],
+    "checker_type": [],
+    "checker_test": [],
+    # synthesizer: 无 MCP（只汇总文本）
+    "synthesizer": [],
+}
+
+
+def _get_role_whitelist(role: str) -> list[str] | None:
+    """获取角色默认 MCP 白名单。未匹配的角色返回 None（不限制）。"""
+    if role in ROLE_MCP_WHITELIST:
+        return ROLE_MCP_WHITELIST[role]
+    # perspective_* 等动态角色：前缀匹配
+    for prefix, whitelist in ROLE_MCP_WHITELIST.items():
+        if role.startswith(prefix):
+            return whitelist
+    return None
+
+
 @dataclass
 class AgentTask:
     """A task to be dispatched to a sub-agent."""
@@ -91,6 +120,11 @@ class AgentTask:
     tokens_used: int = 0
     started_at: str | None = None
     completed_at: str | None = None
+    # MCP 工具白名单：None=不限制（向后兼容），[]=禁止所有 MCP，非空=只允许列出的工具。
+    # fan_out 时若为 None，自动按 role 填充 ROLE_MCP_WHITELIST 默认值。
+    allowed_mcp_tools: list[str] | None = None
+    # fan_in 审计后填充：检测到的违规 MCP 工具调用列表。
+    mcp_violations: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -105,6 +139,8 @@ class AgentTask:
             "tokens_used": self.tokens_used,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
+            "allowed_mcp_tools": self.allowed_mcp_tools,
+            "mcp_violations": self.mcp_violations,
         }
 
 
@@ -119,6 +155,8 @@ class RoundResult:
     total_tokens: int = 0
     summary: str = ""
     checker_report: str = ""
+    # P2 可观测性：本轮检测到的 MCP 工具角色违规调用总数
+    role_violation_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -129,6 +167,7 @@ class RoundResult:
             "total_tokens": self.total_tokens,
             "summary": self.summary,
             "checker_report": self.checker_report,
+            "role_violation_count": self.role_violation_count,
         }
 
 
@@ -192,6 +231,7 @@ class OpenClawClient:
         context: str = "",
         model: str | None = None,
         isolated: bool = True,
+        allowed_tools: list[str] | None = None,
     ) -> str | None:
         """Spawn a sub-agent and return its session ID.
 
@@ -201,6 +241,9 @@ class OpenClawClient:
             context: Additional context (e.g., previous checker report)
             model: Override model (default: gateway's primary model)
             isolated: Whether to run in an isolated session
+            allowed_tools: MCP 工具白名单（P0 分舱）。None=不限制；
+                空列表=禁止所有 MCP；非空=只允许列出的工具。Gateway 可据此
+                在 sub-agent 侧强制限制工具权限。
 
         Returns:
             Session ID string, or None if the gateway is unavailable.
@@ -220,6 +263,8 @@ class OpenClawClient:
             payload["agent_definition"] = agent_content
         if model:
             payload["model"] = model
+        if allowed_tools is not None:
+            payload["allowed_tools"] = allowed_tools
 
         result = self._request("POST", "/api/subagent/spawn", data=payload, timeout=60.0)
         if result and "session_id" in result:
@@ -288,46 +333,49 @@ class Orchestrator:
         """Spawn all tasks (parallel ones simultaneously, sequential in order).
 
         Updates each task's session_id and status.
+        P0: 自动按角色填充 MCP 工具白名单并传入 Gateway payload。
         """
         parallel_tasks = [t for t in tasks if t.parallel]
         sequential_tasks = [t for t in tasks if not t.parallel]
 
         # Spawn parallel tasks
         for task in parallel_tasks:
-            task.started_at = datetime.now(timezone.utc).isoformat()
-            task.status = "running"
-            session_id = self.client.spawn_agent(
-                agent_file=task.agent_file,
-                task=task.task_description,
-                context=task.context,
-            )
-            task.session_id = session_id
-            if session_id is None:
-                task.status = "failed"
-                task.result = "Gateway unavailable"
-            logger.info("Spawned parallel agent: %s -> session=%s", task.role, session_id)
+            self._prepare_and_spawn(task)
 
         # Spawn sequential tasks (only after previous sequential completes)
         for task in sequential_tasks:
-            task.started_at = datetime.now(timezone.utc).isoformat()
-            task.status = "running"
-            session_id = self.client.spawn_agent(
-                agent_file=task.agent_file,
-                task=task.task_description,
-                context=task.context,
-            )
-            task.session_id = session_id
-            if session_id is None:
-                task.status = "failed"
-                task.result = "Gateway unavailable"
-            logger.info("Spawned sequential agent: %s -> session=%s", task.role, session_id)
+            self._prepare_and_spawn(task)
 
         return tasks
+
+    def _prepare_and_spawn(self, task: AgentTask) -> None:
+        """填充默认白名单并 spawn 单个 task（P0 分舱）。"""
+        # 白名单未显式指定时，按角色填充默认值
+        if task.allowed_mcp_tools is None:
+            task.allowed_mcp_tools = _get_role_whitelist(task.role)
+
+        task.started_at = datetime.now(timezone.utc).isoformat()
+        task.status = "running"
+        session_id = self.client.spawn_agent(
+            agent_file=task.agent_file,
+            task=task.task_description,
+            context=task.context,
+            allowed_tools=task.allowed_mcp_tools,
+        )
+        task.session_id = session_id
+        if session_id is None:
+            task.status = "failed"
+            task.result = "Gateway unavailable"
+        logger.info(
+            "Spawned agent: %s -> session=%s (allowed_mcp_tools=%s)",
+            task.role, session_id, task.allowed_mcp_tools,
+        )
 
     def fan_in(self, tasks: list[AgentTask], timeout: float = 300.0) -> list[AgentTask]:
         """Wait for all spawned tasks to complete and collect results.
 
         Updates each task's result, status, and tokens_used.
+        P0: 完成后审计 MCP 工具调用，检测角色越权。
         """
         for task in tasks:
             if task.status == "failed" or task.session_id is None:
@@ -351,8 +399,54 @@ class Orchestrator:
                 else:
                     task.result = result.get("output", "")
                 task.tokens_used = result.get("tokens_used", 0)
+                # P0: 审计 MCP 工具调用违规
+                self._audit_mcp_violations(task, messages)
 
         return tasks
+
+    @staticmethod
+    def _audit_mcp_violations(task: AgentTask, messages: list[dict[str, Any]]) -> None:
+        """扫描 session 消息，检测 sub-agent 是否调用了不在白名单的 MCP 工具。
+
+        检测两种信号：
+        1. message 中的 tool_calls 字段（OpenAI 格式：function.name）
+        2. message content 中的 "github.<method>" 模式（兜底，防 Gateway 不返回 tool_calls）
+
+        发现违规则填充 task.mcp_violations，不强制改 status（由 aggregate_results 聚合）。
+        """
+        if task.allowed_mcp_tools is None:
+            return  # 无白名单 = 不限制，跳过审计
+
+        whitelist = set(task.allowed_mcp_tools)
+        violations: list[str] = []
+
+        for msg in messages:
+            # 信号 1: tool_calls 字段（标准 OpenAI 格式）
+            tool_calls = msg.get("tool_calls") or []
+            for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                func = tc.get("function") or {}
+                name = str(func.get("name", ""))
+                if name and not name.startswith("mcp_"):
+                    # 非 mcp_ 前缀的工具不审计（如内置 Read/Write）
+                    continue
+                if name and name not in whitelist:
+                    violations.append(name)
+
+            # 信号 2: content 中的 "github.<method>" 模式（兜底）
+            content = str(msg.get("content", ""))
+            for match in re.finditer(r"\bgithub\.(get_pr|get_issue|list_prs|post_pr_comment|create_pr)\b", content):
+                tool = match.group(0)
+                if tool not in whitelist:
+                    violations.append(tool)
+
+        task.mcp_violations = violations
+        if violations:
+            logger.warning(
+                "MCP 违规: role=%s 调用了未授权工具 %s (白名单=%s)",
+                task.role, violations, task.allowed_mcp_tools,
+            )
 
     def aggregate_results(
         self,
@@ -411,12 +505,17 @@ class Orchestrator:
         if not checker_tasks:
             all_passed = all(t.status == "completed" for t in tasks)
 
+        # P2: 统计 MCP 角色违规调用总数
+        role_violation_count = sum(len(t.mcp_violations) for t in tasks)
+
         checker_report = "\n\n".join(checker_reports) if checker_reports else ""
         summary_parts = [f"Round {round_num}: {len(tasks)} agents executed"]
         summary_parts.append(f"Status: {'ALL GREEN' if all_passed else 'FAILED'}")
         summary_parts.append(f"Tokens: {total_tokens:,}")
         if failure_items:
             summary_parts.append(f"Failures: {len(failure_items)}")
+        if role_violation_count:
+            summary_parts.append(f"MCP violations: {role_violation_count}")
         summary = " | ".join(summary_parts)
 
         return RoundResult(
@@ -427,6 +526,7 @@ class Orchestrator:
             total_tokens=total_tokens,
             summary=summary,
             checker_report=checker_report,
+            role_violation_count=role_violation_count,
         )
 
     def run_builder_checker_round(
