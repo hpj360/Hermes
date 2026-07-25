@@ -330,6 +330,9 @@ class LoopRound:
     # P1 熔断：role -> "completed"|"failed"。record_round 据此更新
     # LoopState.agent_failure_counts，连续失败超阈值时下一轮跳过该 role。
     agent_status: dict[str, str] = field(default_factory=dict)
+    # P2 协作指标：本轮 RoundResult.collaboration_metrics 的快照。
+    # record_round 据此更新 LoopState 的累计指标（total_role_violations 等）。
+    collaboration_metrics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -347,6 +350,7 @@ class LoopRound:
             "baseline_failures": self.baseline_failures,
             "escalation_info": self.escalation_info,
             "agent_status": self.agent_status,
+            "collaboration_metrics": self.collaboration_metrics,
         }
 
     @classmethod
@@ -362,6 +366,10 @@ class LoopRound:
         agent_status = data.get("agent_status") or {}
         if not isinstance(agent_status, dict):
             agent_status = {}
+        # P2: collaboration_metrics 字典字段，缺省为空 dict
+        collaboration_metrics = data.get("collaboration_metrics") or {}
+        if not isinstance(collaboration_metrics, dict):
+            collaboration_metrics = {}
         return cls(
             round_num=data.get("round_num", 0),
             timestamp=data.get("timestamp", ""),
@@ -377,6 +385,7 @@ class LoopRound:
             baseline_failures=baseline_failures if isinstance(baseline_failures, list) else [],
             escalation_info=escalation_info if isinstance(escalation_info, dict) else {},
             agent_status=agent_status,
+            collaboration_metrics=collaboration_metrics,
         )
 
 
@@ -408,6 +417,14 @@ class LoopState:
     # P1 熔断：按 role 记录连续失败次数。role 成功则清零；连续达到
     # AGENT_FAILURE_THRESHOLD 时下一轮跳过该 role（避免反复烧 token）。
     agent_failure_counts: dict[str, int] = field(default_factory=dict)
+    # P2 multi-agent 协作评估累计指标（跨轮次聚合）：
+    #   total_role_violations: 所有轮次 MCP 角色违规调用累计总数
+    #   total_tokens_by_role: 每 role 累计消耗 token（效率分析）
+    #   failure_attribution_counts: dict[attribution, int] - 各归因类型出现次数
+    #     ("builder"/"checker"/"mixed"/"none")，用于诊断 loop 整体协作质量
+    total_role_violations: int = 0
+    total_tokens_by_role: dict[str, int] = field(default_factory=dict)
+    failure_attribution_counts: dict[str, int] = field(default_factory=dict)
 
 
 # P1 熔断阈值：同一 role 连续失败 N 次后下一轮跳过其任务分配。
@@ -534,6 +551,12 @@ def _load_loop_meta(meta: dict[str, Any], name: str) -> LoopState | None:
         deliverables=deliverables if isinstance(deliverables, list) else [],
         # P1: 字典字段读取，缺省为空 dict（向后兼容旧 meta.json）
         agent_failure_counts=_load_failure_counts(meta.get("agent_failure_counts")),
+        # P2: 累计协作指标读取
+        total_role_violations=int(meta.get("total_role_violations", 0) or 0),
+        total_tokens_by_role=_load_failure_counts(meta.get("total_tokens_by_role")),
+        failure_attribution_counts=_load_failure_counts(
+            meta.get("failure_attribution_counts")
+        ),
     )
 
 
@@ -562,6 +585,10 @@ def _save_loop_meta(state: LoopState) -> None:
         "deliverables": state.deliverables,
         # P1: 熔断字段序列化（dict[str, int] 在 JSON 中原生可序列化）
         "agent_failure_counts": state.agent_failure_counts,
+        # P2: 累计协作指标序列化
+        "total_role_violations": state.total_role_violations,
+        "total_tokens_by_role": state.total_tokens_by_role,
+        "failure_attribution_counts": state.failure_attribution_counts,
     }
     (loop_dir / "meta.json").write_text(
         json.dumps(meta, indent=2, ensure_ascii=False),
@@ -1688,6 +1715,47 @@ def get_tripped_roles(loop: LoopState) -> list[str]:
     ]
 
 
+def _accumulate_collaboration_metrics(
+    loop: LoopState, metrics: dict[str, Any]
+) -> None:
+    """把本轮 collaboration_metrics 累加到 LoopState 跨轮次累计字段。
+
+    P2 multi-agent 协作评估：单轮指标只能看当下，累计指标才能看趋势。
+    累计 3 个维度：
+    - total_role_violations: MCP 违规总数（安全趋势）
+    - total_tokens_by_role: 每 role 累计 token（成本归因）
+    - failure_attribution_counts: 各归因类型出现次数（协作质量分布）
+
+    输入为空 dict 时（如 L1_REPORT 阶段无 sub-agent 的轮次）跳过，不报错。
+    """
+    if not metrics:
+        return  # 该轮无协作指标（如纯扫描型 loop），跳过
+
+    # 1. MCP 违规累计
+    violations = metrics.get("role_violation_count", 0)
+    if isinstance(violations, int) and not isinstance(violations, bool):
+        loop.total_role_violations += violations
+
+    # 2. 每 role token 累计
+    token_by_role = metrics.get("token_by_role") or {}
+    if isinstance(token_by_role, dict):
+        for role, tokens in token_by_role.items():
+            if not isinstance(role, str):
+                continue
+            if isinstance(tokens, bool) or not isinstance(tokens, int):
+                continue
+            loop.total_tokens_by_role[role] = (
+                loop.total_tokens_by_role.get(role, 0) + tokens
+            )
+
+    # 3. failure_attribution 累计（按类型计数）
+    attribution = metrics.get("failure_attribution", "none")
+    if isinstance(attribution, str) and attribution:
+        loop.failure_attribution_counts[attribution] = (
+            loop.failure_attribution_counts.get(attribution, 0) + 1
+        )
+
+
 def record_round(
     name: str,
     round_data: LoopRound,
@@ -1715,6 +1783,10 @@ def record_round(
     # - role 成功：清零（连续失败窗口重置）
     # 调用方可在 fan_out 前查 get_tripped_roles() 决定是否跳过该 role。
     _update_failure_counts(loop, round_data.agent_status)
+
+    # P2 协作指标累计：从本轮 collaboration_metrics 聚合到 LoopState。
+    # 累计值用于跨轮次诊断 loop 整体协作质量（如 builder 频繁失败 / token 浪费）。
+    _accumulate_collaboration_metrics(loop, round_data.collaboration_metrics)
 
     if loop.budget_limit_tokens > 0 and loop.budget_used_tokens >= loop.budget_limit_tokens:
         loop.status = LoopStatus.BUDGET_EXCEEDED
@@ -1797,7 +1869,47 @@ def _update_state_md(loop: LoopState) -> None:
                 lines.append(f"- Failures ({r.failure_count}): {', '.join(r.failure_items[:5])}")
             if r.tokens_used:
                 lines.append(f"- Tokens: {r.tokens_used:,}")
+            # P2: 渲染本轮协作指标（attribution + agreement）
+            cm = r.collaboration_metrics
+            if cm:
+                attribution = cm.get("failure_attribution", "none")
+                agreement = cm.get("checker_builder_agreement")
+                agreement_str = (
+                    "agree" if agreement is True
+                    else "disagree" if agreement is False
+                    else "n/a"
+                )
+                lines.append(
+                    f"- Collaboration: attribution={attribution}, "
+                    f"checker_builder={agreement_str}, "
+                    f"completed={cm.get('roles_completed', 0)}/"
+                    f"failed={cm.get('roles_failed', 0)}"
+                )
             lines.append("")
+
+    # P2 multi-agent 协作评估累计指标（跨轮次聚合）
+    has_collab_data = (
+        loop.total_role_violations > 0
+        or loop.total_tokens_by_role
+        or loop.failure_attribution_counts
+    )
+    if has_collab_data:
+        lines.append("## Collaboration Metrics (cumulative)")
+        if loop.total_role_violations:
+            lines.append(f"- Total MCP violations: {loop.total_role_violations}")
+        if loop.total_tokens_by_role:
+            lines.append("- Tokens by role:")
+            for role, tokens in sorted(
+                loop.total_tokens_by_role.items(), key=lambda x: -x[1]
+            ):
+                lines.append(f"  - {role}: {tokens:,}")
+        if loop.failure_attribution_counts:
+            lines.append("- Failure attribution distribution:")
+            for attribution, count in sorted(
+                loop.failure_attribution_counts.items(), key=lambda x: -x[1]
+            ):
+                lines.append(f"  - {attribution}: {count}")
+        lines.append("")
 
     # 经验B：软门禁留疤——展示审计未通过的检查项（留痕但不阻断执行）
     if loop.audit_warnings:

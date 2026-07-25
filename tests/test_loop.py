@@ -2869,3 +2869,498 @@ def test_load_loop_meta_defaults_agent_failure_counts_when_missing(tmp_path, mon
     assert restored is not None
     assert restored.agent_failure_counts == {}
 
+
+# ── P2: multi-agent 协作评估指标测试 ──────────────────────────
+
+
+def test_compute_collaboration_metrics_all_pass():
+    """全部通过时 attribution=none, agreement=True。"""
+    from hermes.orchestrator import Orchestrator
+
+    metrics = Orchestrator._compute_collaboration_metrics(
+        builder_failed=False,
+        checker_failed_signal=False,
+        checker_passed_signal=True,
+        has_checker=True,
+        token_by_role={"builder": 5000, "checker_lint": 1000},
+        roles_completed=2,
+        roles_failed=0,
+        role_violation_count=0,
+    )
+    assert metrics["failure_attribution"] == "none"
+    assert metrics["checker_builder_agreement"] is True
+    assert metrics["roles_completed"] == 2
+    assert metrics["roles_failed"] == 0
+    assert metrics["token_by_role"] == {"builder": 5000, "checker_lint": 1000}
+
+
+def test_compute_collaboration_metrics_builder_only_failed():
+    """builder 失败但 checker 未报失败时 attribution=builder, agreement=None。"""
+    from hermes.orchestrator import Orchestrator
+
+    metrics = Orchestrator._compute_collaboration_metrics(
+        builder_failed=True,
+        checker_failed_signal=False,
+        checker_passed_signal=False,
+        has_checker=True,
+        token_by_role={"builder": 60000},
+        roles_completed=0,
+        roles_failed=1,
+        role_violation_count=0,
+    )
+    assert metrics["failure_attribution"] == "builder"
+    # builder 已 failed，无法判断 agreement
+    assert metrics["checker_builder_agreement"] is None
+
+
+def test_compute_collaboration_metrics_checker_only_failed():
+    """builder 完成但 checker 报失败时 attribution=checker, agreement=False。"""
+    from hermes.orchestrator import Orchestrator
+
+    metrics = Orchestrator._compute_collaboration_metrics(
+        builder_failed=False,
+        checker_failed_signal=True,
+        checker_passed_signal=False,
+        has_checker=True,
+        token_by_role={"builder": 5000, "checker_lint": 1000},
+        roles_completed=1,
+        roles_failed=1,
+        role_violation_count=0,
+    )
+    assert metrics["failure_attribution"] == "checker"
+    # builder 完成但 checker 报失败 → disagree
+    assert metrics["checker_builder_agreement"] is False
+
+
+def test_compute_collaboration_metrics_mixed_failure():
+    """builder 失败 + checker 失败时 attribution=mixed。"""
+    from hermes.orchestrator import Orchestrator
+
+    metrics = Orchestrator._compute_collaboration_metrics(
+        builder_failed=True,
+        checker_failed_signal=True,
+        checker_passed_signal=False,
+        has_checker=True,
+        token_by_role={"builder": 30000, "checker_lint": 500},
+        roles_completed=0,
+        roles_failed=2,
+        role_violation_count=1,
+    )
+    assert metrics["failure_attribution"] == "mixed"
+    assert metrics["checker_builder_agreement"] is None
+
+
+def test_compute_collaboration_metrics_no_checker():
+    """无 checker 时 attribution 取决于 builder 状态，agreement=None。"""
+    from hermes.orchestrator import Orchestrator
+
+    # builder 成功但无 checker
+    metrics = Orchestrator._compute_collaboration_metrics(
+        builder_failed=False,
+        checker_failed_signal=False,
+        checker_passed_signal=False,
+        has_checker=False,
+        token_by_role={"builder": 5000},
+        roles_completed=1,
+        roles_failed=0,
+        role_violation_count=0,
+    )
+    assert metrics["failure_attribution"] == "none"
+    assert metrics["checker_builder_agreement"] is None
+
+    # builder 失败且无 checker
+    metrics2 = Orchestrator._compute_collaboration_metrics(
+        builder_failed=True,
+        checker_failed_signal=False,
+        checker_passed_signal=False,
+        has_checker=False,
+        token_by_role={"builder": 5000},
+        roles_completed=0,
+        roles_failed=1,
+        role_violation_count=0,
+    )
+    assert metrics2["failure_attribution"] == "builder"
+    assert metrics2["checker_builder_agreement"] is None
+
+
+def test_aggregate_results_populates_collaboration_metrics():
+    """aggregate_results 正确填充 collaboration_metrics（builder 成功 + checker ALL GREEN）。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+
+    builder = AgentTask(
+        role="builder", status="completed", result="done", tokens_used=5000
+    )
+    checker = AgentTask(
+        role="checker_lint", status="completed", result="ALL GREEN", tokens_used=1000
+    )
+
+    rr = orch.aggregate_results([builder, checker], round_num=1)
+
+    assert rr.collaboration_metrics["failure_attribution"] == "none"
+    assert rr.collaboration_metrics["checker_builder_agreement"] is True
+    assert rr.collaboration_metrics["roles_completed"] == 2
+    assert rr.collaboration_metrics["roles_failed"] == 0
+    assert rr.collaboration_metrics["token_by_role"] == {
+        "builder": 5000, "checker_lint": 1000
+    }
+
+
+def test_aggregate_results_attribution_builder_when_builder_failed():
+    """builder failed 时 attribution=builder，summary 包含 Attribution。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+
+    builder = AgentTask(
+        role="builder",
+        status="failed",
+        result="Token limit exceeded",
+        tokens_used=60000,
+    )
+    checker = AgentTask(
+        role="checker_lint", status="completed", result="ALL GREEN", tokens_used=500
+    )
+
+    rr = orch.aggregate_results([builder, checker], round_num=1)
+
+    # builder failed → all_passed=False
+    assert rr.all_passed is False
+    assert rr.collaboration_metrics["failure_attribution"] == "builder"
+    # summary 包含 Attribution 信息
+    assert "Attribution: builder" in rr.summary
+
+
+def test_aggregate_results_attribution_checker_when_checker_reports_failure():
+    """builder 完成但 checker 报失败时 attribution=checker。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+
+    builder = AgentTask(
+        role="builder", status="completed", result="done", tokens_used=3000
+    )
+    checker = AgentTask(
+        role="checker_lint",
+        status="completed",
+        result="FAILED\nsrc/a.py:42 - ImportError",
+        tokens_used=800,
+    )
+
+    rr = orch.aggregate_results([builder, checker], round_num=1)
+
+    assert rr.all_passed is False
+    assert rr.collaboration_metrics["failure_attribution"] == "checker"
+    assert rr.collaboration_metrics["checker_builder_agreement"] is False
+
+
+def test_round_result_to_dict_includes_collaboration_metrics():
+    """RoundResult.to_dict 包含 collaboration_metrics 字段。"""
+    from hermes.orchestrator import RoundResult
+
+    rr = RoundResult(
+        round_num=1,
+        collaboration_metrics={
+            "failure_attribution": "builder",
+            "checker_builder_agreement": None,
+            "roles_completed": 1,
+            "roles_failed": 1,
+        },
+    )
+    d = rr.to_dict()
+    assert "collaboration_metrics" in d
+    assert d["collaboration_metrics"]["failure_attribution"] == "builder"
+
+
+def test_loop_state_cumulative_metrics_default():
+    """LoopState 默认累计协作指标为初始值。"""
+    from hermes.loop import LoopState, LoopStage, LoopStatus
+    from pathlib import Path
+
+    state = LoopState(
+        name="t", pattern="custom", stage=LoopStage.L1_REPORT, status=LoopStatus.IDLE,
+        config_path=Path("/tmp/LOOP.md"), state_path=Path("/tmp/STATE.md"),
+        budget_path=Path("/tmp/budget.md"), created_at="",
+    )
+    assert state.total_role_violations == 0
+    assert state.total_tokens_by_role == {}
+    assert state.failure_attribution_counts == {}
+
+
+def test_accumulate_collaboration_metrics_empty_no_op():
+    """空 metrics 不修改任何累计字段。"""
+    from hermes.loop import LoopState, LoopStage, LoopStatus, _accumulate_collaboration_metrics
+    from pathlib import Path
+
+    state = LoopState(
+        name="t", pattern="custom", stage=LoopStage.L1_REPORT, status=LoopStatus.IDLE,
+        config_path=Path("/tmp/LOOP.md"), state_path=Path("/tmp/STATE.md"),
+        budget_path=Path("/tmp/budget.md"), created_at="",
+    )
+    state.total_role_violations = 5
+    state.total_tokens_by_role = {"builder": 1000}
+    state.failure_attribution_counts = {"checker": 2}
+
+    _accumulate_collaboration_metrics(state, {})
+
+    # 未被修改
+    assert state.total_role_violations == 5
+    assert state.total_tokens_by_role == {"builder": 1000}
+    assert state.failure_attribution_counts == {"checker": 2}
+
+
+def test_accumulate_collaboration_metrics_sums_violations_and_tokens():
+    """累计指标正确累加 violations + tokens + attribution。"""
+    from hermes.loop import LoopState, LoopStage, LoopStatus, _accumulate_collaboration_metrics
+    from pathlib import Path
+
+    state = LoopState(
+        name="t", pattern="custom", stage=LoopStage.L1_REPORT, status=LoopStatus.IDLE,
+        config_path=Path("/tmp/LOOP.md"), state_path=Path("/tmp/STATE.md"),
+        budget_path=Path("/tmp/budget.md"), created_at="",
+    )
+
+    # 第一轮
+    _accumulate_collaboration_metrics(state, {
+        "role_violation_count": 1,
+        "token_by_role": {"builder": 5000, "checker_lint": 1000},
+        "failure_attribution": "checker",
+    })
+    assert state.total_role_violations == 1
+    assert state.total_tokens_by_role == {"builder": 5000, "checker_lint": 1000}
+    assert state.failure_attribution_counts == {"checker": 1}
+
+    # 第二轮（同 role 不同 token）
+    _accumulate_collaboration_metrics(state, {
+        "role_violation_count": 2,
+        "token_by_role": {"builder": 3000, "checker_lint": 800},
+        "failure_attribution": "builder",
+    })
+    assert state.total_role_violations == 3  # 1 + 2
+    assert state.total_tokens_by_role == {"builder": 8000, "checker_lint": 1800}
+    assert state.failure_attribution_counts == {"checker": 1, "builder": 1}
+
+
+def test_accumulate_collaboration_metrics_skips_invalid_types():
+    """非法类型（bool / str token / non-str role）被丢弃不污染累计。"""
+    from hermes.loop import LoopState, LoopStage, LoopStatus, _accumulate_collaboration_metrics
+    from pathlib import Path
+
+    state = LoopState(
+        name="t", pattern="custom", stage=LoopStage.L1_REPORT, status=LoopStatus.IDLE,
+        config_path=Path("/tmp/LOOP.md"), state_path=Path("/tmp/STATE.md"),
+        budget_path=Path("/tmp/budget.md"), created_at="",
+    )
+
+    _accumulate_collaboration_metrics(state, {
+        "role_violation_count": True,  # bool 应被排除（bool 是 int 子类）
+        "token_by_role": {
+            "builder": 1000,
+            "bad_role_str_token": "not int",
+            123: 500,  # 非 str key 被跳过
+        },
+        "failure_attribution": "",  # 空字符串不计入
+    })
+
+    assert state.total_role_violations == 0  # bool 被排除
+    assert state.total_tokens_by_role == {"builder": 1000}  # 只 builder 计入
+    assert state.failure_attribution_counts == {}  # 空字符串不计入
+
+
+def test_loop_round_collaboration_metrics_roundtrip():
+    """LoopRound.to_dict / from_dict 保留 collaboration_metrics。"""
+    from hermes.loop import LoopRound
+
+    metrics = {
+        "failure_attribution": "checker",
+        "checker_builder_agreement": False,
+        "roles_completed": 1,
+        "roles_failed": 1,
+        "token_by_role": {"builder": 5000, "checker_lint": 1000},
+    }
+    round_data = LoopRound(
+        round_num=1,
+        timestamp="2024-01-01T00:00:00Z",
+        action="test",
+        result_summary="ok",
+        verifier_result="",
+        passed=False,
+        collaboration_metrics=metrics,
+    )
+    d = round_data.to_dict()
+    assert d["collaboration_metrics"] == metrics
+
+    restored = LoopRound.from_dict(d)
+    assert restored.collaboration_metrics == metrics
+
+
+def test_loop_round_from_dict_defaults_collaboration_metrics_when_missing():
+    """旧 meta.json 缺 collaboration_metrics 时 from_dict 默认为空 dict。"""
+    from hermes.loop import LoopRound
+
+    data = {
+        "round_num": 1,
+        "timestamp": "2024-01-01T00:00:00Z",
+        "action": "test",
+        "result_summary": "ok",
+        "verifier_result": "",
+        "passed": True,
+        # 故意不带 collaboration_metrics
+    }
+    restored = LoopRound.from_dict(data)
+    assert restored.collaboration_metrics == {}
+
+
+def test_load_loop_meta_persists_cumulative_metrics(tmp_path, monkeypatch):
+    """meta.json 读写 P2 累计协作指标（端到端持久化）。"""
+    from hermes import loop as loop_mod
+    from hermes.loop import LoopStage, LoopStatus, _load_loop_meta, _save_loop_meta, LoopState
+
+    monkeypatch.setattr(loop_mod, "loops_dir", lambda: tmp_path)
+    loop_dir = tmp_path / "test-loop"
+    loop_dir.mkdir(parents=True)
+
+    state = LoopState(
+        name="test-loop",
+        pattern="custom",
+        stage=LoopStage.L1_REPORT,
+        status=LoopStatus.IDLE,
+        config_path=loop_dir / "LOOP.md",
+        state_path=loop_dir / "STATE.md",
+        budget_path=loop_dir / "loop-budget.md",
+        created_at="2024-01-01T00:00:00Z",
+        total_role_violations=3,
+        total_tokens_by_role={"builder": 15000, "checker_lint": 2000},
+        failure_attribution_counts={"builder": 1, "checker": 2},
+    )
+
+    _save_loop_meta(state)
+    meta_path = loop_dir / "meta.json"
+    assert meta_path.exists()
+
+    import json
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert meta["total_role_violations"] == 3
+    assert meta["total_tokens_by_role"] == {"builder": 15000, "checker_lint": 2000}
+    assert meta["failure_attribution_counts"] == {"builder": 1, "checker": 2}
+
+    # 读回来
+    restored = _load_loop_meta(meta, "test-loop")
+    assert restored is not None
+    assert restored.total_role_violations == 3
+    assert restored.total_tokens_by_role == {"builder": 15000, "checker_lint": 2000}
+    assert restored.failure_attribution_counts == {"builder": 1, "checker": 2}
+
+
+def test_load_loop_meta_defaults_cumulative_metrics_when_missing(tmp_path, monkeypatch):
+    """旧 meta.json 缺 P2 字段时返回默认值（向后兼容）。"""
+    from hermes import loop as loop_mod
+    from hermes.loop import _load_loop_meta
+
+    monkeypatch.setattr(loop_mod, "loops_dir", lambda: tmp_path)
+    loop_dir = tmp_path / "test-loop"
+    loop_dir.mkdir(parents=True)
+
+    import json
+    legacy_meta = {
+        "schema_version": 0,
+        "pattern": "custom",
+        "stage": "l1_report",
+        "status": "idle",
+        "created_at": "2024-01-01T00:00:00Z",
+    }
+    (loop_dir / "meta.json").write_text(json.dumps(legacy_meta), encoding="utf-8")
+
+    restored = _load_loop_meta(legacy_meta, "test-loop")
+    assert restored is not None
+    assert restored.total_role_violations == 0
+    assert restored.total_tokens_by_role == {}
+    assert restored.failure_attribution_counts == {}
+
+
+def test_record_round_accumulates_cumulative_metrics(tmp_path, monkeypatch):
+    """record_round 端到端：调用一次后 LoopState 累计字段被更新。"""
+    from hermes import loop as loop_mod
+    from hermes.loop import LoopRound, init_loop, record_round
+
+    monkeypatch.setattr(loop_mod, "loops_dir", lambda: tmp_path)
+    monkeypatch.setattr(loop_mod, "_project_root", lambda: tmp_path)
+
+    init_result = init_loop("test-loop", pattern="builder-checker")
+    assert init_result["success"]
+
+    round_data = LoopRound(
+        round_num=1,
+        timestamp="2024-01-01T00:00:00Z",
+        action="builder-checker round",
+        result_summary="FAILED",
+        verifier_result="FAILED",
+        passed=False,
+        failure_count=1,
+        failure_items=["checker_lint: src/a.py|ImportError"],
+        tokens_used=6000,
+        agent_status={"builder": "completed", "checker_lint": "completed"},
+        collaboration_metrics={
+            "role_violation_count": 0,
+            "token_by_role": {"builder": 5000, "checker_lint": 1000},
+            "failure_attribution": "checker",
+            "checker_builder_agreement": False,
+            "roles_completed": 2,
+            "roles_failed": 0,
+        },
+    )
+
+    result = record_round("test-loop", round_data, tokens_used=6000)
+    assert result["success"]
+
+    # 直接读 meta.json 校验累计字段
+    import json
+    meta = json.loads((tmp_path / "test-loop" / "meta.json").read_text("utf-8"))
+    assert meta["total_role_violations"] == 0
+    assert meta["total_tokens_by_role"] == {"builder": 5000, "checker_lint": 1000}
+    assert meta["failure_attribution_counts"] == {"checker": 1}
+
+    # STATE.md 包含 Collaboration Metrics 段
+    state_md = (tmp_path / "test-loop" / "STATE.md").read_text("utf-8")
+    assert "Collaboration Metrics (cumulative)" in state_md
+    assert "builder: 5,000" in state_md
+    assert "checker: 1" in state_md
+
+
+def test_record_round_renders_per_round_collaboration_in_state_md(tmp_path, monkeypatch):
+    """STATE.md 渲染每轮的 Collaboration 行（attribution + agreement）。"""
+    from hermes import loop as loop_mod
+    from hermes.loop import LoopRound, init_loop, record_round
+
+    monkeypatch.setattr(loop_mod, "loops_dir", lambda: tmp_path)
+    monkeypatch.setattr(loop_mod, "_project_root", lambda: tmp_path)
+
+    init_result = init_loop("test-loop", pattern="builder-checker")
+    assert init_result["success"]
+
+    round_data = LoopRound(
+        round_num=1,
+        timestamp="2024-01-01T00:00:00Z",
+        action="builder-checker round",
+        result_summary="ALL GREEN",
+        verifier_result="ALL GREEN",
+        passed=True,
+        tokens_used=6000,
+        collaboration_metrics={
+            "failure_attribution": "none",
+            "checker_builder_agreement": True,
+            "roles_completed": 2,
+            "roles_failed": 0,
+        },
+    )
+
+    result = record_round("test-loop", round_data, tokens_used=6000)
+    assert result["success"]
+
+    state_md = (tmp_path / "test-loop" / "STATE.md").read_text("utf-8")
+    # 每轮 Collaboration 行
+    assert "Collaboration: attribution=none" in state_md
+    assert "checker_builder=agree" in state_md
+    assert "completed=2/failed=0" in state_md
+

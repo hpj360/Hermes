@@ -16,5 +16,8 @@
   "baseline_failures": [],
   "audit_warnings": [],
   "deliverables": [],
-  "agent_failure_counts": {}
+  "agent_failure_counts": {},
+  "total_role_violations": 0,
+  "total_tokens_by_role": {},
+  "failure_attribution_counts": {}
 }

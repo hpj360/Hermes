@@ -161,6 +161,19 @@ class RoundResult:
     checker_report: str = ""
     # P2 可观测性：本轮检测到的 MCP 工具角色违规调用总数
     role_violation_count: int = 0
+    # P2 multi-agent 协作评估指标：本轮 sub-agent 协作的结构化诊断。
+    # 字段说明（由 _compute_collaboration_metrics 填充）：
+    #   token_by_role: dict[role, int] - 每个 role 本轮消耗的 token（效率归因）
+    #   failure_attribution: "builder" | "checker" | "mixed" | "none"
+    #     - builder: builder 自身 failed（如 token 熔断 / 超时 / 输出无效）
+    #     - checker: builder 完成但 checker 报告失败（修复未达标）
+    #     - mixed: 既有 builder 失败也有 checker 失败
+    #     - none: 全部通过
+    #   checker_builder_agreement: bool - checker 是否认同 builder 的成功声明
+    #     True=checker ALL GREEN / False=checker FAILED / None=无 checker 或 builder 已 failed
+    #   roles_completed: int - 本轮 status=completed 的 role 数
+    #   roles_failed: int - 本轮 status=failed 的 role 数
+    collaboration_metrics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -172,6 +185,7 @@ class RoundResult:
             "summary": self.summary,
             "checker_report": self.checker_report,
             "role_violation_count": self.role_violation_count,
+            "collaboration_metrics": self.collaboration_metrics,
         }
 
 
@@ -505,11 +519,27 @@ class Orchestrator:
         failure_items: list[str] = []
         all_passed = True
 
+        # P2 协作指标采集：分角色追踪 builder/checker 失败信号
+        builder_failed = False
+        checker_failed_signal = False  # 任何 checker 输出非 ALL GREEN
+        checker_passed_signal = False  # 任何 checker 输出 ALL GREEN
+        token_by_role: dict[str, int] = {}
+        roles_completed = 0
+        roles_failed = 0
+
         for task in tasks:
+            # P2: token 归因 + role 计数（所有 role 都参与）
+            token_by_role[task.role] = token_by_role.get(task.role, 0) + task.tokens_used
+            if task.status == "completed":
+                roles_completed += 1
+            elif task.status == "failed":
+                roles_failed += 1
+
             if task.role.startswith("checker") or task.role == "checker":
                 # Red line: never report success without checker output.
                 if not task.result:
                     all_passed = False
+                    checker_failed_signal = True
                     checker_reports.append(
                         f"### {task.role}\n[CHECKER PRODUCED NO OUTPUT]"
                     )
@@ -519,15 +549,18 @@ class Orchestrator:
                 result_upper = task.result.upper()
                 if "ALL GREEN" in result_upper:
                     # Explicit success signal from this checker (protocol, not interpretation).
+                    checker_passed_signal = True
                     continue
                 # Any non-empty, non-ALL-GREEN checker output is a failure.
                 all_passed = False
+                checker_failed_signal = True
                 # Prefer structured failure protocol; fall back to verbatim report.
                 structured = _parse_structured_failures(task.result, task.role)
                 failure_items.extend(structured)
             elif task.role == "builder":
                 if task.status == "failed":
                     all_passed = False
+                    builder_failed = True
 
         # If no checker tasks, use builder status
         checker_tasks = [t for t in tasks if t.role.startswith("checker")]
@@ -537,6 +570,18 @@ class Orchestrator:
         # P2: 统计 MCP 角色违规调用总数
         role_violation_count = sum(len(t.mcp_violations) for t in tasks)
 
+        # P2: 计算协作评估指标
+        collaboration_metrics = self._compute_collaboration_metrics(
+            builder_failed=builder_failed,
+            checker_failed_signal=checker_failed_signal,
+            checker_passed_signal=checker_passed_signal,
+            has_checker=bool(checker_tasks),
+            token_by_role=token_by_role,
+            roles_completed=roles_completed,
+            roles_failed=roles_failed,
+            role_violation_count=role_violation_count,
+        )
+
         checker_report = "\n\n".join(checker_reports) if checker_reports else ""
         summary_parts = [f"Round {round_num}: {len(tasks)} agents executed"]
         summary_parts.append(f"Status: {'ALL GREEN' if all_passed else 'FAILED'}")
@@ -545,6 +590,9 @@ class Orchestrator:
             summary_parts.append(f"Failures: {len(failure_items)}")
         if role_violation_count:
             summary_parts.append(f"MCP violations: {role_violation_count}")
+        attribution = collaboration_metrics.get("failure_attribution", "none")
+        if attribution != "none":
+            summary_parts.append(f"Attribution: {attribution}")
         summary = " | ".join(summary_parts)
 
         return RoundResult(
@@ -556,7 +604,58 @@ class Orchestrator:
             summary=summary,
             checker_report=checker_report,
             role_violation_count=role_violation_count,
+            collaboration_metrics=collaboration_metrics,
         )
+
+    @staticmethod
+    def _compute_collaboration_metrics(
+        *,
+        builder_failed: bool,
+        checker_failed_signal: bool,
+        checker_passed_signal: bool,
+        has_checker: bool,
+        token_by_role: dict[str, int],
+        roles_completed: int,
+        roles_failed: int,
+        role_violation_count: int,
+    ) -> dict[str, Any]:
+        """计算 multi-agent 协作评估指标。
+
+        设计原则（第一性原理）：
+        - 指标必须可观测且可归因：不能只报"失败了"，要报"谁导致失败"。
+        - failure_attribution 互斥分类：builder / checker / mixed / none。
+          - builder 自身 failed（如 token 熔断）→ "builder"
+          - builder 完成但 checker 报失败 → "checker"（修复未达标）
+          - 两者都有失败信号 → "mixed"
+          - 全部通过 → "none"
+        - checker_builder_agreement 三态：True/False/None。
+          None 表示无 checker 或 builder 已 failed（无法判断 agreement）。
+        """
+        # failure_attribution 互斥判定
+        if builder_failed and checker_failed_signal:
+            attribution = "mixed"
+        elif builder_failed:
+            attribution = "builder"
+        elif checker_failed_signal:
+            attribution = "checker"
+        else:
+            attribution = "none"
+
+        # checker_builder_agreement：只在 builder 成功 + 有 checker 时才有意义
+        if not has_checker or builder_failed:
+            agreement: bool | None = None
+        else:
+            # checker 全部 ALL GREEN 才算 agree；任何一个非 ALL GREEN 即 disagree
+            agreement = checker_passed_signal and not checker_failed_signal
+
+        return {
+            "token_by_role": dict(token_by_role),
+            "failure_attribution": attribution,
+            "checker_builder_agreement": agreement,
+            "roles_completed": roles_completed,
+            "roles_failed": roles_failed,
+            "role_violation_count": role_violation_count,
+        }
 
     def run_builder_checker_round(
         self,

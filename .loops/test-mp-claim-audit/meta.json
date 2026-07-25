@@ -18,5 +18,8 @@
   "deliverables": [
     "/workspace/.loops/test-mp-claim-audit/report.md"
   ],
-  "agent_failure_counts": {}
+  "agent_failure_counts": {},
+  "total_role_violations": 0,
+  "total_tokens_by_role": {},
+  "failure_attribution_counts": {}
 }

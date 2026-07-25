@@ -327,6 +327,8 @@ def _run_builder_checker(
         tokens_used=result.total_tokens,
         agent_reports=agent_reports,
         agent_status=agent_status,
+        # P2: 透传协作指标快照供 record_round 累计到 LoopState
+        collaboration_metrics=result.collaboration_metrics,
     )
 
     record_result = record_round(name, round_data, tokens_used=result.total_tokens)
@@ -417,6 +419,8 @@ def _run_multi_perspective(
         tokens_used=result.total_tokens,
         agent_reports=agent_reports,
         agent_status=agent_status,
+        # P2: 透传协作指标快照供 record_round 累计到 LoopState
+        collaboration_metrics=result.collaboration_metrics,
     )
 
     # 设置 deliverables 供 record_round 校验

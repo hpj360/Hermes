@@ -4,7 +4,7 @@
   "stage": "l1_report",
   "status": "budget_exceeded",
   "created_at": "2026-07-24T13:33:17.250117+00:00",
-  "last_run": "2026-07-25T08:05:41.052025+00:00",
+  "last_run": "2026-07-25T08:13:21.694067+00:00",
   "current_round": 1,
   "max_rounds": 2,
   "rounds": [
@@ -22,7 +22,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -38,7 +39,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -54,7 +56,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -70,7 +73,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -86,7 +90,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -102,7 +107,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -118,7 +124,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -134,7 +141,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -150,7 +158,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -166,7 +175,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -182,7 +192,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -198,7 +209,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -214,7 +226,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -230,7 +243,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -246,7 +260,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -262,7 +277,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -278,7 +294,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -294,7 +311,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -310,7 +328,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -326,7 +345,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -342,7 +362,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -358,7 +379,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -374,7 +396,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -390,7 +413,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -406,7 +430,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -422,7 +447,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -438,7 +464,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -454,7 +481,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -470,7 +498,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -486,7 +515,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -502,7 +532,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -518,7 +549,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -534,7 +566,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -550,7 +583,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -566,7 +600,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -582,7 +617,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -598,7 +634,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -614,7 +651,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -630,7 +668,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -646,7 +685,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -662,7 +702,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -678,7 +719,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -694,7 +736,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -710,7 +753,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -726,7 +770,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -742,7 +787,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -758,7 +804,8 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
     },
     {
       "round_num": 1,
@@ -774,7 +821,76 @@
       "agent_reports": {},
       "baseline_failures": [],
       "escalation_info": {},
-      "agent_status": {}
+      "agent_status": {},
+      "collaboration_metrics": {}
+    },
+    {
+      "round_num": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "action": "test action",
+      "result_summary": "test summary",
+      "verifier_result": "",
+      "passed": true,
+      "next_action": "",
+      "failure_count": 0,
+      "failure_items": [],
+      "tokens_used": 0,
+      "agent_reports": {},
+      "baseline_failures": [],
+      "escalation_info": {},
+      "agent_status": {},
+      "collaboration_metrics": {}
+    },
+    {
+      "round_num": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "action": "test action",
+      "result_summary": "test summary",
+      "verifier_result": "",
+      "passed": true,
+      "next_action": "",
+      "failure_count": 0,
+      "failure_items": [],
+      "tokens_used": 0,
+      "agent_reports": {},
+      "baseline_failures": [],
+      "escalation_info": {},
+      "agent_status": {},
+      "collaboration_metrics": {}
+    },
+    {
+      "round_num": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "action": "test action",
+      "result_summary": "test summary",
+      "verifier_result": "",
+      "passed": true,
+      "next_action": "",
+      "failure_count": 0,
+      "failure_items": [],
+      "tokens_used": 0,
+      "agent_reports": {},
+      "baseline_failures": [],
+      "escalation_info": {},
+      "agent_status": {},
+      "collaboration_metrics": {}
+    },
+    {
+      "round_num": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "action": "test action",
+      "result_summary": "test summary",
+      "verifier_result": "",
+      "passed": true,
+      "next_action": "",
+      "failure_count": 0,
+      "failure_items": [],
+      "tokens_used": 0,
+      "agent_reports": {},
+      "baseline_failures": [],
+      "escalation_info": {},
+      "agent_status": {},
+      "collaboration_metrics": {}
     }
   ],
   "budget_used_tokens": 110,
@@ -785,5 +901,8 @@
   "baseline_failures": [],
   "audit_warnings": [],
   "deliverables": [],
-  "agent_failure_counts": {}
+  "agent_failure_counts": {},
+  "total_role_violations": 0,
+  "total_tokens_by_role": {},
+  "failure_attribution_counts": {}
 }
