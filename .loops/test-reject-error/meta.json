@@ -15,5 +15,6 @@
   "noise_items": [],
   "baseline_failures": [],
   "audit_warnings": [],
-  "deliverables": []
+  "deliverables": [],
+  "agent_failure_counts": {}
 }

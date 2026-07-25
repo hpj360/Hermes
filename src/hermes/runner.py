@@ -307,9 +307,13 @@ def _run_builder_checker(
 
     # Build LoopRound from result
     agent_reports: dict[str, str] = {}
+    agent_status: dict[str, str] = {}
     for task in result.tasks:
         if task.result:
             agent_reports[task.role] = task.result
+        # P1 熔断：记录每个 role 的本轮状态（completed/failed）
+        # 即使 result 为空也要记录（如 token 超限 / 网络异常导致 status=failed 但无输出）
+        agent_status[task.role] = task.status
 
     round_data = LoopRound(
         round_num=round_num,
@@ -322,6 +326,7 @@ def _run_builder_checker(
         failure_items=result.failure_items,
         tokens_used=result.total_tokens,
         agent_reports=agent_reports,
+        agent_status=agent_status,
     )
 
     record_result = record_round(name, round_data, tokens_used=result.total_tokens)
@@ -389,9 +394,12 @@ def _run_multi_perspective(
 
     # 构建 LoopRound
     agent_reports: dict[str, str] = {}
+    agent_status: dict[str, str] = {}
     for task in result.tasks:
         if task.result:
             agent_reports[task.role] = task.result
+        # P1 熔断：记录每个 perspective / synthesizer 的本轮状态
+        agent_status[task.role] = task.status
 
     # multi-perspective 的 deliverable 是 summary.md
     summary_path = loop_dir / "summary.md"
@@ -408,6 +416,7 @@ def _run_multi_perspective(
         failure_items=result.failure_items,
         tokens_used=result.total_tokens,
         agent_reports=agent_reports,
+        agent_status=agent_status,
     )
 
     # 设置 deliverables 供 record_round 校验

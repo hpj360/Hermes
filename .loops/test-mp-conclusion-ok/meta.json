@@ -18,5 +18,6 @@
     "LOOP.md has completion criteria",
     "Uses L1 stage (start conservative)"
   ],
-  "deliverables": []
+  "deliverables": [],
+  "agent_failure_counts": {}
 }

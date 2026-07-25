@@ -125,6 +125,9 @@ class AgentTask:
     allowed_mcp_tools: list[str] | None = None
     # fan_in 审计后填充：检测到的违规 MCP 工具调用列表。
     mcp_violations: list[str] = field(default_factory=list)
+    # P1: 单 agent token 上限。fan_in 时若 tokens_used > token_limit 标记 failed。
+    # 0 = 不限制（向后兼容）。默认 50000（约 $0.15 GPT-4 单次）。
+    token_limit: int = 50000
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -141,6 +144,7 @@ class AgentTask:
             "completed_at": self.completed_at,
             "allowed_mcp_tools": self.allowed_mcp_tools,
             "mcp_violations": self.mcp_violations,
+            "token_limit": self.token_limit,
         }
 
 
@@ -399,10 +403,35 @@ class Orchestrator:
                 else:
                     task.result = result.get("output", "")
                 task.tokens_used = result.get("tokens_used", 0)
+                # P1: token 上限熔断检查
+                # token_limit > 0 时启用；超限即标记 failed，防止单 agent 烧光预算。
+                # 由 _check_token_limit 集中处理，便于复用与测试覆盖。
+                self._check_token_limit(task)
                 # P0: 审计 MCP 工具调用违规
                 self._audit_mcp_violations(task, messages)
 
         return tasks
+
+    @staticmethod
+    def _check_token_limit(task: AgentTask) -> None:
+        """检查单 agent token 使用是否超限。
+
+        P1 熔断机制：超限时将 status 由 completed 改为 failed，
+        并填充 result 提示。token_limit <= 0 表示不限制（向后兼容）。
+        """
+        if task.token_limit <= 0:
+            return  # 不限制
+        if task.tokens_used > task.token_limit:
+            original_status = task.status
+            task.status = "failed"
+            task.result = (
+                f"Token limit exceeded: used {task.tokens_used}, "
+                f"limit {task.token_limit} (prior status={original_status})"
+            )
+            logger.warning(
+                "Token 熔断: role=%s session=%s used=%d limit=%d",
+                task.role, task.session_id, task.tokens_used, task.token_limit,
+            )
 
     @staticmethod
     def _audit_mcp_violations(task: AgentTask, messages: list[dict[str, Any]]) -> None:

@@ -17,5 +17,6 @@
   "audit_warnings": [],
   "deliverables": [
     "nonexistent.md"
-  ]
+  ],
+  "agent_failure_counts": {}
 }

@@ -2502,3 +2502,370 @@ def test_round_result_to_dict_includes_violation_count():
     d = rr.to_dict()
     assert d["role_violation_count"] == 3
 
+
+# ── P1: sub-agent 级 token 上限 + 熔断机制测试 ──────────────────
+
+
+def test_agent_task_token_limit_default():
+    """AgentTask 默认 token_limit=50000。"""
+    from hermes.orchestrator import AgentTask
+
+    task = AgentTask(role="builder")
+    assert task.token_limit == 50000
+
+    d = task.to_dict()
+    assert d["token_limit"] == 50000
+
+
+def test_check_token_limit_no_op_when_unlimited():
+    """token_limit=0 表示不限制，不会改 status。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    task = AgentTask(role="builder", token_limit=0)
+    task.status = "completed"
+    task.tokens_used = 999999999  # 即使巨大也不触发
+    Orchestrator._check_token_limit(task)
+    assert task.status == "completed"
+    assert task.result is None  # 未被改写
+
+
+def test_check_token_limit_no_op_when_within_budget():
+    """tokens_used <= token_limit 时不触发熔断。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    task = AgentTask(role="builder", token_limit=50000)
+    task.status = "completed"
+    task.tokens_used = 50000  # 等于上限，不触发
+    Orchestrator._check_token_limit(task)
+    assert task.status == "completed"
+    assert task.result is None
+
+
+def test_check_token_limit_trips_when_exceeded():
+    """tokens_used > token_limit 时改 status 为 failed 并写明原因。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    task = AgentTask(role="builder", token_limit=50000)
+    task.status = "completed"
+    task.tokens_used = 50001  # 刚好超 1
+    Orchestrator._check_token_limit(task)
+    assert task.status == "failed"
+    assert "Token limit exceeded" in task.result
+    assert "50001" in task.result
+    assert "50000" in task.result
+
+
+def test_check_token_limit_preserves_original_status_in_message():
+    """熔断后 result 包含 prior status，便于追溯。"""
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    task = AgentTask(role="builder", token_limit=100)
+    task.status = "running"  # 异常状态（理论上 fan_in 完成后应为 completed）
+    task.tokens_used = 200
+    Orchestrator._check_token_limit(task)
+    assert task.status == "failed"
+    assert "prior status=running" in task.result
+
+
+def test_fan_in_trips_token_limit():
+    """fan_in 整合后，超 token 上限的 task 被标记 failed。"""
+    from datetime import datetime, timezone
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+
+    class FakeClient:
+        def health_check(self):
+            return True
+
+        def wait_for_completion(self, session_id, timeout=300.0):
+            return {"status": "completed", "tokens_used": 60000}  # 超 50000
+
+        def get_session_messages(self, session_id):
+            return [{"role": "assistant", "content": "done"}]
+
+    orch.client = FakeClient()
+
+    task = AgentTask(
+        role="builder",
+        session_id="s1",
+        status="running",
+        token_limit=50000,
+    )
+    task.started_at = datetime.now(timezone.utc).isoformat()
+    orch.fan_in([task])
+
+    assert task.status == "failed"
+    assert "Token limit exceeded" in task.result
+
+
+def test_fan_in_keeps_completed_when_within_budget():
+    """fan_in 整合后，未超 token 上限的 task 保持 completed。"""
+    from datetime import datetime, timezone
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    orch = Orchestrator()
+
+    class FakeClient:
+        def health_check(self):
+            return True
+
+        def wait_for_completion(self, session_id, timeout=300.0):
+            return {"status": "completed", "tokens_used": 30000}
+
+        def get_session_messages(self, session_id):
+            return [{"role": "assistant", "content": "done"}]
+
+    orch.client = FakeClient()
+
+    task = AgentTask(
+        role="builder",
+        session_id="s1",
+        status="running",
+        token_limit=50000,
+    )
+    task.started_at = datetime.now(timezone.utc).isoformat()
+    orch.fan_in([task])
+
+    assert task.status == "completed"
+
+
+# ── P1: agent_failure_counts / 熔断阈值测试 ─────────────────────
+
+
+def test_agent_failure_threshold_value():
+    """AGENT_FAILURE_THRESHOLD=2，确保阈值稳定。"""
+    from hermes.loop import AGENT_FAILURE_THRESHOLD
+
+    assert AGENT_FAILURE_THRESHOLD == 2
+
+
+def test_loop_state_agent_failure_counts_default():
+    """LoopState 默认 agent_failure_counts={}。"""
+    from hermes.loop import LoopState, LoopStage, LoopStatus
+    from pathlib import Path
+
+    state = LoopState(
+        name="t",
+        pattern="custom",
+        stage=LoopStage.L1_REPORT,
+        status=LoopStatus.IDLE,
+        config_path=Path("/tmp/LOOP.md"),
+        state_path=Path("/tmp/STATE.md"),
+        budget_path=Path("/tmp/budget.md"),
+        created_at="",
+    )
+    assert state.agent_failure_counts == {}
+
+
+def test_update_failure_counts_increments_on_failed():
+    """role=failed 时计数 +1。"""
+    from hermes.loop import LoopState, LoopStage, LoopStatus, _update_failure_counts
+    from pathlib import Path
+
+    state = LoopState(
+        name="t", pattern="custom", stage=LoopStage.L1_REPORT, status=LoopStatus.IDLE,
+        config_path=Path("/tmp/LOOP.md"), state_path=Path("/tmp/STATE.md"),
+        budget_path=Path("/tmp/budget.md"), created_at="",
+    )
+    _update_failure_counts(state, {"builder": "failed", "checker": "failed"})
+    assert state.agent_failure_counts == {"builder": 1, "checker": 1}
+
+    # 再失败一次
+    _update_failure_counts(state, {"builder": "failed"})
+    assert state.agent_failure_counts == {"builder": 2, "checker": 1}
+
+
+def test_update_failure_counts_resets_on_success():
+    """role=completed 时计数清零（连续窗口重置）。"""
+    from hermes.loop import LoopState, LoopStage, LoopStatus, _update_failure_counts
+    from pathlib import Path
+
+    state = LoopState(
+        name="t", pattern="custom", stage=LoopStage.L1_REPORT, status=LoopStatus.IDLE,
+        config_path=Path("/tmp/LOOP.md"), state_path=Path("/tmp/STATE.md"),
+        budget_path=Path("/tmp/budget.md"), created_at="",
+    )
+    state.agent_failure_counts = {"builder": 1}
+    _update_failure_counts(state, {"builder": "completed"})
+    assert state.agent_failure_counts == {"builder": 0}
+
+
+def test_update_failure_counts_skips_missing_role():
+    """未在 agent_status 中出现的 role 不被重置（保守策略）。"""
+    from hermes.loop import LoopState, LoopStage, LoopStatus, _update_failure_counts
+    from pathlib import Path
+
+    state = LoopState(
+        name="t", pattern="custom", stage=LoopStage.L1_REPORT, status=LoopStatus.IDLE,
+        config_path=Path("/tmp/LOOP.md"), state_path=Path("/tmp/STATE.md"),
+        budget_path=Path("/tmp/budget.md"), created_at="",
+    )
+    state.agent_failure_counts = {"builder": 1, "checker": 2}
+    # 只更新 checker，builder 不在 agent_status 中
+    _update_failure_counts(state, {"checker": "completed"})
+    # checker 清零，builder 保持
+    assert state.agent_failure_counts == {"builder": 1, "checker": 0}
+
+
+def test_update_failure_counts_empty_status_no_op():
+    """agent_status 为空时不做任何修改。"""
+    from hermes.loop import LoopState, LoopStage, LoopStatus, _update_failure_counts
+    from pathlib import Path
+
+    state = LoopState(
+        name="t", pattern="custom", stage=LoopStage.L1_REPORT, status=LoopStatus.IDLE,
+        config_path=Path("/tmp/LOOP.md"), state_path=Path("/tmp/STATE.md"),
+        budget_path=Path("/tmp/budget.md"), created_at="",
+    )
+    state.agent_failure_counts = {"builder": 5}
+    _update_failure_counts(state, {})
+    assert state.agent_failure_counts == {"builder": 5}
+
+
+def test_get_tripped_roles_returns_threshold_exceeded():
+    """get_tripped_roles 返回连续失败 >= 阈值的 role。"""
+    from hermes.loop import LoopState, LoopStage, LoopStatus, get_tripped_roles
+    from pathlib import Path
+
+    state = LoopState(
+        name="t", pattern="custom", stage=LoopStage.L1_REPORT, status=LoopStatus.IDLE,
+        config_path=Path("/tmp/LOOP.md"), state_path=Path("/tmp/STATE.md"),
+        budget_path=Path("/tmp/budget.md"), created_at="",
+    )
+    state.agent_failure_counts = {"builder": 2, "checker": 1, "synthesizer": 3}
+    tripped = get_tripped_roles(state)
+    assert set(tripped) == {"builder", "synthesizer"}
+
+
+def test_get_tripped_roles_empty_when_all_below():
+    """所有 role 都未达阈值时返回空列表。"""
+    from hermes.loop import LoopState, LoopStage, LoopStatus, get_tripped_roles
+    from pathlib import Path
+
+    state = LoopState(
+        name="t", pattern="custom", stage=LoopStage.L1_REPORT, status=LoopStatus.IDLE,
+        config_path=Path("/tmp/LOOP.md"), state_path=Path("/tmp/STATE.md"),
+        budget_path=Path("/tmp/budget.md"), created_at="",
+    )
+    state.agent_failure_counts = {"builder": 1, "checker": 0}
+    assert get_tripped_roles(state) == []
+
+
+def test_load_failure_counts_validates_types():
+    """_load_failure_counts 严格校验键值类型，丢弃非法项。"""
+    from hermes.loop import _load_failure_counts
+
+    # 正常输入
+    assert _load_failure_counts({"builder": 1, "checker": 2}) == {"builder": 1, "checker": 2}
+
+    # 非 dict 返回空
+    assert _load_failure_counts(None) == {}
+    assert _load_failure_counts([1, 2, 3]) == {}
+    assert _load_failure_counts("not a dict") == {}
+
+    # 非 int 值被丢弃
+    assert _load_failure_counts({"builder": "1", "checker": 2.5}) == {}
+
+    # bool 被明确排除（bool 是 int 子类）
+    assert _load_failure_counts({"ok": True, "bad": False}) == {}
+
+
+def test_loop_round_agent_status_roundtrip():
+    """LoopRound.to_dict / from_dict 保留 agent_status。"""
+    from hermes.loop import LoopRound
+
+    round_data = LoopRound(
+        round_num=1,
+        timestamp="2024-01-01T00:00:00Z",
+        action="test",
+        result_summary="ok",
+        verifier_result="",
+        passed=True,
+        agent_status={"builder": "completed", "checker": "failed"},
+    )
+    d = round_data.to_dict()
+    assert d["agent_status"] == {"builder": "completed", "checker": "failed"}
+
+    restored = LoopRound.from_dict(d)
+    assert restored.agent_status == {"builder": "completed", "checker": "failed"}
+
+
+def test_loop_round_from_dict_defaults_agent_status_when_missing():
+    """旧 meta.json 缺 agent_status 时 from_dict 默认为空 dict。"""
+    from hermes.loop import LoopRound
+
+    data = {
+        "round_num": 1,
+        "timestamp": "2024-01-01T00:00:00Z",
+        "action": "test",
+        "result_summary": "ok",
+        "verifier_result": "",
+        "passed": True,
+        # 故意不带 agent_status
+    }
+    restored = LoopRound.from_dict(data)
+    assert restored.agent_status == {}
+
+
+def test_load_loop_meta_persists_agent_failure_counts(tmp_path, monkeypatch):
+    """meta.json 读写 agent_failure_counts 字段（端到端持久化）。"""
+    from hermes import loop as loop_mod
+    from hermes.loop import LoopStage, LoopStatus, _load_loop_meta, _save_loop_meta, LoopState
+
+    monkeypatch.setattr(loop_mod, "loops_dir", lambda: tmp_path)
+    loop_dir = tmp_path / "test-loop"
+    loop_dir.mkdir(parents=True)
+
+    state = LoopState(
+        name="test-loop",
+        pattern="custom",
+        stage=LoopStage.L1_REPORT,
+        status=LoopStatus.IDLE,
+        config_path=loop_dir / "LOOP.md",
+        state_path=loop_dir / "STATE.md",
+        budget_path=loop_dir / "loop-budget.md",
+        created_at="2024-01-01T00:00:00Z",
+        agent_failure_counts={"builder": 2, "checker": 1},
+    )
+
+    _save_loop_meta(state)
+    meta_path = loop_dir / "meta.json"
+    assert meta_path.exists()
+
+    import json
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert meta["agent_failure_counts"] == {"builder": 2, "checker": 1}
+
+    # 读回来
+    restored = _load_loop_meta(meta, "test-loop")
+    assert restored is not None
+    assert restored.agent_failure_counts == {"builder": 2, "checker": 1}
+
+
+def test_load_loop_meta_defaults_agent_failure_counts_when_missing(tmp_path, monkeypatch):
+    """旧 meta.json 缺 agent_failure_counts 时返回空 dict（向后兼容）。"""
+    from hermes import loop as loop_mod
+    from hermes.loop import _load_loop_meta
+
+    monkeypatch.setattr(loop_mod, "loops_dir", lambda: tmp_path)
+    loop_dir = tmp_path / "test-loop"
+    loop_dir.mkdir(parents=True)
+
+    # 写一个不含 agent_failure_counts 字段的旧版 meta.json
+    import json
+    legacy_meta = {
+        "schema_version": 0,
+        "pattern": "custom",
+        "stage": "l1_report",
+        "status": "idle",
+        "created_at": "2024-01-01T00:00:00Z",
+    }
+    (loop_dir / "meta.json").write_text(
+        json.dumps(legacy_meta), encoding="utf-8"
+    )
+
+    restored = _load_loop_meta(legacy_meta, "test-loop")
+    assert restored is not None
+    assert restored.agent_failure_counts == {}
+

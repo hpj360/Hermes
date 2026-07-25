@@ -23,7 +23,8 @@
       "tokens_used": 0,
       "agent_reports": {},
       "baseline_failures": [],
-      "escalation_info": {}
+      "escalation_info": {},
+      "agent_status": {}
     }
   ],
   "budget_used_tokens": 0,
@@ -33,5 +34,6 @@
   "noise_items": [],
   "baseline_failures": [],
   "audit_warnings": [],
-  "deliverables": []
+  "deliverables": [],
+  "agent_failure_counts": {}
 }

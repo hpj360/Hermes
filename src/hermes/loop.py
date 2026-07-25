@@ -327,6 +327,9 @@ class LoopRound:
     # P0-1：停止规则触发时的诊断信息（matched_signals / blocker / new_failures 等）。
     # 由 record_round 在 check_stop_rules 返回后回填，随 meta 持久化，供 CLI 展示与跨会话追溯。
     escalation_info: dict[str, Any] = field(default_factory=dict)
+    # P1 熔断：role -> "completed"|"failed"。record_round 据此更新
+    # LoopState.agent_failure_counts，连续失败超阈值时下一轮跳过该 role。
+    agent_status: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -343,6 +346,7 @@ class LoopRound:
             "agent_reports": self.agent_reports,
             "baseline_failures": self.baseline_failures,
             "escalation_info": self.escalation_info,
+            "agent_status": self.agent_status,
         }
 
     @classmethod
@@ -354,6 +358,10 @@ class LoopRound:
         agent_reports = data.get("agent_reports") or {}
         baseline_failures = data.get("baseline_failures") or []
         escalation_info = data.get("escalation_info") or {}
+        # P1: agent_status 字典字段，缺省为空 dict
+        agent_status = data.get("agent_status") or {}
+        if not isinstance(agent_status, dict):
+            agent_status = {}
         return cls(
             round_num=data.get("round_num", 0),
             timestamp=data.get("timestamp", ""),
@@ -368,6 +376,7 @@ class LoopRound:
             agent_reports=agent_reports if isinstance(agent_reports, dict) else {},
             baseline_failures=baseline_failures if isinstance(baseline_failures, list) else [],
             escalation_info=escalation_info if isinstance(escalation_info, dict) else {},
+            agent_status=agent_status,
         )
 
 
@@ -396,6 +405,15 @@ class LoopState:
     audit_warnings: list[str] = field(default_factory=list)
     # 经验F：产物清单（期望产出的文件路径列表，每轮校验存在性）
     deliverables: list[str] = field(default_factory=list)
+    # P1 熔断：按 role 记录连续失败次数。role 成功则清零；连续达到
+    # AGENT_FAILURE_THRESHOLD 时下一轮跳过该 role（避免反复烧 token）。
+    agent_failure_counts: dict[str, int] = field(default_factory=dict)
+
+
+# P1 熔断阈值：同一 role 连续失败 N 次后下一轮跳过其任务分配。
+# 设为 2：builder 第一轮失败可能是噪声（网络抖动等），连续两次基本可判定
+# 为该 role 真正无法完成当前任务，再继续就是烧 token。
+AGENT_FAILURE_THRESHOLD = 2
 
 
 # meta.json schema version. Bump when the persisted shape changes; add a
@@ -409,6 +427,26 @@ def _project_root() -> Path:
 
 def loops_dir() -> Path:
     return _project_root() / ".loops"
+
+
+def _load_failure_counts(raw: Any) -> dict[str, int]:
+    """从 meta.json 反序列化 agent_failure_counts。
+
+    严格校验键值类型，丢弃任何非 str 键或非 int 值，避免脏数据进入状态机。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, int] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str):
+            continue
+        # 兼容 JSON 把 int 写成 str 的情况（理论上不会，但防御性处理）
+        if isinstance(value, bool):
+            # bool 是 int 的子类，明确排除
+            continue
+        if isinstance(value, int):
+            result[key] = value
+    return result
 
 
 def _loop_config_path(name: str) -> Path:
@@ -494,6 +532,8 @@ def _load_loop_meta(meta: dict[str, Any], name: str) -> LoopState | None:
         baseline_failures=baseline_failures if isinstance(baseline_failures, list) else [],
         audit_warnings=audit_warnings if isinstance(audit_warnings, list) else [],
         deliverables=deliverables if isinstance(deliverables, list) else [],
+        # P1: 字典字段读取，缺省为空 dict（向后兼容旧 meta.json）
+        agent_failure_counts=_load_failure_counts(meta.get("agent_failure_counts")),
     )
 
 
@@ -520,6 +560,8 @@ def _save_loop_meta(state: LoopState) -> None:
         "baseline_failures": state.baseline_failures,
         "audit_warnings": state.audit_warnings,
         "deliverables": state.deliverables,
+        # P1: 熔断字段序列化（dict[str, int] 在 JSON 中原生可序列化）
+        "agent_failure_counts": state.agent_failure_counts,
     }
     (loop_dir / "meta.json").write_text(
         json.dumps(meta, indent=2, ensure_ascii=False),
@@ -1611,6 +1653,41 @@ def knowledge_hygiene_scan() -> dict[str, Any]:
 # ── State management helpers ──────────────────────────────────────────
 
 
+def _update_failure_counts(loop: LoopState, agent_status: dict[str, str]) -> None:
+    """根据本轮 agent_status 更新 loop.agent_failure_counts。
+
+    P1 熔断机制核心：
+    - role 状态为 "failed"：计数 +1
+    - role 状态为 "completed" 或任何非 failed 值：计数清零（成功窗口重置）
+    - 未在 agent_status 中出现的 role 不动（保守：保持原计数，不重置）
+
+    为什么未出现不重置：agent 可能因熔断被跳过该轮，不应因此清零其失败计数。
+    """
+    if not agent_status:
+        return  # 该轮未记录任何 role 状态，跳过
+    for role, status in agent_status.items():
+        if status == "failed":
+            loop.agent_failure_counts[role] = (
+                loop.agent_failure_counts.get(role, 0) + 1
+            )
+        else:
+            # 任何非 failed 状态（completed / unknown 等）均视为成功，清零
+            loop.agent_failure_counts[role] = 0
+
+
+def get_tripped_roles(loop: LoopState) -> list[str]:
+    """返回已触发热断的 role 列表（连续失败 >= AGENT_FAILURE_THRESHOLD）。
+
+    fan_out 前调用此函数：若返回非空，下一轮应跳过对应 role 的任务分配，
+    避免反复烧 token。loop.agent_failure_counts 为运行时累积状态。
+    """
+    return [
+        role
+        for role, count in loop.agent_failure_counts.items()
+        if count >= AGENT_FAILURE_THRESHOLD
+    ]
+
+
 def record_round(
     name: str,
     round_data: LoopRound,
@@ -1632,6 +1709,12 @@ def record_round(
     loop.current_round = round_data.round_num
     loop.last_run = datetime.now(timezone.utc).isoformat()
     loop.budget_used_tokens += tokens_used
+
+    # P1 熔断：根据本轮 agent_status 更新连续失败计数。
+    # - role 失败：agent_failure_counts[role] += 1
+    # - role 成功：清零（连续失败窗口重置）
+    # 调用方可在 fan_out 前查 get_tripped_roles() 决定是否跳过该 role。
+    _update_failure_counts(loop, round_data.agent_status)
 
     if loop.budget_limit_tokens > 0 and loop.budget_used_tokens >= loop.budget_limit_tokens:
         loop.status = LoopStatus.BUDGET_EXCEEDED

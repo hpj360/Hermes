@@ -17,5 +17,6 @@
   "audit_warnings": [],
   "deliverables": [
     "/workspace/.loops/test-mp-claim-ok/report.md"
-  ]
+  ],
+  "agent_failure_counts": {}
 }
