@@ -45,7 +45,8 @@ def _default_executor(req: urllib.request.Request) -> bytes:
     the same translation applies to mocked executors in tests.
     """
     with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
-        return resp.read()
+        data: bytes = resp.read()
+        return data
 
 
 def _translate_http_error(e: urllib.error.HTTPError) -> Exception:

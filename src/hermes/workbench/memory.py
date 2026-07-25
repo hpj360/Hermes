@@ -362,9 +362,9 @@ class MemoryService:
                 score += 1.0 / (k + sub_ranks[ep_id])
             if ep_id in tfidf_ranks:
                 score += 1.0 / (k + tfidf_ranks[ep_id])
-            ep = id_to_ep.get(ep_id)
-            if ep is not None:
-                fused.append((ep, score))
+            found_ep: Episode | None = id_to_ep.get(ep_id)
+            if found_ep is not None:
+                fused.append((found_ep, score))
         fused.sort(key=lambda x: x[1], reverse=True)
         return fused[:limit]
 

@@ -221,14 +221,13 @@ class TaskScheduler:
         consecutive_failures = 0
 
         # Bind task_id to log context for the entire loop run.
+        from contextlib import nullcontext
+        loop_ctx: Any = nullcontext()
         try:
             from hermes.workbench.structured_logging import log_context
             loop_ctx = log_context(task_id=task_id, mode="loop")
         except Exception:  # noqa: BLE001
-            # Fall back to a no-op context manager if structured logging
-            # is unavailable.
-            from contextlib import nullcontext as _null
-            loop_ctx = _null()
+            pass  # loop_ctx 已初始化为 nullcontext 兜底
 
         with loop_ctx:
             for run_num in range(boundary.max_rounds):
@@ -562,7 +561,7 @@ def cmd_workbench_task_cancel(args: argparse.Namespace) -> int:
 
 def cmd_workbench_serve(args: argparse.Namespace) -> int:
     try:
-        from hermes.workbench.server import run_server  # type: ignore[import-untyped]
+        from hermes.workbench.server import run_server
     except ImportError as exc:
         print(f"server not available: {exc}", file=sys.stderr)
         return 1
@@ -597,7 +596,7 @@ def cmd_workbench_github_sync(args: argparse.Namespace) -> int:
 
 def cmd_workbench_ima(args: argparse.Namespace) -> int:
     """IMA 知识库操作：列出/搜索/推送/同步/笔记管理。"""
-    from hermes.workbench.ima_sync import ImaClient, ImaSyncService
+    from hermes.workbench.ima_sync import ImaClient, ImaSyncResult, ImaSyncService
 
     action = args.ima_action
 
@@ -635,9 +634,9 @@ def cmd_workbench_ima(args: argparse.Namespace) -> int:
 
     if action == "sync":
         svc = ImaSyncService()
-        result = svc.sync(args.query, args.kb_id, push_kind=getattr(args, "push_kind", None))
-        print(f"sync: pulled={result.pulled} pushed={result.pushed} errors={len(result.errors)}")
-        for err in result.errors:
+        sync_result: ImaSyncResult = svc.sync(args.query, args.kb_id, push_kind=getattr(args, "push_kind", None))
+        print(f"sync: pulled={sync_result.pulled} pushed={sync_result.pushed} errors={len(sync_result.errors)}")
+        for err in sync_result.errors:
             print(f"  error: {err}", file=sys.stderr)
         return 0
 

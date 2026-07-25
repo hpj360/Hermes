@@ -257,6 +257,7 @@ class ImaClient:
         on HTTP failure or a non-zero business ``code``.
         """
         self._check_credentials()
+        assert self._client_id is not None and self._api_key is not None
         url = f"{self._base_url}{self.BASE_PATH}/{module_path}/{endpoint}"
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(url, data=data, method="POST")
@@ -266,7 +267,7 @@ class ImaClient:
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 raw = resp.read().decode("utf-8")
-                result = json.loads(raw)
+                result: dict[str, Any] = json.loads(raw)
         except urllib.error.HTTPError as e:
             body_text = ""
             try:
@@ -279,7 +280,8 @@ class ImaClient:
                 result.get("msg", "unknown error"),
                 result.get("code", -1),
             )
-        return result.get("data", {})
+        data_field: dict[str, Any] = result.get("data", {})
+        return data_field
 
     # ------------------------------------------------------------------
     # knowledge-base module (wiki/v1)

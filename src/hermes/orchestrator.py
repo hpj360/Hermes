@@ -167,7 +167,8 @@ class OpenClawClient:
 
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                resp_data: dict[str, Any] = json.loads(resp.read().decode("utf-8"))
+                return resp_data
         except (
             urllib.error.URLError,
             urllib.error.HTTPError,
@@ -222,14 +223,16 @@ class OpenClawClient:
 
         result = self._request("POST", "/api/subagent/spawn", data=payload, timeout=60.0)
         if result and "session_id" in result:
-            return result["session_id"]
+            session_id: str = result["session_id"]
+            return session_id
         return None
 
     def get_session_messages(self, session_id: str) -> list[dict[str, Any]]:
         """Retrieve messages from a session."""
         result = self._request("GET", f"/api/sessions/{session_id}/messages")
         if result and "messages" in result:
-            return result["messages"]
+            messages: list[dict[str, Any]] = result["messages"]
+            return messages
         return []
 
     def wait_for_completion(

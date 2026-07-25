@@ -57,7 +57,7 @@ class GitHubMCPClient:
         """Check if GitHub token is configured."""
         return bool(self.token)
 
-    def _record(self, method: str, args: dict, success: bool, error: str = "") -> None:
+    def _record(self, method: str, args: dict[str, Any], success: bool, error: str = "") -> None:
         self._audit_log.append(MCPCallRecord(
             timestamp=datetime.now(timezone.utc).isoformat(),
             server="github",

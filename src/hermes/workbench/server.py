@@ -578,7 +578,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Push content to IMA as a note."""
         from hermes.workbench.ima_sync import ImaSyncService
 
-        body = self._read_json()
+        body = self._read_json_body()
         kb_id = body.get("kb_id", "")
         title = body.get("title", "")
         content = body.get("content", "")
@@ -592,7 +592,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Bidirectional sync between Hermes and IMA."""
         from hermes.workbench.ima_sync import ImaSyncService
 
-        body = self._read_json()
+        body = self._read_json_body()
         kb_id = body.get("kb_id", "")
         query = body.get("query", "")
         push_kind = body.get("push_kind")
@@ -617,7 +617,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """
         from hermes.workbench.ima_sync import ImaSyncService
 
-        body = self._read_json()
+        body = self._read_json_body()
         kb_id = body.get("kb_id", "")
         urls = body.get("urls", [])
         folder_id = body.get("folder_id", "")
@@ -645,7 +645,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """
         from hermes.workbench.ima_sync import ImaSyncService
 
-        body = self._read_json()
+        body = self._read_json_body()
         kb_id = body.get("kb_id", "")
         file_path = body.get("file_path", "")
         content_type = body.get("content_type")
@@ -730,7 +730,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Create a new note via import_doc."""
         from hermes.workbench.ima_sync import ImaClient
 
-        body = self._read_json()
+        body = self._read_json_body()
         content = body.get("content", "")
         title = body.get("title")
         if not content:
@@ -747,7 +747,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """
         from hermes.workbench.ima_sync import ImaClient
 
-        body = self._read_json()
+        body = self._read_json_body()
         content = body.get("content", "")
         if not content:
             raise ValidationError("content is required")
