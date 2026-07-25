@@ -27,7 +27,7 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, List
 
 from hermes.workbench.persistence import atomic_write_json, safe_read_json
 
@@ -158,7 +158,8 @@ def _now_iso() -> str:
 def _task_to_dict(task: Any) -> dict[str, Any]:
     """Serialize a Task object (duck-typed: has to_dict())."""
     if hasattr(task, "to_dict"):
-        return task.to_dict()
+        result: dict[str, Any] = task.to_dict()
+        return result
     if isinstance(task, dict):
         return task
     raise TypeError(f"task must have to_dict() or be a dict, got {type(task)}")
@@ -288,12 +289,12 @@ class JobStore:
             data = self._jobs.get(job_id)
         return ScheduledJob.from_dict(data) if data else None
 
-    def list(self) -> list[ScheduledJob]:
+    def list(self) -> "List[ScheduledJob]":
         with self._lock:
             snapshot = list(self._jobs.values())
         return [ScheduledJob.from_dict(d) for d in snapshot]
 
-    def list_by_status(self, status: JobStatus) -> list[ScheduledJob]:
+    def list_by_status(self, status: JobStatus) -> "List[ScheduledJob]":
         target = status.value
         with self._lock:
             snapshot = [d for d in self._jobs.values() if d.get("status") == target]
@@ -371,7 +372,7 @@ class StatusBus:
     """
 
     def __init__(self) -> None:
-        self._subscribers: list[_queue.Queue] = []
+        self._subscribers: list[_queue.Queue[dict[str, Any]]] = []
         self._lock = threading.Lock()
 
     def emit(self, job: ScheduledJob) -> None:
@@ -396,13 +397,13 @@ class StatusBus:
                 except _queue.Full:
                     pass  # give up
 
-    def subscribe(self) -> _queue.Queue:
-        q: _queue.Queue = _queue.Queue(maxsize=100)
+    def subscribe(self) -> _queue.Queue[dict[str, Any]]:
+        q: _queue.Queue[dict[str, Any]] = _queue.Queue(maxsize=100)
         with self._lock:
             self._subscribers.append(q)
         return q
 
-    def unsubscribe(self, q: _queue.Queue) -> None:
+    def unsubscribe(self, q: _queue.Queue[dict[str, Any]]) -> None:
         with self._lock:
             try:
                 self._subscribers.remove(q)
