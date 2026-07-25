@@ -7,25 +7,29 @@
 
 ---
 
-## 提升 1：MCP 工具按 sub-agent 角色分舱（P0，安全缺口）
+## 提升 1：MCP 工具按 sub-agent 角色分舱（P0，安全缺口）✅ 已实现
 
-### 现状
+### 现状（已修复）
 
 [mcp.py:222](file:///workspace/src/hermes/mcp.py#L222) 的 `MCP_REGISTRY` 是全局的，任何 sub-agent 都能调 `create_pr` / `post_pr_comment`。checker 虽然在 [loop.py:1350](file:///workspace/src/hermes/loop.py#L1350) 通过 `tools: Read, Grep, Glob, Bash` 做了文件级隔离，但 **MCP 工具没有白名单**。
 
-### 风险
+### 风险（已消除）
 
 builder 可以直接调 `GitHubMCPClient.create_pr` 绕过 reviewer 人工检查合并代码。这在 L3 无人值守场景下是真实的安全漏洞。
 
-### 落地方式
+### 实现内容（commit 6704759）
 
-1. `AgentTask`（[orchestrator.py:78](file:///workspace/src/hermes/orchestrator.py#L78)）增加 `allowed_mcp_tools: list[str]` 字段
-2. `Orchestrator.fan_out`（[orchestrator.py:284](file:///workspace/src/hermes/orchestrator.py#L284)）spawn 时传入白名单
-3. `OpenClawClient.spawn_agent`（[orchestrator.py:187](file:///workspace/src/hermes/orchestrator.py#L187)）把白名单写入 payload
-4. 角色默认白名单：
-   - builder: `["github.get_pr", "github.list_prs"]`（只读）
-   - checker: `[]`（无 MCP）
-   - synthesizer: `[]`（无 MCP）
+1. `AgentTask` 增加 `allowed_mcp_tools: list[str] | None` + `mcp_violations: list[str]` 字段
+2. `ROLE_MCP_WHITELIST` 角色默认白名单（[orchestrator.py:83](file:///workspace/src/hermes/orchestrator.py#L83)）：
+   - builder: `["github.get_pr", "github.list_prs", "github.get_issue"]`（只读）
+   - checker/synthesizer: `[]`（禁止所有 MCP）
+3. `fan_out` 自动按 role 填充白名单（`_prepare_and_spawn`）
+4. `spawn_agent` 增加 `allowed_tools` 参数，传入 Gateway payload
+5. `fan_in` 后 `_audit_mcp_violations` 审计：
+   - 扫描 `tool_calls` 字段（OpenAI 格式）
+   - 扫描 content 中的 `github.<method>` 模式（兜底）
+6. `RoundResult` 增加 `role_violation_count`（P2 可观测性前置）
+7. 19 个测试用例覆盖白名单填充 + 违规检测
 
 ---
 
