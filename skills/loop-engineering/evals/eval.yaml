@@ -1,0 +1,27 @@
+# skill-up eval configuration for the loop-engineering skill.
+#
+# This is a reference example showing how to wire a Hermes skill into
+# skill-up. The cases here verify the SKILL.md content declares the
+# expected sections (loop patterns, stop rules, denylist). They use
+# rule_based judging — no LLM needed, fast to run in CI.
+#
+# Run with:
+#   skill-up run skills/loop-engineering/
+# or via Hermes:
+#   hermes eval run skills/loop-engineering/
+schema_version: v1alpha1
+
+environment:
+  type: none  # pure-text skill, no container isolation needed
+
+engine:
+  name: claude_code
+  model:
+    provider: anthropic
+    name: claude-sonnet-4-6
+
+cases:
+  files:
+    - evals/cases/skill-structure.yaml
+    - evals/cases/stop-rules-coverage.yaml
+    - evals/cases/denylist-declared.yaml

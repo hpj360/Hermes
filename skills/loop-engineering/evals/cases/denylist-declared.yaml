@@ -1,0 +1,16 @@
+# Verifies the SKILL.md mentions L3 denylist enforcement — the
+# Stage 6 security feature. This is a regression guard: if someone
+# removes the denylist docs, this case fails.
+input:
+  prompt: |
+    Read the SKILL.md file. Confirm it mentions L3 denylist enforcement
+    and explains that builder writes are restricted to protected paths
+    like auth/, payment/, security/.
+
+expect:
+  must_contain:
+    - "denylist"
+    - "auth"
+    - "payment"
+  must_not_contain:
+    - "no restrictions"

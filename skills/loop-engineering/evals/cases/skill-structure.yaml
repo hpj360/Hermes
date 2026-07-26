@@ -1,0 +1,17 @@
+# Verifies the loop-engineering SKILL.md declares the core sections
+# expected by Hermes (loop patterns, stop rules, builder/checker).
+input:
+  prompt: |
+    Read the SKILL.md file in this skill directory. List the loop patterns
+    it documents and confirm it covers builder-checker, knowledge-hygiene,
+    and ci-sweeper patterns.
+
+expect:
+  must_contain:
+    - "builder-checker"
+    - "knowledge-hygiene"
+    - "ci-sweeper"
+    - "stop rule"
+  must_not_contain:
+    - "TODO"
+    - "placeholder"

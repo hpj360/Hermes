@@ -1,0 +1,18 @@
+# Verifies the SKILL.md documents the seven stop rules from
+# knowledge/multi-agent-harness.md (all_green, rounds_exhausted,
+# budget_exceeded, beyond_capability, regression, same_failure_twice,
+# no_progress).
+input:
+  prompt: |
+    Read the SKILL.md file. Confirm it documents the seven stop rules
+    and lists at least: all_green, regression, same_failure_twice,
+    no_progress.
+
+expect:
+  must_contain:
+    - "all_green"
+    - "regression"
+    - "same_failure_twice"
+    - "no_progress"
+  must_not_contain:
+    - "TBD"

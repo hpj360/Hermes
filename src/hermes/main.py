@@ -7,6 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
+from hermes.cli_eval import add_eval_subparser
 from hermes.cli_loop import add_loop_subparser
 from hermes.config import get_settings
 from hermes.logging import setup_logging
@@ -203,6 +204,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_workbench_subparser(sub)
 
     add_loop_subparser(sub)
+
+    add_eval_subparser(sub)
 
     return parser
 
