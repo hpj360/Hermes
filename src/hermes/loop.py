@@ -74,7 +74,7 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
     "ci-sweeper": {
         "name": "CI Sweeper",
         "description": "监控CI失败，尝试分类和修复flaky test",
-        "execution_status": "scaffolding_only",  # 生成脚手架，运行走 guidance 模式
+        "execution_status": "implemented",  # P0: diagnosing-bugs skill 填充 builder
         "default_stage": LoopStage.L1_REPORT,
         "l1_capability": "报告CI失败列表",
         "l2_capability": "尝试修复明显问题，跑测试验证",
@@ -83,14 +83,14 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
         "max_rounds": 3,
         "sub_agents": [
             {"role": "ci_monitor", "agent_file": None, "parallel": False},
-            {"role": "builder", "agent_file": "builder.md", "parallel": False},
+            {"role": "builder", "agent_file": "skills/diagnosing-bugs/SKILL.md", "parallel": False},
             {"role": "checker", "agent_file": "checker.md", "parallel": False},
         ],
     },
     "pr-babysitter": {
         "name": "PR Babysitter",
         "description": "盯PR状态，检查CI，提醒reviewer，处理反馈",
-        "execution_status": "scaffolding_only",  # 生成脚手架，运行走 guidance 模式
+        "execution_status": "implemented",  # P0: code-review skill 填充 review 能力
         "default_stage": LoopStage.L1_REPORT,
         "l1_capability": "报告PR状态和CI结果",
         "l2_capability": "回应review评论，修复小问题",
@@ -99,6 +99,8 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
         "max_rounds": 5,
         "sub_agents": [
             {"role": "pr_monitor", "agent_file": None, "parallel": False},
+            {"role": "reviewer_standards", "agent_file": "skills/code-review/SKILL.md", "parallel": True},
+            {"role": "reviewer_spec", "agent_file": "skills/code-review/SKILL.md", "parallel": True},
         ],
     },
     "issue-triage": {
@@ -107,7 +109,7 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
         # 默认 L1：只分类/打标，不修改代码；升级到 L2 可关闭明显重复/无效 issue。
         "name": "Issue Triage",
         "description": "扫描未分配/无标签的 issue，按优先级分类，建议标签/负责人，关闭明显无效项",
-        "execution_status": "scaffolding_only",
+        "execution_status": "implemented",  # P0: triage skill 填充分诊能力
         "default_stage": LoopStage.L1_REPORT,
         "l1_capability": "报告未分类 issue 列表 + 推荐标签/优先级 + 疑似重复项",
         "l2_capability": "为 issue 打标签/分配人，关闭明显重复或已超时的 stale issue",
@@ -115,9 +117,9 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
         "denylist": ["label:security", "label:auth-bypass", "*P0*"],
         "max_rounds": 3,
         "sub_agents": [
-            {"role": "issue_scanner", "agent_file": None, "parallel": False},
-            {"role": "duplicate_detector", "agent_file": None, "parallel": True},
-            {"role": "label_suggester", "agent_file": None, "parallel": True},
+            {"role": "issue_scanner", "agent_file": "skills/triage/SKILL.md", "parallel": False},
+            {"role": "duplicate_detector", "agent_file": "skills/triage/SKILL.md", "parallel": True},
+            {"role": "label_suggester", "agent_file": "skills/triage/SKILL.md", "parallel": True},
         ],
     },
     "changelog-draft": {

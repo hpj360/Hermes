@@ -69,5 +69,5 @@ def test_discover_skills_handles_missing_dir(monkeypatch, tmp_path) -> None:
 
 
 def test_discover_skills_count_matches_manifest() -> None:
-    # The disk has 33 real skills (per manifest v0.5.0 after merge).
-    assert len(discover_skills()) == 33
+    # 33 original + 12 mattpocock-derived skills = 45 (v0.6.0).
+    assert len(discover_skills()) == 45
