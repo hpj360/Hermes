@@ -243,3 +243,9 @@ echo $TAVILY_API_KEY
 # 测试搜索
 node {baseDir}/scripts/search.mjs "test" -n 1
 ```
+
+## Related skills
+
+- **brave-search**: 通用网页搜索（免费额度高，无需 API key 付费）。当 tavily-search 额度耗尽或需要更广泛的结果时降级到 brave-search。
+- **agent-browser**: 需要交互式浏览（登录、点击、滚动）时使用，tavily-search 只做无浏览器搜索。
+- **summarize**: 需要对搜索到的 URL 做多 provider 摘要时使用，tavily-search 的 extract.mjs 只提取正文不做摘要。

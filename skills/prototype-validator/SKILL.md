@@ -108,3 +108,9 @@ report 存 PR 评论
 | `ui-design-system` | 设计 token 正确性由本 skill 验证 |
 | `frontend-design` | 美学方向由 review，本 skill 验证合规 |
 | `storybook-chromatic` | Storybook 组件视觉回归用 Chromatic |
+
+## Related skills（边界声明）
+
+- **ui-review-checklist**: 静态代码审查（13 类反模式 + a11y 清单）。本 skill 是运行时验证，ui-review-checklist 是静态评审。两者互补：PR 前用 ui-review-checklist，部署前用 prototype-validator。
+- **ui-design-system**: Token 体系定义。本 skill 验证 token 在运行时的正确性。
+- **frontend-design**: 生成前端代码。本 skill 验证生成结果的质量。

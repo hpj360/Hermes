@@ -117,3 +117,9 @@ Hermes 的分层（L0-L4）就是 deep-module 原则的应用：
 - [ ] 评估问题章节可操作（5 个问题对应 5 个概念）
 - [ ] 反模式章节列出了 ≥4 个常见反模式
 - [ ] 与 Hermes 的关系章节映射到实际代码（非泛泛而谈）
+
+## Related skills
+
+- **improve-codebase-architecture**: 架构改进机会分析 + HTML 报告。本 skill 是**词汇表**（参考型，提供讨论语言），improve-codebase-architecture 是**流程型**（使用本 skill 的词汇检测机会）。组合使用：先学本 skill 词汇，再用 improve-codebase-architecture 分析。
+- **domain-modeling**: 领域建模。本 skill 讨论代码架构，domain-modeling 讨论业务领域概念。
+- **code-review**: 代码审查。本 skill 提供架构词汇，code-review 的 Standards 轴可用这些词汇检测 smell。

@@ -1053,11 +1053,27 @@ def test_resume_loop_budget_exceeded_resets() -> None:
     )
 
 
-def test_resume_loop_completed_resets_history() -> None:
+def test_resume_loop_completed_resets_history(monkeypatch) -> None:
     """resume_loop: a COMPLETED loop must be reset to IDLE with cleared
     rounds/budget/current_round, otherwise stale passed=True rounds would make
-    stop rules re-fire immediately (all_green on first check)."""
+    stop rules re-fire immediately (all_green on first check).
+
+    We mock run_loop_continuous to be a no-op so we isolate the *reset* logic
+    from the *continue* logic. Without this mock, resume_loop would actually
+    execute a knowledge-hygiene L1 scan round, and if that round passed=True
+    (which it does when the project is clean), all_green would fire and set
+    status back to COMPLETED — making the test assertions meaningless.
+    """
     from hermes.runner import resume_loop
+    import hermes.runner
+
+    # Mock run_loop_continuous to no-op: we only want to verify the reset,
+    # not the subsequent execution.
+    monkeypatch.setattr(
+        hermes.runner,
+        "run_loop_continuous",
+        lambda name, gated=False: {"success": True, "rounds_executed": []},
+    )
 
     init_loop("test-resume-completed", pattern="knowledge-hygiene")
     loop = get_loop("test-resume-completed")

@@ -120,3 +120,9 @@ Each step in the plan must be:
 - [ ] Every high/medium opportunity has 3 grilling questions
 - [ ] Refactor plan (if confirmed) ordered by cost-to-fix
 - [ ] Each plan step is independently revertible and testable
+
+## Related skills
+
+- **codebase-design**: 架构词汇表（Module / Interface / Depth / Seam / Adapter / Leverage / Locality）。本 skill 是**流程型**（检测机会 + 生成报告），codebase-design 是**参考型**（提供检测用的词汇）。本 skill 的 "Vocabulary term violated" 字段引用 codebase-design 的词汇。
+- **research**: 源码研究。在 Build codebase map 阶段，可用 research 深入理解模块意图。
+- **diagnosing-bugs**: 调试。当架构问题导致 bug 时，diagnosing-bugs 的 Phase 6 post-mortem 会 hand off 到本 skill。

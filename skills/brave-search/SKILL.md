@@ -55,3 +55,9 @@ Content: (if --content flag used)
 - Looking up facts or current information
 - Fetching content from specific URLs
 - Any task requiring web search without interactive browsing
+
+## Related skills
+
+- **tavily-search**: AI 优化的搜索（返回结构化 JSON，含 score 排序）。当 brave-search 结果噪音大或需要相关度排序时降级到 tavily-search。
+- **agent-browser**: 需要交互式浏览（登录、点击、滚动）时使用，brave-search 只做无浏览器搜索。
+- **summarize**: 需要对搜索到的 URL 做摘要提取时使用，brave-search 的 `--content` 只提取正文不做摘要。

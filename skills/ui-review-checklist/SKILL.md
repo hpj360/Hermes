@@ -101,3 +101,10 @@ python3 scripts/report.py --scan-result scan.json --output report.md
 - 设计语言（-10 分上限）
 
 起始分 100，每个反模式扣分。
+
+## Related skills
+
+- **prototype-validator**: 运行时验证（Playwright + axe-core + Lighthouse），生成分数。本 skill 是静态评审，prototype-validator 是运行时验证。PR 前用本 skill，部署前用 prototype-validator。
+- **ui-design-system**: Design token 体系定义与校验。本 skill 检查 UI 是否"看起来太 AI"，ui-design-system 检查 token 是否符合规范。
+- **frontend-design**: 生成前端代码的美学方向。本 skill 评审生成结果是否符合质量标准。
+- **liquid-glass-builder**: 特定设计语言（Liquid Glass）实施器。本 skill 不针对特定设计语言。
