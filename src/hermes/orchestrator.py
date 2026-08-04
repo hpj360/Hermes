@@ -26,6 +26,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from hermes.config import get_settings
+from hermes.tool_recovery import analyze_failures, format_recovery_section
 
 logger = logging.getLogger("hermes.orchestrator")
 
@@ -746,6 +747,15 @@ class Orchestrator:
         if attribution != "none":
             summary_parts.append(f"Attribution: {attribution}")
         summary = " | ".join(summary_parts)
+
+        # 工具自愈：分析失败模式，附加恢复建议。
+        # 关键原则："不过滤"原则不变——原始失败信息原样保留在 failure_items 中，
+        # 恢复建议只作为附加内容追加到 summary 末尾，帮 builder 下一轮避免重复踩坑。
+        if failure_items:
+            diagnostics = analyze_failures(failure_items)
+            recovery_section = format_recovery_section(diagnostics)
+            if recovery_section:
+                summary = f"{summary}\n{recovery_section}"
 
         return RoundResult(
             round_num=round_num,

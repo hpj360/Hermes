@@ -9,6 +9,8 @@ from pathlib import Path
 
 from hermes.cli_eval import add_eval_subparser
 from hermes.cli_loop import add_loop_subparser
+from hermes.cli_power import add_power_subparser
+from hermes.cli_secrets import add_secrets_subparser
 from hermes.cli_skill_sync import add_skill_sync_subparser
 from hermes.config import get_settings
 from hermes.logging import setup_logging
@@ -209,6 +211,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_eval_subparser(sub)
 
     add_skill_sync_subparser(sub)
+
+    add_power_subparser(sub)
+
+    add_secrets_subparser(sub)
 
     return parser
 
