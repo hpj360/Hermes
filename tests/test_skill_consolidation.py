@@ -4,7 +4,8 @@ Verifies the skill deduplication and merging actions:
 1. pskoett/ removed (was duplicate of self-improving-agent).
 2. product-manager-skills/ merged into product-manager/ (SaaS metrics absorbed).
 3. Functional-adjacent skill groups have "Related skills" boundary declarations.
-4. manifest.json reflects the consolidated state (43 skills).
+4. manifest.json reflects the consolidated state (43 skills, later grown to 44
+   with the addition of grounded-citations).
 """
 
 from __future__ import annotations
@@ -96,14 +97,14 @@ def test_product_manager_has_completion_criteria() -> None:
 # ── manifest.json consistency ─────────────────────────────────────
 
 
-def test_manifest_has_43_skills() -> None:
-    """manifest.json should list exactly 43 skills after consolidation."""
+def test_manifest_has_44_skills() -> None:
+    """manifest.json should list 44 skills (43 post-consolidation + grounded-citations)."""
     import json
 
     manifest_path = PROJECT_ROOT / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     skills = manifest.get("skills", [])
-    assert len(skills) == 43, f"Expected 43 skills, got {len(skills)}"
+    assert len(skills) == 44, f"Expected 44 skills, got {len(skills)}"
 
 
 def test_manifest_no_pskoett() -> None:
