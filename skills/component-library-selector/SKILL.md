@@ -98,3 +98,11 @@ shadcn/ui 在 AI 编码场景下的优势：
 - Tailwind class 易于 LLM 理解
 - Radix Primitives 提供 a11y 默认值
 - 设计 token 单一来源
+
+## Related skills（边界声明）
+
+- **ui-design-system**: token canonical source + 校验。本 skill 选型后，token 由 ui-design-system 规范化。
+- **style-dictionary-sync**: 多端 token 同步。本 skill 选完组件库后，token 经 style-dictionary-sync 投递到目标库。
+- **storybook-chromatic**: Storybook 组件可视化 + 视觉回归。本 skill 不涉及组件实现细节，storybook-chromatic 是验证层。
+- **frontend-design**: 美学方向指导。本 skill 在"选哪个库"层面决策，frontend-design 在"怎么写代码才好看"层面决策。
+- **prototype-validator**: 运行时验证。选完库 + 实现原型后，prototype-validator 跑 a11y/perf/视觉回归。

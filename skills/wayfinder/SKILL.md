@@ -87,3 +87,11 @@ This is especially important for AFK agent loops — a decision that's expensive
 - [ ] Summary table includes action column (proceed/flag/block)
 - [ ] Any "block" decisions are explicitly called out for human review
 - [ ] No "block" decisions remain unresolved before `loop init`
+
+## Related skills（边界声明）
+
+- **to-spec**: 需求 → PRD。本 skill 消费 spec.md + tickets.md，不重新规划需求。
+- **to-tickets**: PRD → tickets。本 skill 在 tickets 基础上识别**跨 ticket 的架构选型**（一个决策影响多个 ticket 时），不重新拆 ticket。
+- **prototype**: throwaway 原型。本 skill 输出 cost-of-wrong = "hard" 时，标注"先走 prototype 再 loop init"；不直接执行 prototype。
+- **codebase-design**: 架构词汇。本 skill 描述决策时复用 Module/Depth/Seam/Leverage/Locality 等词汇，与团队认知一致。
+- **loop-engineering**: /goal 与 /loop。本 skill 完成 decision board 后，loop init 才能开始（避免 cost-of-wrong = "impossible" 的决策被自动执行）。

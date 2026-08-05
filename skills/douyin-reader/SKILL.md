@@ -196,3 +196,12 @@ A: faster-whisper 的 tiny 模型中文准确率约 85-90%，base 模型约 90-9
 
 **Q: 如何只获取元数据不做语音转写？**
 A: 使用 `--skip-transcribe` 参数，仅下载视频并提取标题、描述、统计等信息。
+
+---
+
+## Related skills（边界声明）
+
+- **agent-browser**: Layer 1 首选工具。本 skill 编排三层降级，agent-browser 是其中最稳定的层。
+- **summarize**: 通用 URL 摘要。抖音有反爬机制，**不要用 summarize 直连**（必失败）；先走本 skill，再把提取的文本交给 summarize 做结构化摘要。
+- **youtube-watcher / wechat-reader**: 兄弟 reader。**不重叠**：平台不同（抖音 vs YouTube vs 微信公众号），各管各的 URL 域。
+- **brave-search / tavily-search**: 搜索 Layer 3 兜底。本 skill Layer 3 调用这两个做视频信息补全。

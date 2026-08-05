@@ -90,3 +90,10 @@ python3 scripts/sync.py --input tokens.dtcg.json --output-dir ./dist --platforms
 - style-dictionary-sync：DTCG 标准 + 多端派生
 
 可以组合使用：ui-design-system 输出 → 转换为 DTCG → sync 多端。
+
+## Related skills（边界声明）
+
+- **ui-design-system**: 原始 token 定义 + 6 类 token 校验 + 命名审计。本 skill 是**多端同步 pipeline**，ui-design-system 是**token canonical source**。组合使用：ui-design-system 校验通过后输出 DTCG JSON → 本 skill 同步 8 端产物。
+- **figma-reader**: Figma 提取。本 skill 消费 figma-reader 输出的 DTCG 风格 token JSON。
+- **component-library-selector**: 选型决策（选哪个组件库）。本 skill 同步 token 后，component-library-selector 决定 token 投递到哪个组件库。
+- **storybook-chromatic**: 视觉回归。本 skill 生成 web 端 CSS/JS，storybook-chromatic 在 Storybook 组件层做视觉验证。

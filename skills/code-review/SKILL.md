@@ -100,3 +100,11 @@ Reporting separately stops one axis from masking the other.
 - [ ] Both sub-agents spawned in parallel (or Spec skipped with reason)
 - [ ] Reports presented under separate headings, not merged
 - [ ] Per-axis worst issue identified (no cross-axis winner)
+
+## Related skills（边界声明）
+
+- **diagnosing-bugs**: 修复**一个具体 bug**（root cause → fix → regression test）。本 skill 审查**整个 PR/diff**（Standards + Spec 双轴）。**不要混用**：bug 排查走 diagnosing-bugs，PR 提交前走 code-review。
+- **github**: PR 数据通道（`gh pr view` / `gh pr checks`）。本 skill 解读 diff 的 Standards/Spec，github 负责拉取 PR 元数据。
+- **resolving-merge-conflicts**: 冲突解决。本 skill 在 PR **可合并**状态下审查；冲突未解决时由 resolving-merge-conflicts 先处理。
+- **codebase-design**: 架构词汇。Standards 轴的 smell 检测（"Shallow Module" / "Pass-through" / "Non-local change"）复用 codebase-design 词汇。
+- **triage**: 本 skill 关注**已提交**的 PR；triage 关注**未分诊**的 issue。两者前后衔接。

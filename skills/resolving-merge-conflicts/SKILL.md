@@ -109,3 +109,9 @@ Resolved N conflicts in <files>:
 - [ ] Resolution reflects reconciled intent (not blind acceptance)
 - [ ] Tests / lint / type-check pass on resolved files
 - [ ] Resolution documented in commit message or PR comment
+
+## Related skills（边界声明）
+
+- **github**: PR 数据通道（`gh pr view`）。本 skill 是**冲突解决逻辑**（按意图决策），github 拉 PR 元数据。组合：`gh pr view --json mergeable` 判断有冲突 → 本 skill 解决。
+- **code-review**: PR 审查。本 skill 在 PR **有冲突**时介入（merge/rebase 之前），code-review 在 PR **可合并**后介入（merge 之前最后审查）。两者不重叠但**顺序相邻**。
+- **diagnosing-bugs**: 解决冲突后**测试失败**时，转入 diagnosing-bugs 排查根因。

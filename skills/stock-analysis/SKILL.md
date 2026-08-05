@@ -246,3 +246,10 @@ BTC, ETH, BNB, SOL, XRP, ADA, DOGE, AVAX, DOT, MATIC, LINK, ATOM, UNI, LTC, BCH,
 ## Disclaimer
 
 ⚠️ **NOT FINANCIAL ADVICE.** For informational purposes only. Consult a licensed financial advisor before making investment decisions.
+
+---
+
+## Related skills（边界声明）
+
+- **aipm-news-digest**: 行业情报（AI/产品新闻）。本 skill 关注**金融市场**（个股/加密货币/财报），aipm-news-digest 关注**科技行业**（AI Lab/创业公司/技术趋势）。**不重叠**：市场标的 vs 行业新闻，组合使用：aipm-news-digest 提供宏观行业事件，stock-analysis 提供具体标的走势。
+- **brave-search / tavily-search**: 通用搜索。本 skill 的 Rumor Scanner 在社交媒体上检测"hearing that..."等早期信号，遇到外部链接可调 search 验证来源。

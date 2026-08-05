@@ -53,3 +53,9 @@ Delete
 - `obsidian-cli delete "path/note"`
 
 Prefer direct edits when appropriate: open the `.md` file and change it; Obsidian will pick it up.
+
+## Related skills（边界声明）
+
+- **notion**: Notion API（page / database / block）。本 skill 是本地 Markdown 文件 + `obsidian-cli`，notion 是云端 block API。**完全不重叠**：选其一即可，不要混用（数据存储位置不同）。
+- **domain-modeling**: 领域建模。本 skill 维护个人/团队笔记，domain-modeling 维护项目根的 `CONTEXT.md` 领域术语表。
+- **research**: 源码研究。Obsidian 笔记可作为 research 的输入材料（用户提供的"我之前读过的资料"），但 research 优先读本地代码/doc。

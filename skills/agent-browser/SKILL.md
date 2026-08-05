@@ -521,3 +521,13 @@ A: 使用 `agent-browser upload @e1 file.pdf` 上传文件，@e1 是 file input 
 
 **Q: 如何获取页面中的所有链接？**
 A: 使用 `agent-browser snapshot` 获取完整页面结构，或 `agent-browser eval "Array.from(document.querySelectorAll('a')).map(a=>a.href)"` 执行 JavaScript 提取。
+
+---
+
+## Related skills（边界声明）
+
+- **brave-search / tavily-search**: 无浏览器的**搜索**。本 skill 是**交互式浏览**（登录/点击/滚动/JS 执行）。两者互补：先 search 找 URL，再 agent-browser 模拟真实访问。**不重叠**：search 是 query → URL，本 skill 是 URL → DOM 操作。
+- **summarize**: URL 摘要。summarize 是无浏览器的内容提取，本 skill 是需要浏览器交互的场景。**优先用 summarize**（轻量）；需要登录/JS 执行时才用本 skill。
+- **douyin-reader / wechat-reader**: 本 skill 是 Layer 1（douyin-reader 首选）/ Layer 4（wechat-reader 最后手段）的实现工具。
+- **youtube-watcher**: 受限 YouTube 视频字幕提取的最后手段。
+- **prototype-validator**: Playwright 自动化。本 skill 通用浏览器自动化（Rust/Node），prototype-validator 专项 a11y/perf/视觉回归。组合使用：本 skill 做 ad-hoc 浏览器操作，prototype-validator 做 CI 化验证。

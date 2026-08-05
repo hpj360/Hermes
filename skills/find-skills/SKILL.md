@@ -328,3 +328,18 @@ A: 有：https://skills.sh/ 可以浏览所有公开的 skill。
 
 **Q: 如果用户想要的功能没有现成 skill，我应该怎么做？**
 A: 1) 用通用能力直接帮用户完成任务；2) 建议用户创建自定义 skill（`npx skills init my-skill`）；3) 记录到改进建议中，供未来参考。
+
+---
+
+## Related skills（边界声明）
+
+- **skill-vetter**: skill 安装前的**质量/安全审查**。标准流程：本 skill 找到候选 skill → skill-vetter 审查 → 通过后由 skill-manager 安装。**不要未经 vet 直接 install**。
+- **skill-manager**: 已安装 skill 的**生命周期管理**（list/install/update/remove）。本 skill 是**发现**（"世界上有什么 skill"），skill-manager 是**管理**（"我已有什么 skill"）。
+- **skill-creator**: 通用 skill 开发（创建 + 评测 + 改进）。当 find-skills 找不到合适 skill 时，由 skill-creator 指导用户自己创建一个。
+
+## Skill 生命周期总览
+
+```
+find-skills（发现）→ skill-vetter（审查）→ skill-manager（安装/管理）→ skill-creator（自建/改进）
+   搜索候选          安全+质量检查          落地到本机                  填补空白
+```

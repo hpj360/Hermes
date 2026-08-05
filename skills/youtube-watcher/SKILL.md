@@ -178,3 +178,13 @@ A: yt-dlp 可以下载多语言字幕，但翻译需要通过其他工具（如 
 
 **Q: 视频太长字幕太多怎么办？**
 A: 分段处理：每 5000-10000 字为一段，各段独立总结后合并为完整摘要。
+
+---
+
+## Related skills（边界声明）
+
+- **summarize**: URL/PDF/音频摘要。summarize 也支持 YouTube 链接（`--youtube auto`）。**优先用 summarize**（支持多 provider、Firecrawl fallback、Apify 受限视频）；本 skill 仅作为 yt-dlp 直连的备选方案。
+- **agent-browser**: 交互式浏览。视频被登录墙/地区限制挡住时，agent-browser 可模拟登录后提取字幕（最后手段）。
+- **brave-search / tavily-search**: 搜索视频元信息（标题/作者/简介）。需要找特定视频时先用 search 定位 URL。
+- **research**: 源码研究。本 skill 产视频文本，research 把文本整合到代码/文档调研报告中。
+- **douyin-reader / wechat-reader**: 国内平台视频/文章读取。**不重叠**：平台不同（YouTube vs 抖音 vs 微信公众号），各管各的。

@@ -360,3 +360,13 @@ A: 可以。每个任务有独立的状态文件（`.loop-state/<task-name>.md`�
 
 **Q: /loop 的 interval 最短可以设多少？**
 A: 建议 >= 1 分钟。太频繁的循环会消耗大量 token 且可能触发 API 限流。
+
+---
+
+## Related skills（边界声明）
+
+- **to-spec / to-tickets / wayfinder**: 规划层。loop 启动**前**调用这三个 skill 生成 PRD/tickets/decisions；loop 启动**后**只执行，不再重新规划。
+- **code-review**: loop 完成一轮的 PR 提交后，由 code-review 做 Standards + Spec 双轴审查。loop 内**不**做 code-review（避免消耗 token）。
+- **diagnosing-bugs**: loop pattern `ci-sweeper` 的 builder 角色。CI fail 触发 loop 时，diagnosing-bugs 是修复逻辑，loop-engineering 编排迭代。
+- **triage**: loop pattern `issue-triage` 的 builder 角色。triage 决定"打什么 label"，loop 驱动迭代执行。
+- **self-improving-agent**: OpenClaw 平台特有。loop-engineering 是 Hermes 的**编排机制**，self-improving-agent 是**事后记录**（错误/学习写到 `.learnings/`）。组合：loop 跑完后用 self-improving-agent 沉淀经验。

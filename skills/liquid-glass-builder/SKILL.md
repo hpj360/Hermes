@@ -91,3 +91,13 @@ LiquidGlassView(blur: 24, alpha: 0.6) {
 - 不替代 design-system（本 skill 是 design-system 的视觉材质层）
 - 不做 3D 倾斜/视差（Liquid Glass 是静态材质，非动态视差）
 - 不在弱光环境下默认亮玻璃（自动降级为半实色）
+
+---
+
+## Related skills（边界声明）
+
+- **frontend-design**: 通用美学方向指导（brutalist/minimalist/retro-futuristic 等）。本 skill 是**特定设计语言**（Liquid Glass）的实施器，frontend-design 是**美学方向**选择。组合使用：frontend-design 选定方向 → 若方向是"玻璃化"则用本 skill 实施具体代码。
+- **ui-design-system**: Token 体系。本 skill 复用 ui-design-system 的颜色/字体/间距 token 做玻璃化处理（**不**自行定义 token）。
+- **ui-review-checklist**: 13 类反模式。本 skill 标注"绝对禁忌"（Inter+渐变+玻璃三件套），与 ui-review-checklist 的反模式库协同。
+- **prototype-validator**: 运行时验证（a11y/perf）。玻璃化对性能敏感，prototype-validator 的性能跑分是**必跑项**。
+- **storybook-chromatic**: 视觉回归。玻璃化组件视觉一致性由 Chromatic 截图 diff 验证。

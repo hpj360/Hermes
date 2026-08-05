@@ -102,6 +102,13 @@ package_skill.py 验证
 | `skill-creator` | 本 skill 生成的 Skill 用它打包 |
 | `ui-design-system` | tokens 提取后可直接导入 |
 
+## Related skills（边界声明）
+
+- **skill-creator**: 通用 skill 创建/评测工具。本 skill 是**垂直场景专用**（从设计规范生成 skill），skill-creator 是**通用**（适用任何 skill 类型）。组合使用：本 skill 产初稿（SKILL.md 骨架 + tokens/components/patterns/principles）→ skill-creator 跑 evals 评测 + 优化 description。
+- **figma-reader**: Figma 资产读取。本 skill 通过 figma-reader 拉 Figma 文件内容。
+- **notion**: Notion 页面 API。本 skill 通过 notion 拉 Notion 设计文档。
+- **ui-design-system**: Token canonical source。本 skill 提取的 tokens 交给 ui-design-system 规范化（6 类 token 校验）。
+
 ## 不适用
 
 - 实时维护的设计规范（生成的是快照，需手动同步）

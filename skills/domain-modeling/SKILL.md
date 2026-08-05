@@ -108,3 +108,11 @@ A static domain model goes stale. A living one:
 - [ ] New terms from current task proposed (with source reference)
 - [ ] Stale entries flagged (not deleted)
 - [ ] Glossary terms link to first-seen location
+
+## Related skills（边界声明）
+
+- **codebase-design**: 架构词汇表（Module/Depth/Seam/Adapter/Leverage/Locality）。本 skill 关注**业务领域**（glossary/entities/rules），codebase-design 关注**代码架构**（词汇表）。两者互补：domain-modeling 回答"业务概念是什么"，codebase-design 回答"代码组织如何"。
+- **to-spec**: 需求 → PRD。本 skill 在 to-spec 写 spec 前**主动查询** CONTEXT.md 复用术语，spec 完成后**反向更新** CONTEXT.md 加入新概念。
+- **research**: 源码研究。research 描述代码现状时复用本 skill 的术语（Glossary 链接）。
+- **triage**: Issue 分诊。triage 在 Grill 阶段引用 CONTEXT.md 避免术语歧义。
+- **self-improving-agent**: 经验记录。domain-modeling 维护**业务知识**（CONTEXT.md），self-improving-agent 记录**操作经验**（`.learnings/`）。**不重叠**：业务概念 vs 操作学习。

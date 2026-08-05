@@ -96,3 +96,10 @@ Output a topological order that respects blocking edges, tracer-bullet-first.
 - [ ] DAG is acyclic and ≤3 deep
 - [ ] Topological order suggested
 - [ ] Every spec acceptance criterion maps to ≥1 ticket
+
+## Related skills（边界声明）
+
+- **to-spec**: 需求 → PRD。本 skill 消费 to-spec 输出的 spec.md；不直接接受用户口头需求（避免重复决策）。
+- **wayfinder**: 决策地图。本 skill 拆 ticket 后，wayfinder 在 ticket 边界处识别需要人类决策的**架构选型**。两者串联：to-spec → to-tickets → wayfinder。
+- **prototype**: throwaway 原型。如果 wayfinder 标出某个 ticket cost-of-wrong = "hard"，先走 prototype 再填 ticket。
+- **loop-engineering**: /goal 与 /loop。本 skill 输出 tickets 后，由 loop init（builder-checker）按依赖图执行。

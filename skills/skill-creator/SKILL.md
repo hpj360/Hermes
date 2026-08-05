@@ -663,3 +663,19 @@ A: 简化测试用例，或拆分为多个小用例。避免在单个用例中�
 
 **Q: 如何更新已安装的 skill？**
 A: 修改 SKILL.md 后，重新运行 `skillhub install <path>` 或手动替换文件。
+
+---
+
+## Related skills（边界声明）
+
+- **design-spec-skill-creator**: 设计规范（Notion/Figma/MD/PDF）→ skill 的**专用生成器**。本 skill 是**通用** skill 创建工具（适用于任何 skill），design-spec-skill-creator 是**垂直场景**（专门从设计资产生成 skill）。组合使用：design-spec-skill-creator 产初稿 → 本 skill 跑 evals 评测。
+- **skill-vetter**: 质量/安全审查。本 skill 创建/改进 skill，skill-vetter 在发布前**审查**（安全扫描、质量评估）。组合使用：skill-creator → skill-vetter → 发布。
+- **find-skills**: 候选 skill 发现。找不到合适 skill 时，本 skill 指导**自建**一个；find-skills 指导**搜索**现成的。
+- **skill-manager**: 生命周期管理（list/install/update/remove）。本 skill 关注**创建**阶段；skill-manager 关注**安装后**管理。
+
+## Skill 生命周期
+
+```
+find-skills（搜索）→ skill-vetter（审查）→ skill-creator（创建/改进）→ skill-manager（安装/管理）
+   找不到              安装前审查            找不到就自己造              落地到本机
+```

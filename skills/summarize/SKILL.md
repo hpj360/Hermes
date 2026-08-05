@@ -230,3 +230,14 @@ A: 可以逐个调用 summarize，让用户决定先处理哪一个。对于多�
 
 **Q: 输出结果中出现乱码或格式问题怎么办？**
 A: 这通常是源文件的编码问题。可以让 summarize 以 `--json` 输出后再格式化，或提取文本让 Claude 直接处理。
+
+---
+
+## Related skills（边界声明）
+
+- **brave-search / tavily-search**: 这两个 search skill 的 extract 功能**只提取正文不做摘要**。本 skill 是**带摘要的**内容提取，支持多 provider 切换（OpenAI/Anthropic/xAI/Google）。组合使用：search 找 URL → 本 skill 做摘要。
+- **grounded-citations**: 引文验证。本 skill 做摘要，grounded-citations 验证摘要中每个 claim 的来源。**研究类 loop 必走两遍**：本 skill 摘要 → grounded-citations 验证。
+- **youtube-watcher**: YouTube 字幕提取。**优先用本 skill** 处理 YouTube 链接（支持 `--youtube auto` + Apify fallback）；youtube-watcher 仅作为 yt-dlp 直连的备选。
+- **agent-browser**: 交互式浏览。本 skill 是无浏览器的内容提取；需要登录/JS 执行时由 agent-browser 模拟（**不重叠**：本 skill 轻量无浏览器，agent-browser 重型有浏览器）。
+- **douyin-reader / wechat-reader**: 这两个 reader 是为反爬机制设计的**专用降级链**。抖音/微信公众号**不要用**本 skill 直连（必失败）；先走 reader 提取正文，再交给本 skill 做摘要。
+- **research**: 源码研究。本 skill 摘要外部 URL/PDF，research 读本地代码/doc。**不重叠**：外部 vs 本地，组合使用：本地资料不足时用本 skill 引入外部摘要。

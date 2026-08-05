@@ -313,3 +313,11 @@ A: 不能，设置视图过滤是 Notion UI 功能，API 不支持。
 
 **Q: 如何处理中文内容？**
 A: Notion API 完全支持中文。只需要确保 JSON 中的中文是有效的 UTF-8 编码。
+
+---
+
+## Related skills（边界声明）
+
+- **obsidian**: 本地 Markdown + obsidian-cli。本 skill 是云端 block API（Notion 服务），obsidian 是本地文件操作。**完全不重叠**：选其一即可，不要混用（数据存储位置不同）。
+- **design-spec-skill-creator**: 从 Notion 页面提取设计规范。本 skill 提供 page/database 读能力，design-spec-skill-creator 消费其输出生成团队 skill。
+- **trello**: Trello board/list/card API。本 skill 是文档协作，trello 是看板任务管理；不重叠，按场景选。

@@ -105,3 +105,11 @@ Before presenting:
 - [ ] TL;DR present and supported by findings
 - [ ] Open questions clearly separated
 - [ ] Sources-read list complete
+
+## Related skills（边界声明）
+
+- **grounded-citations**: 引文验证。本 skill 产研究报告，grounded-citations 验证报告中的每个 claim 是否有可验证来源。**强烈建议**：研究类 loop 中，本 skill 输出后必须过一道 grounded-citations。
+- **codebase-design**: 架构词汇。本 skill 描述代码现状时使用 codebase-design 的统一词汇（Module/Depth/Seam/Adapter/Leverage/Locality）。
+- **improve-codebase-architecture**: 架构分析。本 skill 提供**现状**（代码如何工作），improve-codebase-architecture 提供**改进机会**（如何让它更好）。
+- **brave-search / tavily-search**: 外部 web 搜索。本 skill 优先读本地代码/issue/doc；仅当需要查外部权威文档时调用 search skill。
+- **summarize**: URL/PDF/YouTube 摘要。原始资料是外部链接时，先用 summarize 提取正文，本 skill 再做分析。

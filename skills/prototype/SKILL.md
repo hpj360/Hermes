@@ -87,3 +87,10 @@ Then **delete the prototype code** (keep only the results file).
 - [ ] Prototype run and results captured
 - [ ] Decision recorded (proceed/pivot/abandon)
 - [ ] Prototype code DELETED (only results.md retained)
+
+## Related skills（边界声明）
+
+- **prototype-validator**: 运行时验证（Playwright + axe-core + Lighthouse）。本 skill 验证**前端原型**（UI/a11y/性能/交互），prototype 验证**技术方案**（设计问题是否可解）。prototype 跑通后再用 prototype-validator 验收前端实现。
+- **to-spec**: 需求→PRD。如果设计问题涉及产品方向，先用 to-spec，不要用 prototype。
+- **wayfinder**: 决策地图。wayfinder 输出 cost-of-wrong = "hard" 的决策时，先用 prototype 验证再走 loop init。
+- **codebase-design**: 架构词汇。prototype 评估 impl 的"深度"时参考其词汇。

@@ -151,3 +151,10 @@ Build products users love with discovery, prioritization, roadmapping, SaaS metr
 - [ ] PRD reviewed for clarity, completeness, feasibility (if applicable)
 - [ ] Stakeholder alignment confirmed
 - [ ] Success metrics defined (binary pass/fail where possible)
+
+## Related skills（边界声明）
+
+- **to-spec**: 需求 → PRD。本 skill 提供**"为什么做"**（用户价值 / 优先级 / 成功指标），to-spec 把这些转化为**"做什么"**（PRD 模板填充）。组合使用：先 PM 判断"该不该做"，再 to-spec 落地"做出来是什么样"。
+- **aipm-news-digest**: 行业情报。PM 做市场分析时输入本 skill 的每日 AI/产品新闻摘要。
+- **triage**: Issue 分类。本 skill 做产品级 roadmap，triage 做单 issue 的状态机分诊。
+- **codebase-design / improve-codebase-architecture**: 架构词汇。PM 不直接消费，但与 engineering lead 对齐时复用其词汇。

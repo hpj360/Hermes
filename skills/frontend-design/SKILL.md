@@ -163,3 +163,13 @@ A: 在保证功能可用的前提下追求创意。表单要能提交、按钮�
 
 **Q: 如何处理深色/浅色主题？**
 A: 使用 CSS 变量定义颜色，切换主题只需修改变量值。每个界面可以提供一个主题切换功能。
+
+---
+
+## Related skills（边界声明）
+
+- **liquid-glass-builder**: 特定设计语言（Apple WWDC 2025 Liquid Glass）。本 skill 是**通用美学方向**指导（brutalist/minimalist/retro-futuristic 等），liquid-glass-builder 是**单一设计语言实施器**。组合使用：本 skill 选定美学方向，liquid-glass-builder 实施"玻璃化"方向的具体代码。
+- **ui-design-system**: Token 体系。本 skill 不强制使用 token（可自由选字体/配色），但与 token 体系配合时更易跨项目复用。
+- **ui-review-checklist**: 13 类 AI 味反模式审查。本 skill 输出后由 ui-review-checklist 评审"是否太 AI"；通过后由 prototype-validator 做运行时验证。
+- **component-library-selector**: 组件库选型。本 skill 关注**美学方向**与**代码风格**；选哪个库由 component-library-selector 决定。
+- **storybook-chromatic**: 视觉回归。本 skill 生成的代码可包装为 Storybook 故事，由 storybook-chromatic 做 Chromatic 视觉验证。

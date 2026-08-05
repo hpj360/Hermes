@@ -138,6 +138,14 @@ jobs:
 | `prototype-validator` | 运行时验证 |
 | `ui-review-checklist` | 静态代码审查 |
 
+## Related skills（边界声明）
+
+- **figma-reader**: 提供 Figma 组件元数据。本 skill 消费 figma-reader 的输出，**不**直接调用 Figma API。
+- **component-library-selector**: 选型。本 skill 包装选定的库，**不**做选型决策。
+- **style-dictionary-sync**: token 多端同步。本 skill 关注**组件层**视觉回归，style-dictionary-sync 关注**token 层**多端派生。
+- **prototype-validator**: 运行时验证（a11y/perf/交互）。本 skill 做**视觉回归**（Chromatic 截图 diff），prototype-validator 做**功能验证**。两者不重叠：视觉走本 skill，功能走 prototype-validator。
+- **ui-review-checklist**: 静态代码审查。本 skill 关注**运行时**视觉，ui-review-checklist 关注**源码**质量。
+
 ## 不适用
 
 - 纯静态 HTML（非 React 组件）

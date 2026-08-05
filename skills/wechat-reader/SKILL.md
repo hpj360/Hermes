@@ -203,3 +203,12 @@ A: 每篇文章独立执行四层降级。文章之间加入 2-3 秒延迟，避
 
 **Q: 如何提高成功率？**
 A: 微信对单 IP 连续访问 5-8 篇文章会触发风控。批量处理时，每篇文章之间保持 3-5 秒间隔。如果持续被拦截，暂停 30 秒后重试。
+
+---
+
+## Related skills（边界声明）
+
+- **agent-browser**: Layer 4 最后手段。资源消耗大（~200MB/实例），仅在 Layer 1-3 全部失败时启用。
+- **summarize**: 通用 URL 摘要。微信有反爬机制，**不要用 summarize 直连**（必失败）；先走本 skill 提取正文，再交给 summarize 做结构化摘要。
+- **douyin-reader / youtube-watcher**: 兄弟 reader。**不重叠**：平台不同（微信公众号 vs 抖音 vs YouTube），各管各的 URL 域。
+- **brave-search / tavily-search**: Layer 2 镜像搜索。本 skill 复用这两个做内容补全，**不**直接调 WebSearch。

@@ -204,3 +204,12 @@ A: 不能，创建分支用 git：`git checkout -b new-branch`。
 
 **Q: 如何配置 gh 输出格式？**
 A: `gh config set editor vim`，`gh config set pagination 20`。
+
+---
+
+## Related skills（边界声明）
+
+- **triage**: Issue 状态机分诊。本 skill 是 GitHub 数据通道（list/label/assign），triage 是 issue 业务逻辑（needs-triage → ready-for-agent → wontfix）。loop pattern 中，triage 决定"打什么 label / 走什么状态"，本 skill 执行 `gh issue edit --add-label`。
+- **code-review**: 双轴代码审查。本 skill 把 PR 数据拉到本地（`gh pr view`），code-review 解读 diff 并产出 Standards / Spec 报告。
+- **resolving-merge-conflicts**: 冲突解决。本 skill 仅做 PR 状态查询（mergeable / conflicts）；真正的冲突解决用 resolving-merge-conflicts（按意图决策）。
+- **diagnosing-bugs**: CI 失败诊断。`ci-sweeper` loop pattern 中，本 skill 拉 `gh run view --log`，diagnosing-bugs 解读失败原因。

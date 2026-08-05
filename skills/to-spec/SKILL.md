@@ -95,3 +95,11 @@ If the spec is wrong, the user corrects it — cheaper than a 10-question interv
 - [ ] Acceptance criteria are binary (pass/fail)
 - [ ] Open questions explicitly marked as non-blocking
 - [ ] ADR constraints checked and referenced
+
+## Related skills（边界声明）
+
+- **to-tickets**: PRD → tickets。本 skill 输出 PRD 后由 to-tickets 拆解为 tracer-bullet tickets。本 skill **不**写 ticket 粒度的实现任务。
+- **wayfinder**: 决策地图。本 skill 不做技术选型决策；选型由 wayfinder 在 tickets 之后、loop init 之前处理。
+- **prototype**: throwaway 原型。如果本 skill 输出的方案 cost-of-wrong = "hard"，由 wayfinder 决定是否走 prototype。
+- **domain-modeling**: 领域建模。本 skill 写 spec 时优先读 `CONTEXT.md` 获取术语，新概念同步写入。
+- **product-manager**: 产品方法论（discovery / prioritization / SaaS 指标）。本 skill 是**PRD 模板填充**，PM 视角的"为什么做"由 product-manager 提供输入。

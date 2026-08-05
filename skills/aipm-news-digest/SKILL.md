@@ -121,3 +121,11 @@ AI Product Manager daily intelligence digest. Fetches news from 16+ curated RSS 
 - Track cutting-edge AI research
 - Identify technologies worth exploring
 - Build a pipeline of potential product innovations
+
+---
+
+## Related skills（边界声明）
+
+- **product-manager**: 本 skill 提供**行业情报输入**（AI/产品新闻摘要），product-manager 消费这些输入做产品决策（优先级/roadmap/SaaS 指标）。
+- **stock-analysis**: 金融市场标的（个股/加密货币）。本 skill 关注**科技行业新闻**（AI Lab/创业/研究），stock-analysis 关注**金融标的**。**不重叠**：行业 vs 标的，组合使用。
+- **brave-search / tavily-search**: 通用搜索。本 skill 维护 16+ RSS 源（持续聚合），search skill 用于按需单次查询特定话题。

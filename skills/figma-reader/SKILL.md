@@ -95,3 +95,11 @@ python3 scripts/parse_url.py "https://www.figma.com/file/ABC123/My-File?node-id=
 - **从约束出发**：Figma REST 限制就是约束（60 req/min、payload 5MB）
 - **只读不写**：本 skill 不修改 Figma 文件
 - **下游友好**：输出统一 JSON Schema，方便 storybook-chromatic / ui-design-system 消费
+
+## Related skills（边界声明）
+
+- **ui-design-system**: token canonical source。本 skill 输出 token JSON 后由 ui-design-system 规范化（6 类 token 校验）。
+- **style-dictionary-sync**: 多端 token 同步。figma-reader → ui-design-system → style-dictionary-sync 形成完整链路。
+- **design-spec-skill-creator**: 从 Figma 文件生成完整 design system skill。本 skill 只**读取** token + 组件，design-spec-skill-creator 做**结构化打包**（SKILL.md + 模板）。
+- **storybook-chromatic**: Storybook + Chromatic 视觉回归。本 skill 提供 Figma 资产，storybook-chromatic 把资产映射为 Storybook 故事。
+- **prototype-validator**: 运行时验证。本 skill 输出的是设计**资产**（token、组件清单），prototype-validator 验证实现**运行时**行为（a11y/perf/视觉）。

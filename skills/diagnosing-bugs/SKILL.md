@@ -107,3 +107,11 @@ Required before declaring done:
 - [ ] Phase 4: one variable changed at a time; all debug logs tagged with unique prefix
 - [ ] Phase 5: regression test written before fix; fix applied; Phase 1 loop re-run green
 - [ ] Phase 6: all instrumentation removed; throwaway prototypes deleted; correct hypothesis in commit message
+
+## Related skills（边界声明）
+
+- **code-review**: 审查整个 PR/diff（Standards + Spec 双轴）。本 skill 修复**一个具体 bug**（root cause → fix → regression test），code-review 检查**一批变更**（是否符合规范/spec）。两者不重叠：bug 出现走本 skill，PR 提交前走 code-review。
+- **github**: CI 失败诊断时，本 skill 是逻辑（"为什么 fail"），github 是数据通道（`gh run view --log`）。
+- **improve-codebase-architecture**: Phase 6 提到"如果 answer involves architectural change, hand off to improve-codebase-architecture"——bug 修复后若发现架构性问题，转入架构改进流程。
+- **prototype**: Phase 1 反馈环构建时，可用 prototype 验证"假设的修复方式"是否可行（throwaway 验证）。
+- **research**: 调查阶段（Phase 3）需要理解模块意图时，可用 research 快速读懂代码。

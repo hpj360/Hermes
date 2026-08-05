@@ -212,3 +212,10 @@ A: wttr.in 默认返回 emoji。如果需要纯文本，用 `format=2`（仅文�
 
 **Q: 支持农历/日出日落吗？**
 A: 用 `wttr.in/London?format="%m+%S+%s"` 可获取月相、日出、日落信息。
+
+---
+
+## Related skills（边界声明）
+
+- **brave-search / tavily-search**: 通用搜索。本 skill 关注**实时数据**（天气），search 关注**静态信息**（文档/事实）。**不重叠**：实时 API vs 索引搜索。
+- **aipm-news-digest**: 行业情报。本 skill 关注**即时数据**（当前天气），aipm-news-digest 关注**周期聚合**（每日新闻）。

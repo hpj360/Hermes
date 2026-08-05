@@ -915,3 +915,12 @@ A: 使用 Markdown，方便阅读和搜索。每条记录包含：标题、日�
 
 **Q: 如何搜索历史日志？**
 A: 使用 `grep -i "关键词" .learnings/*.md` 搜索。或者用 `cat .learnings/LEARNINGS.md` 浏览所有学习内容。
+
+---
+
+## Related skills（边界声明）
+
+- **loop-engineering**: Hermes 编排机制（/goal 与 /loop）。本 skill 是 OpenClaw 平台的**事后记录**，与 loop-engineering 互补：`loop 跑完 → self-improving-agent 沉淀经验 → 经验升级为新 skill`。
+- **domain-modeling**: 领域建模（CONTEXT.md）。本 skill 记录**操作学习/错误**（`.learnings/`），domain-modeling 维护**领域术语**（`CONTEXT.md`）。两者不重叠：操作经验 vs 业务知识。
+- **skill-creator**: skill 创建/改进。本 skill 记录经验后，可通过 skill-creator 把高价值 learning 提取为新 skill。
+- **diagnosing-bugs**: bug 诊断。本 skill 记录 bug 的 learning（含 commit/PR），diagnosing-bugs 是 bug 的根因诊断。
