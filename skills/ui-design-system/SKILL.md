@@ -79,9 +79,21 @@ python3 scripts/audit.py --tokens tokens/tokens.base.json --strict
 - 语义化别名独立命名空间：`color.primary`、`color.surface`
 - 字号用 t-shirt 命名：`font.size.xs/sm/md/lg/xl/2xl`
 
+## 何时用本 skill vs style-dictionary-sync
+
+| 场景 | 用本 skill | 用 style-dictionary-sync |
+|------|-----------|------------------------|
+| 单项目落地 design token | ✅ 直接生成 CSS/Tailwind/Swift/Android | ❌ 过重 |
+| 需要 6 类 token 校验 + 命名审计 | ✅ validate.py + audit.py | ❌ 不支持 |
+| monorepo 多项目共享 token | ❌ 只覆盖 4 端 | ✅ 覆盖 8 端（含 SCSS/JS/TS/Flutter/Compose） |
+| 标准 DTCG JSON 输入 | ❌ 自家格式 | ✅ 原生支持 |
+| 跨项目 token 同步 pipeline | ❌ 无 | ✅ CI 友好 |
+
+**决策规则**：单项目用本 skill；monorepo / 跨项目 / 需要 Flutter/Compose 端时用 style-dictionary-sync。两者可组合：本 skill 定义 + 校验 token → 导出 DTCG → style-dictionary-sync 同步到更多端。
+
 ## Related skills
 
-- **style-dictionary-sync**: Token 多端同步（8 端产物）。本 skill 是 token 定义 + 校验（canonical source），style-dictionary-sync 是 sync pipeline。组合使用：本 skill 输出 → 转为 DTCG → style-dictionary-sync 同步多端。
+- **style-dictionary-sync**: Token 多端同步（8 端产物）。本 skill 是 token 定义 + 校验（canonical source），style-dictionary-sync 是 sync pipeline。**单项目用本 skill，monorepo / 跨项目 / 需要 Flutter/Compose 端时用 style-dictionary-sync**。组合使用：本 skill 输出 → 转为 DTCG → style-dictionary-sync 同步多端。
 - **figma-reader**: 从 Figma 提取设计资产。本 skill 消费 figma-reader 输出的 token JSON。
 - **component-library-selector**: 组件库选型。本 skill 定义 token 体系，component-library-selector 选型消费 token 的组件库。
 - **ui-review-checklist**: UI 评审。本 skill 检查 token 规范性，ui-review-checklist 检查 UI 是否"看起来太 AI"。
