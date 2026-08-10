@@ -43,6 +43,8 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("GET", r"^/memory/episodes$", "h_get_episodes"),
     ("GET", r"^/memory/search$", "h_get_memory_search"),
     ("GET", r"^/memory/search/rrf$", "h_get_memory_search_rrf"),
+    ("GET", r"^/memory/search/fts$", "h_get_memory_search_fts"),
+    ("GET", r"^/memory/search/semantic$", "h_get_memory_search_semantic"),
     ("POST", r"^/memory/cleanup$", "h_post_memory_cleanup"),
     ("POST", r"^/memory/learn$", "h_post_memory_learn"),
     ("POST", r"^/memory/compact$", "h_post_memory_compact"),
@@ -86,6 +88,10 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("POST", r"^/triggers/(?P<trigger_id>[^/]+)/fire$", "h_post_trigger_fire"),
     ("POST", r"^/sync$", "h_post_sync"),
     ("GET", r"^/stream/jobs$", "h_get_stream_jobs"),
+    # MemOS integration routes
+    ("GET", r"^/memos/health$", "h_get_memos_health"),
+    ("GET", r"^/memos/search$", "h_get_memos_search"),
+    ("POST", r"^/memos/feedback$", "h_post_memos_feedback"),
 ]
 
 # Routes that skip authentication (always public).
@@ -375,6 +381,58 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "method": "rrf",
                 "results": [
                     {"episode": ep.__dict__, "score": round(score, 6)}
+                    for ep, score in results
+                ],
+            },
+        )
+
+    def h_get_memory_search_fts(self) -> None:
+        """Full-text search via FTS5 (BM25 ranking).
+
+        Query params: ?q=keyword&limit=10&kind=some_kind
+        """
+        from hermes.workbench.cli import _make_memory
+
+        params = self._query_params()
+        q = params.get("q", "").strip()
+        if not q:
+            raise ValidationError("query param 'q' is required")
+        limit = int(params.get("limit", "10"))
+        kind = params.get("kind")
+        results = _make_memory().search_episodes_fts(query=q, limit=limit, kind=kind)
+        self._send_json(
+            200,
+            {
+                "query": q,
+                "method": "fts5",
+                "results": [
+                    {"episode": ep.__dict__, "score": round(score, 4)}
+                    for ep, score in results
+                ],
+            },
+        )
+
+    def h_get_memory_search_semantic(self) -> None:
+        """Semantic search via vector embedding (Ollama).
+
+        Query params: ?q=keyword&limit=10&kind=some_kind
+        """
+        from hermes.workbench.cli import _make_memory
+
+        params = self._query_params()
+        q = params.get("q", "").strip()
+        if not q:
+            raise ValidationError("query param 'q' is required")
+        limit = int(params.get("limit", "10"))
+        kind = params.get("kind")
+        results = _make_memory().search_episodes_semantic(query=q, limit=limit, kind=kind)
+        self._send_json(
+            200,
+            {
+                "query": q,
+                "method": "semantic",
+                "results": [
+                    {"episode": ep.__dict__, "score": round(score, 4)}
                     for ep, score in results
                 ],
             },
@@ -1215,6 +1273,44 @@ class DashboardHandler(BaseHTTPRequestHandler):
             pass  # Client disconnected
         finally:
             bus.unsubscribe(q)
+
+    # ------------------------------------------------------------------
+    # MemOS handlers
+    # ------------------------------------------------------------------
+    def h_get_memos_health(self) -> None:
+        """Check MemOS local plugin health."""
+        from hermes.workbench.cli import _make_memory
+
+        mem = _make_memory()
+        ok = mem.memos_health()
+        self._send_json(200, {"memos": {"healthy": ok, "enabled": mem._memos.available}})
+
+    def h_get_memos_search(self) -> None:
+        """Proxy search to MemOS local plugin.
+
+        Query params: ?q=keyword&limit=10
+        """
+        from hermes.workbench.cli import _make_memory
+
+        params = self._query_params()
+        q = params.get("q", "").strip()
+        if not q:
+            raise ValidationError("query param 'q' is required")
+        limit = int(params.get("limit", "10"))
+        results = _make_memory().memos_search(query=q, limit=limit)
+        self._send_json(200, {"query": q, "source": "memos", "results": results})
+
+    def h_post_memos_feedback(self) -> None:
+        """Submit feedback correction to MemOS plugin."""
+        from hermes.workbench.cli import _make_memory
+
+        body = self._parse_body(10_000_000)
+        memory_id = body.get("memory_id", "")
+        correction = body.get("correction", "")
+        if not memory_id or not correction:
+            raise ValidationError("memory_id and correction are required")
+        ok = _make_memory().memos_feedback(memory_id, correction)
+        self._send_json(200 if ok else 503, {"success": ok})
 
 
 def make_server(host: str, port: int) -> ThreadingHTTPServer:

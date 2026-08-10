@@ -188,6 +188,12 @@ class Settings(BaseSettings):
         default=Path(__file__).resolve().parents[2] / "data" / "profile.json",
         alias="HERMES_PROFILE_PATH",
     )
+    # MemOS local plugin integration
+    memos_enabled: bool = Field(default=False, alias="MEMOS_ENABLED")
+    memos_base_url: str = Field(default="http://127.0.0.1:18800", alias="MEMOS_BASE_URL")
+    # Ollama embedding settings
+    ollama_embed_url: str = Field(default="http://localhost:11434", alias="OLLAMA_EMBED_URL")
+    ollama_embed_model: str = Field(default="nomic-embed-text", alias="OLLAMA_EMBED_MODEL")
     # LLM integration: which provider/model the workbench agent should use.
     # provider is one of: zai/glm, ollama, openai, openrouter, moonshot, etc.
     # (any name returned by Settings.configured_providers()).

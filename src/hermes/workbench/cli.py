@@ -13,15 +13,15 @@ import sys
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from hermes.config import get_settings
 from hermes.skills import skills_dir as _hermes_skills_dir
 from hermes.workbench.agent_loop import AgentLoop, LoopStep
 from hermes.workbench.memory import MemoryService
 from hermes.workbench.skill_runner import SkillRunner
-
 
 # ---------------------------------------------------------------------------
 # Task runtime (minimal; the full scheduler lands in P2)
@@ -310,7 +310,23 @@ def _make_runner() -> SkillRunner:
 
 
 def _make_memory() -> MemoryService:
-    return MemoryService(state_dir=_state_dir())
+    from hermes.config import get_settings
+    from hermes.workbench.memory import EmbeddingClient, MemosConfig
+
+    settings = get_settings()
+    embed = EmbeddingClient(
+        base_url=settings.ollama_embed_url,
+        model=settings.ollama_embed_model,
+    )
+    memos_cfg = MemosConfig(
+        enabled=settings.memos_enabled,
+        base_url=settings.memos_base_url,
+    )
+    return MemoryService(
+        state_dir=_state_dir(),
+        embed_client=embed,
+        memos_config=memos_cfg,
+    )
 
 
 def _make_loop() -> AgentLoop:
@@ -364,20 +380,20 @@ class _SchedulerCenter:
     """
 
     __slots__ = (
-        "job_store",
-        "job_queue",
-        "status_bus",
-        "project_registry",
-        "router",
-        "trigger_store",
         "cron_scheduler",
         "dag",
+        "job_queue",
+        "job_store",
+        "project_registry",
+        "router",
+        "status_bus",
+        "trigger_store",
     )
 
     def __init__(self) -> None:
         from hermes.workbench.dag import DependencyGraph
         from hermes.workbench.projects import ProjectRegistry, Router
-        from hermes.workbench.scheduler import JobQueue, JobStore, JobStatus, StatusBus
+        from hermes.workbench.scheduler import JobQueue, JobStatus, JobStore, StatusBus
         from hermes.workbench.triggers import CronScheduler, TriggerStore
 
         self.job_store = JobStore(state_dir=_state_dir())
@@ -1125,6 +1141,54 @@ def _register_memory(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p_ps.set_defaults(func=cmd_workbench_memory_profile_show)
 
 
+def _register_memos(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = sub.add_parser("memos", help="MemOS local plugin integration")
+    memos_sub = p.add_subparsers(dest="workbench_memos_cmd", required=True)
+
+    p_health = memos_sub.add_parser("health", help="Check MemOS plugin health")
+    p_health.set_defaults(func=cmd_workbench_memos_health)
+
+    p_search = memos_sub.add_parser("search", help="Search MemOS plugin")
+    p_search.add_argument("--query", "-q", required=True, help="Search query")
+    p_search.add_argument("--limit", type=int, default=10, help="Max results")
+    p_search.set_defaults(func=cmd_workbench_memos_search)
+
+    p_feedback = memos_sub.add_parser("feedback", help="Submit feedback correction")
+    p_feedback.add_argument("memory_id", help="Memory ID")
+    p_feedback.add_argument("correction", help="Correction text")
+    p_feedback.set_defaults(func=cmd_workbench_memos_feedback)
+
+
+def cmd_workbench_memos_health(args: argparse.Namespace) -> int:
+    mem = _make_memory()
+    ok = mem.memos_health()
+    enabled = mem._memos.available
+    print(f"MemOS enabled: {enabled}")
+    print(f"MemOS healthy: {ok}")
+    return 0 if ok else 1
+
+
+def cmd_workbench_memos_search(args: argparse.Namespace) -> int:
+    mem = _make_memory()
+    results = mem.memos_search(query=args.query, limit=args.limit)
+    if not results:
+        print("(no results)")
+        return 0
+    for r in results:
+        print(f"  [{r.get('kind', '?')}] {r.get('summary', '')}")
+    return 0
+
+
+def cmd_workbench_memos_feedback(args: argparse.Namespace) -> int:
+    mem = _make_memory()
+    ok = mem.memos_feedback(args.memory_id, args.correction)
+    if ok:
+        print(f"feedback submitted for {args.memory_id}")
+    else:
+        print(f"feedback failed for {args.memory_id}")
+    return 0 if ok else 1
+
+
 def _register_task(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     p = sub.add_parser("task", help="Manage scheduled tasks")
     task_sub = p.add_subparsers(dest="workbench_task_cmd", required=True)
@@ -1345,6 +1409,7 @@ def add_workbench_subparser(sub: argparse._SubParsersAction[argparse.ArgumentPar
     _register_run(wb_sub)
     _register_loop(wb_sub)
     _register_memory(wb_sub)
+    _register_memos(wb_sub)
     _register_task(wb_sub)
     _register_serve(wb_sub)
     _register_github(wb_sub)

@@ -3,6 +3,12 @@
 L1 — Facts: small key/value JSON store for durable preferences and observations.
 L2 — Episodes: append-only JSONL log of agent actions (each entry an Episode).
 L3 — Profile: the user profile (delegated to hermes.profile).
+
+Enhanced with:
+- FTS5 full-text search via sqlite3 (zero external deps)
+- Ollama-compatible vector embedding for semantic search
+- Multi-level memory compaction (L1 raw → L2 grouped → L3 abstract)
+- MemOS local plugin adapter (optional, HTTP client to :18800)
 """
 
 from __future__ import annotations
@@ -10,19 +16,20 @@ from __future__ import annotations
 import json
 import math
 import re
+import sqlite3
 import time
 import uuid
 from collections import Counter, deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from hermes.workbench.persistence import (
     atomic_append_jsonl,
     atomic_write_json,
     safe_read_json,
 )
-
 
 # ---------------------------------------------------------------------------
 # TF-IDF helpers (pure stdlib, no external dependencies)
@@ -89,13 +96,23 @@ def make_episode(kind: str, summary: str, details: dict[str, Any] | None = None)
 
 
 class MemoryService:
-    """In-process memory service backed by atomic file persistence."""
+    """In-process memory service backed by atomic file persistence.
+
+    Enhanced with:
+    - FTS5 full-text search (sqlite3, zero external deps)
+    - Optional vector embedding (Ollama-compatible)
+    - Optional MemOS adapter (local plugin on :18800)
+    - Multi-level compaction (L1 raw → L2 grouped → L3 abstract)
+    """
 
     def __init__(
         self,
         state_dir: Path,
         profile_loader: Callable[[], dict[str, Any]] | None = None,
         profile_saver: Callable[[dict[str, Any]], None] | None = None,
+        *,
+        embed_client: EmbeddingClient | None = None,
+        memos_config: MemosConfig | None = None,
     ) -> None:
         self.state_dir = state_dir
         self.state_dir.mkdir(parents=True, exist_ok=True)
@@ -104,6 +121,14 @@ class MemoryService:
         self._episodes_path = state_dir / "episodes.jsonl"
         self._profile_loader = profile_loader
         self._profile_saver = profile_saver
+
+        # Enhanced features
+        self._fts = FTS5Index(state_dir)
+        self._embed = embed_client or EmbeddingClient()
+        self._memos = MemosClient(memos_config or MemosConfig())
+
+        # Cache for vector embeddings (episode_id → vector)
+        self._embedding_cache: dict[str, list[float]] = {}
 
     # ------------------------------------------------------------------
     # L1 — Facts
@@ -187,7 +212,7 @@ class MemoryService:
     # L2 — Episodes
     # ------------------------------------------------------------------
     def record_episode(self, episode: Episode) -> None:
-        """Append *episode* to the JSONL episode log."""
+        """Append *episode* to the JSONL episode log and sync to FTS5/MemOS."""
         payload = {
             "id": episode.id,
             "kind": episode.kind,
@@ -196,6 +221,14 @@ class MemoryService:
             "created_at": episode.created_at,
         }
         atomic_append_jsonl(self._episodes_path, payload)
+        # Sync to FTS5 index
+        self._fts.index(episode)
+        # Sync to MemOS if enabled (best-effort, non-blocking)
+        if self._memos.available:
+            try:
+                self._memos.ingest(episode)
+            except Exception:  # noqa: BLE001
+                pass
 
     def list_episodes(self, kind: str | None = None, limit: int = 1000) -> list[Episode]:
         """Return recorded episodes, optionally filtered by *kind*.
@@ -303,6 +336,65 @@ class MemoryService:
         atomic_write_json(self._fact_ttls_path, ttls)
         return len(expired)
 
+    # ------------------------------------------------------------------
+    # Enhanced search: FTS5
+    # ------------------------------------------------------------------
+    def search_episodes_fts(
+        self, query: str, limit: int = 10, kind: str | None = None
+    ) -> list[tuple[Episode, float]]:
+        """Full-text search via FTS5 (BM25 ranking).
+
+        Returns ``(episode, score)`` tuples, highest score first.
+        """
+        return self._fts.search(query, limit=limit, kind=kind)
+
+    # ------------------------------------------------------------------
+    # Enhanced search: vector / semantic
+    # ------------------------------------------------------------------
+    def search_episodes_semantic(
+        self, query: str, limit: int = 10, kind: str | None = None
+    ) -> list[tuple[Episode, float]]:
+        """Semantic search via vector embedding cosine similarity.
+
+        Requires Ollama to be running with an embedding model (default:
+        ``nomic-embed-text``). If Ollama is unavailable, returns empty list.
+        """
+        query_emb = self._embed.embed(query)
+        if query_emb is None:
+            return []
+        episodes = self.list_episodes(kind=kind, limit=10000)
+        if not episodes:
+            return []
+        scored: list[tuple[Episode, float]] = []
+        for ep in episodes:
+            ep_emb = self._get_or_compute_embedding(ep)
+            if ep_emb is None:
+                continue
+            sim = _cosine_similarity(
+                {str(i): v for i, v in enumerate(query_emb.vector)},
+                {str(i): v for i, v in enumerate(ep_emb)},
+            )
+            if sim > 0.0:
+                scored.append((ep, sim))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:limit]
+
+    def _get_or_compute_embedding(self, episode: Episode) -> list[float] | None:
+        """Get cached embedding or compute and cache it."""
+        if episode.id in self._embedding_cache:
+            return self._embedding_cache[episode.id]
+        text = episode.summary
+        if episode.details:
+            text += " " + json.dumps(episode.details, ensure_ascii=False)
+        result = self._embed.embed(text)
+        if result is None:
+            return None
+        self._embedding_cache[episode.id] = result.vector
+        return result.vector
+
+    # ------------------------------------------------------------------
+    # Enhanced search: RRF-4 fusion (substring + TF-IDF + FTS5 + vector)
+    # ------------------------------------------------------------------
     def search_episodes_rrf(
         self,
         query: str,
@@ -310,17 +402,16 @@ class MemoryService:
         kind: str | None = None,
         k: int = 60,
     ) -> list[tuple[Episode, float]]:
-        """Hybrid episode search using Reciprocal Rank Fusion.
+        """Hybrid episode search using Reciprocal Rank Fusion (4 signals).
 
-        Fuses two retrieval signals:
+        Fuses four retrieval signals:
           1. Exact substring match (case-insensitive) on summary + details
           2. TF-IDF cosine similarity (semantic-ish keyword overlap)
+          3. FTS5 BM25 full-text search (sqlite3)
+          4. Vector embedding cosine similarity (Ollama, optional)
 
-        RRF score = sum(1 / (k + rank)) across the two ranked lists, where a
-        lower rank number means a better match. Episodes appearing in both
-        lists get a higher fused score than those in only one.
-
-        Returns ``(episode, fused_score)`` tuples, highest score first.
+        RRF score = sum(1 / (k + rank)) across ranked lists. Signals 4 is
+        only included when Ollama is available.
         """
         if not query or not query.strip():
             return []
@@ -329,7 +420,7 @@ class MemoryService:
             return []
         q_lower = query.lower()
 
-        # Signal 1: exact substring match (rank by earliest match position)
+        # Signal 1: exact substring match
         substring_matches: list[tuple[Episode, int]] = []
         for ep in episodes:
             text = ep.summary.lower()
@@ -338,31 +429,48 @@ class MemoryService:
             pos = text.find(q_lower)
             if pos != -1:
                 substring_matches.append((ep, pos))
-        # Earlier position = better → ascending sort → rank 0 is best
         substring_matches.sort(key=lambda x: x[1])
         sub_ranks: dict[str, int] = {
             ep.id: rank for rank, (ep, _pos) in enumerate(substring_matches)
         }
 
-        # Signal 2: TF-IDF cosine similarity (existing implementation)
+        # Signal 2: TF-IDF cosine similarity
         tfidf_results = self.search_episodes(query, limit=len(episodes), kind=kind)
         tfidf_ranks: dict[str, int] = {
             ep.id: rank for rank, (ep, _score) in enumerate(tfidf_results)
         }
 
+        # Signal 3: FTS5 BM25
+        fts_results = self.search_episodes_fts(query, limit=len(episodes), kind=kind)
+        fts_ranks: dict[str, int] = {
+            ep.id: rank for rank, (ep, _score) in enumerate(fts_results)
+        }
+
+        # Signal 4: vector embedding (optional)
+        semantic_ranks: dict[str, int] = {}
+        semantic_results = self.search_episodes_semantic(query, limit=len(episodes), kind=kind)
+        if semantic_results:
+            semantic_ranks = {
+                ep.id: rank for rank, (ep, _score) in enumerate(semantic_results)
+            }
+
         # Fuse via RRF
-        all_ids = set(sub_ranks) | set(tfidf_ranks)
+        all_signals = [sub_ranks, tfidf_ranks, fts_ranks]
+        if semantic_ranks:
+            all_signals.append(semantic_ranks)
+        all_ids = set(sub_ranks)
+        for ranks in all_signals[1:]:
+            all_ids |= set(ranks)
         if not all_ids:
             return []
         id_to_ep: dict[str, Episode] = {ep.id: ep for ep in episodes}
         fused: list[tuple[Episode, float]] = []
         for ep_id in all_ids:
             score = 0.0
-            if ep_id in sub_ranks:
-                score += 1.0 / (k + sub_ranks[ep_id])
-            if ep_id in tfidf_ranks:
-                score += 1.0 / (k + tfidf_ranks[ep_id])
-            found_ep: Episode | None = id_to_ep.get(ep_id)
+            for ranks in all_signals:
+                if ep_id in ranks:
+                    score += 1.0 / (k + ranks[ep_id])
+            found_ep = id_to_ep.get(ep_id)
             if found_ep is not None:
                 fused.append((found_ep, score))
         fused.sort(key=lambda x: x[1], reverse=True)
@@ -424,52 +532,85 @@ class MemoryService:
     def compact_episodes(
         self, keep_recent: int = 200, kind: str | None = None
     ) -> dict[str, Any]:
-        """Compact old episodes into summary episodes.
+        """Multi-level compaction: L1 raw → L2 grouped → L3 abstract.
 
-        Episodes beyond the *keep_recent* window (optionally filtered by
-        *kind*) are aggregated into one summary episode per kind, recording
-        the count and time span. The original old episodes are then removed
-        from the JSONL file. Recent episodes (within the window) are kept
-        intact.
+        **L1 (raw)**: Keep the most recent *keep_recent* episodes intact.
+        **L2 (grouped)**: Episodes beyond the window are grouped by kind and
+        time period (daily), producing per-kind-per-day summary episodes.
+        **L3 (abstract)**: If L2 summaries for the same kind exceed a
+        threshold, they are further aggregated into abstract skill/pattern
+        summaries.
 
         Returns a dict describing the compaction result:
-            {"compacted_kinds": [...], "removed": N, "summaries_added": M}
+            {"compacted_kinds": [...], "removed": N, "l2_summaries": M, "l3_summaries": P}
         """
         all_episodes = self.list_episodes(kind=kind, limit=10**9)
         if len(all_episodes) <= keep_recent:
-            return {"compacted_kinds": [], "removed": 0, "summaries_added": 0}
-        # Split: keep the most recent `keep_recent`, compact the rest.
+            return {"compacted_kinds": [], "removed": 0, "l2_summaries": 0, "l3_summaries": 0}
+
         recent = all_episodes[:keep_recent]
         old = all_episodes[keep_recent:]
-        # Group old episodes by kind for per-kind summaries
-        by_kind: dict[str, list[Episode]] = {}
+
+        # --- L2: Group by kind + day ---
+        by_kind_day: dict[tuple[str, int], list[Episode]] = {}
         for ep in old:
-            by_kind.setdefault(ep.kind, []).append(ep)
-        # Build summary episodes
-        summaries: list[Episode] = []
-        for ep_kind, eps in by_kind.items():
+            day_key = int(ep.created_at // 86400)  # group by day
+            key = (ep.kind, day_key)
+            by_kind_day.setdefault(key, []).append(ep)
+
+        l2_summaries: list[Episode] = []
+        for (ep_kind, day_key), eps in by_kind_day.items():
             timestamps = [e.created_at for e in eps]
             summary = make_episode(
-                f"{ep_kind}_summary",
-                f"[Compacted] {len(eps)} {ep_kind} episodes "
-                f"({min(timestamps):.0f} → {max(timestamps):.0f})",
+                f"{ep_kind}_l2_summary",
+                f"[L2] {len(eps)} {ep_kind} episodes on day {day_key}",
                 {
                     "kind": ep_kind,
+                    "level": 2,
                     "count": len(eps),
                     "first_at": min(timestamps),
                     "last_at": max(timestamps),
                     "compacted": True,
                 },
             )
-            summaries.append(summary)
-        # Rewrite the episodes file: summaries first (oldest), then recent (newest)
-        # Since list_episodes returns newest-first, recent[0] is newest.
-        # We want the file ordered oldest → newest so append order is:
-        #   summaries (old, compacted) → recent reversed (oldest recent → newest recent)
+            l2_summaries.append(summary)
+
+        # --- L3: Aggregate L2 summaries per kind (if > 5 L2 summaries) ---
+        l3_summaries: list[Episode] = []
+        l2_by_kind: dict[str, list[Episode]] = {}
+        for s in l2_summaries:
+            kind_base = s.details.get("kind", "")
+            l2_by_kind.setdefault(kind_base, []).append(s)
+
+        remaining_l2: list[Episode] = []
+        for kind_base, summaries in l2_by_kind.items():
+            if len(summaries) > 5:
+                timestamps = [s.created_at for s in summaries]
+                total_count = sum(s.details.get("count", 0) for s in summaries)
+                l3 = make_episode(
+                    f"{kind_base}_l3_abstract",
+                    f"[L3] {total_count} {kind_base} episodes across {len(summaries)} days",
+                    {
+                        "kind": kind_base,
+                        "level": 3,
+                        "count": total_count,
+                        "days": len(summaries),
+                        "first_at": min(timestamps),
+                        "last_at": max(timestamps),
+                        "compacted": True,
+                    },
+                )
+                l3_summaries.append(l3)
+            else:
+                remaining_l2.extend(summaries)
+
+        # --- Rewrite episodes file ---
+        # Order: L3 abstracts (oldest) → L2 summaries → recent (newest)
         to_write: list[Episode] = []
-        to_write.extend(summaries)  # compacted summaries (become the "old" history)
-        to_write.extend(reversed(recent))  # oldest recent → newest recent
-        # Atomic rewrite
+        to_write.extend(l3_summaries)
+        to_write.extend(remaining_l2)
+        to_write.extend(reversed(recent))
+
         lines = []
         for ep in to_write:
             lines.append(
@@ -487,11 +628,31 @@ class MemoryService:
         self._episodes_path.write_text(
             "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8"
         )
+
+        # Rebuild FTS5 index from the compacted episodes
+        self._fts.rebuild(to_write)
+
         return {
-            "compacted_kinds": list(by_kind.keys()),
+            "compacted_kinds": list(by_kind_day.keys()),
             "removed": len(old),
-            "summaries_added": len(summaries),
+            "l2_summaries": len(remaining_l2),
+            "l3_summaries": len(l3_summaries),
         }
+
+    # ------------------------------------------------------------------
+    # MemOS integration
+    # ------------------------------------------------------------------
+    def memos_health(self) -> bool:
+        """Check if the MemOS local plugin is healthy."""
+        return self._memos.health()
+
+    def memos_search(self, query: str, limit: int = 10) -> list[dict]:
+        """Proxy a search to the MemOS local plugin."""
+        return self._memos.search(query, limit=limit)
+
+    def memos_feedback(self, memory_id: str, correction: str) -> bool:
+        """Submit a feedback correction to the MemOS plugin."""
+        return self._memos.feedback(memory_id, correction)
 
 
 def _parse_episode_line(line: str) -> Episode:
@@ -510,3 +671,262 @@ def _parse_episode_line(line: str) -> Episode:
         details=details,
         created_at=float(obj.get("created_at", 0.0)),
     )
+
+
+# ============================================================================
+# FTS5 full-text search index (sqlite3, zero external deps)
+# ============================================================================
+
+
+class FTS5Index:
+    """SQLite FTS5 full-text search index for episode summaries and details.
+
+    Uses Python's built-in ``sqlite3`` module — zero external dependencies.
+    The index is stored alongside the episodes JSONL in the state directory.
+    """
+
+    def __init__(self, state_dir: Path) -> None:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        self._db_path = state_dir / "episodes_fts.db"
+        self._conn = sqlite3.connect(str(self._db_path))
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._ensure_tables()
+
+    def _ensure_tables(self) -> None:
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS episodes_fts("
+            "  id TEXT PRIMARY KEY,"
+            "  kind TEXT,"
+            "  summary TEXT,"
+            "  details_json TEXT,"
+            "  created_at REAL"
+            ")"
+        )
+        self._conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts_idx "
+            "USING fts5(id, kind, summary, details_json, content='episodes_fts',"
+            " content_rowid='rowid')"
+        )
+        # Triggers to keep FTS index in sync
+        self._conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS episodes_fts_ai AFTER INSERT ON episodes_fts BEGIN "
+            "  INSERT INTO episodes_fts_idx(rowid, id, kind, summary, details_json) "
+            "  VALUES (new.rowid, new.id, new.kind, new.summary, new.details_json);"
+            "END"
+        )
+        self._conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS episodes_fts_ad AFTER DELETE ON episodes_fts BEGIN "
+            "  INSERT INTO episodes_fts_idx(episodes_fts_idx, rowid, id, kind, summary, details_json) "
+            "  VALUES('delete', old.rowid, old.id, old.kind, old.summary, old.details_json);"
+            "END"
+        )
+        self._conn.commit()
+
+    def index(self, episode: Episode) -> None:
+        """Insert or replace an episode in the FTS index."""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO episodes_fts(id, kind, summary, details_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                episode.id,
+                episode.kind,
+                episode.summary,
+                json.dumps(episode.details, ensure_ascii=False),
+                episode.created_at,
+            ),
+        )
+        self._conn.commit()
+
+    def search(
+        self, query: str, limit: int = 20, kind: str | None = None
+    ) -> list[tuple[Episode, float]]:
+        """Full-text search via FTS5, returning (episode, bm25_score) tuples.
+
+        Results are ranked by BM25 relevance. The raw BM25 score is negated
+        and normalized to a 0-1 range so higher = better (consistent with
+        other scoring methods).
+        """
+        if not query.strip():
+            return []
+        escaped = query.replace('"', '""')
+        conditions = ["episodes_fts_idx MATCH ?"]
+        params: list[Any] = [f'"{escaped}"']
+        sql = (
+            "SELECT e.id, e.kind, e.summary, e.details_json, e.created_at, rank "
+            "FROM episodes_fts_idx "
+            "JOIN episodes_fts e ON episodes_fts_idx.rowid = e.rowid "
+        )
+        if kind:
+            conditions.append("e.kind = ?")
+            params.append(kind)
+        sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY rank LIMIT ?"
+        params.append(limit)
+        rows = self._conn.execute(sql, params).fetchall()
+        results: list[tuple[Episode, float]] = []
+        if not rows:
+            return results
+        max_rank = max(abs(row[5]) for row in rows) or 1.0
+        for row in rows:
+            ep = Episode(
+                id=row[0],
+                kind=row[1],
+                summary=row[2],
+                details=json.loads(row[3]) if row[3] else {},
+                created_at=row[4],
+            )
+            score = 1.0 - (abs(row[5]) / max_rank)
+            results.append((ep, score))
+        return results
+
+    def rebuild(self, episodes: list[Episode]) -> None:
+        """Rebuild the FTS index from a list of episodes (e.g. after compaction)."""
+        self._conn.execute("DELETE FROM episodes_fts")
+        for ep in episodes:
+            self.index(ep)
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def __del__(self) -> None:
+        try:
+            self._conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+# ============================================================================
+# Vector embedding client (Ollama-compatible, optional)
+# ============================================================================
+
+
+@dataclass
+class EmbeddingResult:
+    """A single embedding vector with its metadata."""
+
+    vector: list[float]
+    model: str = ""
+    dimension: int = 0
+
+    def __post_init__(self) -> None:
+        self.dimension = len(self.vector)
+
+
+class EmbeddingClient:
+    """HTTP client for Ollama's /api/embed endpoint.
+
+    Uses only stdlib ``urllib`` — zero external dependencies.
+    Embedding is optional; if the Ollama server is unavailable, vector-based
+    search methods gracefully return empty results.
+    """
+
+    def __init__(
+        self,
+        base_url: str = "http://localhost:11434",
+        model: str = "nomic-embed-text",
+        timeout: float = 10.0,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.timeout = timeout
+
+    def embed(self, text: str) -> EmbeddingResult | None:
+        """Get embedding vector for *text* from Ollama. Returns None on failure."""
+        import urllib.error
+        import urllib.request
+
+        payload = json.dumps({"model": self.model, "input": text}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.base_url}/api/embed",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                emb = data.get("embeddings", [[]])[0]
+                return EmbeddingResult(vector=emb, model=self.model)
+        except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError, IndexError):
+            return None
+
+    def embed_batch(self, texts: list[str]) -> list[EmbeddingResult | None]:
+        """Get embeddings for multiple texts. Failed items are None."""
+        return [self.embed(t) for t in texts]
+
+    def health(self) -> bool:
+        """Check if the Ollama server is reachable."""
+        return self.embed("ping") is not None
+
+
+# ============================================================================
+# MemOS local plugin adapter (optional HTTP client)
+# ============================================================================
+
+
+@dataclass
+class MemosConfig:
+    """Configuration for the MemOS local plugin adapter."""
+
+    enabled: bool = False
+    base_url: str = "http://127.0.0.1:18800"
+    timeout: float = 10.0
+
+
+class MemosClient:
+    """HTTP client for the MemOS local plugin (Node.js process on :18800).
+
+    This is an optional integration layer. When enabled, episodes are synced
+    to MemOS for advanced vector search and memory evolution. When disabled
+    (default), the system operates entirely standalone.
+    """
+
+    def __init__(self, config: MemosConfig | None = None) -> None:
+        self.config = config or MemosConfig()
+
+    @property
+    def available(self) -> bool:
+        return self.config.enabled
+
+    def _request(self, method: str, path: str, body: dict | None = None) -> dict | None:
+        import urllib.error
+        import urllib.request
+
+        url = f"{self.config.base_url}{path}"
+        data = json.dumps(body).encode("utf-8") if body else None
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method=method,
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, OSError, json.JSONDecodeError):
+            return None
+
+    def health(self) -> bool:
+        result = self._request("GET", "/health")
+        return result is not None
+
+    def search(self, query: str, limit: int = 10) -> list[dict]:
+        result = self._request("GET", f"/api/search?q={query}&limit={limit}")
+        if result and isinstance(result, dict):
+            return result.get("results", [])
+        return []
+
+    def ingest(self, episode: Episode) -> bool:
+        payload = {
+            "id": episode.id,
+            "kind": episode.kind,
+            "summary": episode.summary,
+            "details": episode.details,
+            "created_at": episode.created_at,
+        }
+        result = self._request("POST", "/api/memories", payload)
+        return result is not None
+
+    def feedback(self, memory_id: str, correction: str) -> bool:
+        result = self._request("POST", f"/api/memories/{memory_id}/feedback", {"correction": correction})
+        return result is not None
