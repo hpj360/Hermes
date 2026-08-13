@@ -17,9 +17,9 @@
 - [x] P0-2 LLM stream + retry + token counter
 - [x] P0-3 Skill subprocess env 白名单 + SIGKILL 兜底
 - [x] P0-4 JobStore SQLite + migrator
-- [ ] P0-5 文档对齐（CHANGELOG / ROADMAP / ADR）— 本文档
-- [ ] P0-6 多仓同步脚本
-- [ ] P0-7 调度器命名空间隔离
-- [ ] P0-8 Audit log 持久化
+- [x] P0-5 文档对齐（CHANGELOG / ROADMAP / ADR）
+- [x] P0-6 多仓同步脚本
+- [x] P0-7 调度器命名空间隔离验证 + 测试
+- [x] P0-8 Audit log 持久化 + AuditStore + CLI
 
 详见 `docs/roadmap/iter-v0.6-to-v1.0.md`。

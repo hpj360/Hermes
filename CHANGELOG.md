@@ -13,6 +13,12 @@
   `sorted(names)` 不一致导致测试失败）。
 - Windows 编码：skill 脚本子进程注入 `PYTHONIOENCODING=utf-8`，修复 GBK
   编码无法输出 emoji/CJK 导致脚本崩溃的问题。
+- `server.h_post_memos_feedback` 调用不存在的 `_parse_body`（真实 bug，`/memos/feedback`
+  会 500），改为 `_read_json_body`。
+- content_team 类型债务：`db.py` GUID 泛型、`middleware.py` 类型注解、
+  `analytics.py` `_apply_filters` 注解、`triggers.py` import ignore，mypy 恢复 0 errors。
+- ruff 版本漂移：锁定 `ruff==0.4.10` 并显式 `select` 规则集（F/E4/E7/E9/W），
+  排除 ruff 0.5+ 新增的 S110/UP/BLE/DTZ/RUF/SIM/PLW 等未采纳规则。
 
 ### Added
 
@@ -23,7 +29,12 @@
 - Skill 子进程环境白名单（`_build_safe_env`）+ 进程树强杀兜底
   （`_terminate_process_tree`，Unix `SIGKILL` / Windows `taskkill /T /F`）。
 - `JobStore` 迁移到 SQLite（WAL），自动从 `jobs.json` 迁移（见 ADR-0006）。
+- `AuditStore` 持久化审计日志（`.state/audit.jsonl`）+ `hermes audit tail` CLI +
+  `GitHubMCPClient` 集成持久化。
 - memory 端点 HTTP 集成测试（`/memory/search/{rrf,fts,semantic}`、`/memory/{cleanup,learn,compact}`）。
+- `scripts/sync-forks.sh` 多仓资产同步（dry-run 默认，`--apply` 执行）。
+- ADR-0004（同步/异步边界）、ADR-0005（LLM 三能力）、ADR-0006（SQLite JobStore）。
+- 新增 `CHANGELOG.md`、`ROADMAP.md` 与迭代 Spec `docs/roadmap/iter-v0.6-to-v1.0.md`。
 
 ## [0.6.0]
 
