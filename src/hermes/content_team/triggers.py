@@ -159,9 +159,9 @@ def _get_submit_callback() -> Callable[[ScheduledJob], None]:
     保证 CronScheduler 守护线程仍可启动并扫描触发器（仅不实际入队）。
     """
     try:
-        from hermes.content_team.scheduler import get_scheduler  # type: ignore[import-not-found]
+        from hermes.content_team.scheduler import get_scheduler
     except ImportError:
-        get_scheduler = None
+        get_scheduler = None  # type: ignore[assignment]
 
     if get_scheduler is not None:
         try:

@@ -11,12 +11,14 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import Select
 
 from hermes.content_team.analytics.collector import MetricsCollector
 from hermes.content_team.db import get_db
@@ -24,7 +26,6 @@ from hermes.content_team.models.metrics import ContentMetric
 from hermes.content_team.models.platform import Platform
 
 router = APIRouter()
-
 
 # ---------------------------------------------------------------------------
 # Pydantic schemas
@@ -92,9 +93,12 @@ class MetricsFilter(BaseModel):
 
 
 def _apply_filters(
-    stmt, content_id: UUID | None, platform: Platform | None,
-    start_date: date | None, end_date: date | None,
-):
+    stmt: Select[Any],
+    content_id: UUID | None,
+    platform: Platform | None,
+    start_date: date | None,
+    end_date: date | None,
+) -> Select[Any]:
     """在查询语句上叠加过滤条件。"""
     if content_id is not None:
         stmt = stmt.where(ContentMetric.content_id == content_id)
@@ -175,7 +179,7 @@ async def _build_summary(
             followers_gained=row.followers_gained,
             followers_lost=row.followers_lost,
             engagement_rate=row.engagement_rate,
-            count=row.count,
+            count=int(getattr(row, "count")),
         )
 
     return MetricsSummary(

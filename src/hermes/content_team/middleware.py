@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .observability import generate_trace_id, log_event, with_trace
@@ -24,7 +25,7 @@ TRACE_ID_HEADER = "X-Trace-Id"
 
 if _ASGI_AVAILABLE:
 
-    class TraceIdMiddleware(BaseHTTPMiddleware):  # type: ignore[misc]
+    class TraceIdMiddleware(BaseHTTPMiddleware):
         """为每个请求注入 trace_id 的 ASGI 中间件。
 
         - 优先复用客户端 ``X-Trace-Id`` 请求头，缺失时自动生成
@@ -34,7 +35,7 @@ if _ASGI_AVAILABLE:
         """
 
         async def dispatch(
-            self, request: Request, call_next: Any
+            self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
         ) -> Response:
             trace_id = request.headers.get(TRACE_ID_HEADER) or generate_trace_id()
             method = request.method
