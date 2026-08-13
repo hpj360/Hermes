@@ -48,3 +48,16 @@ class BaseAdapter(ABC):
     @abstractmethod
     def validate_content(self, content: Content) -> list[str]:
         """校验内容是否符合平台限制，返回错误信息列表（空列表表示通过）。"""
+
+    async def recall(self, task: PublishTask) -> PublishResult:
+        """撤回/下架已发布内容（可选能力）。
+
+        默认实现返回"该平台不支持撤回"的半自动结果，让不支持撤回的平台
+        显式暴露能力边界，而非静默失败。支持撤回的平台（如 B站）重写本方法。
+        """
+        return PublishResult(
+            success=True,
+            external_url=task.external_url,
+            error=f"{self.platform_name} 不支持自动撤回，请手动下架",
+            raw_response={"mode": "semi_auto", "supported": False},
+        )

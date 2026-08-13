@@ -22,6 +22,7 @@ from hermes.content_team.publish.adapters.base import BaseAdapter, PublishResult
 from hermes.content_team.publish.adapters.bilibili import BilibiliAdapter
 from hermes.content_team.publish.adapters.douyin import DouyinAdapter
 from hermes.content_team.publish.adapters.wechat import WeChatOfficialAdapter
+from hermes.content_team.publish.adapters.wechat_video import WeChatVideoAdapter
 from hermes.content_team.publish.adapters.xiaohongshu import XiaohongshuAdapter
 from hermes.content_team.triggers import register_publish_trigger
 
@@ -55,6 +56,8 @@ class PublishDispatcher:
         """根据平台返回对应的适配器实例。"""
         if platform == Platform.WECHAT_OFFICIAL:
             return WeChatOfficialAdapter(account)
+        if platform == Platform.WECHAT_VIDEO:
+            return WeChatVideoAdapter(account)
         if platform == Platform.DOUYIN:
             return DouyinAdapter(account)
         if platform == Platform.XIAOHONGSHU:

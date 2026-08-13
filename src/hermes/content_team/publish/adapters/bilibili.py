@@ -48,3 +48,16 @@ class BilibiliAdapter(BaseAdapter):
                 f"（当前 {len(content.title)} 字）"
             )
         return errors
+
+    async def recall(self, task: PublishTask) -> PublishResult:
+        """撤回/下架已发布的 B站稿件。
+
+        B站开放平台提供稿件下架接口；本实现为半自动骨架，返回创作中心
+        稿件管理链接提示人工下架。接入真实接口时替换为开放平台调用即可。
+        """
+        return PublishResult(
+            success=True,
+            external_url="https://member.bilibili.com/platform/upload-manager/article",
+            error="半自动模式：请手动下架 B站稿件",
+            raw_response={"mode": "semi_auto", "platform": "bilibili", "action": "recall"},
+        )

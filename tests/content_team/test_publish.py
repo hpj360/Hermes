@@ -20,6 +20,7 @@ from hermes.content_team.models.publish import PublishStatus
 from hermes.content_team.publish.adapters.bilibili import BilibiliAdapter
 from hermes.content_team.publish.adapters.douyin import DouyinAdapter
 from hermes.content_team.publish.adapters.wechat import WeChatOfficialAdapter
+from hermes.content_team.publish.adapters.wechat_video import WeChatVideoAdapter
 from hermes.content_team.publish.adapters.xiaohongshu import XiaohongshuAdapter
 from hermes.content_team.publish.dispatcher import PublishDispatcher
 
@@ -661,11 +662,91 @@ class TestDispatcherGetAdapter:
         adapter = dispatcher.get_adapter(Platform.BILIBILI, account)
         assert isinstance(adapter, BilibiliAdapter)
 
-    def test_get_adapter_unsupported(self):
-        """get_adapter 对未支持平台抛出 ValueError。"""
+    def test_get_adapter_wechat_video(self):
+        """get_adapter 对 WECHAT_VIDEO 返回 WeChatVideoAdapter。"""
         dispatcher = PublishDispatcher(db_session=None)
         account = PlatformAccount(
             platform=Platform.WECHAT_VIDEO, display_name="视频号"
         )
-        with pytest.raises(ValueError):
-            dispatcher.get_adapter(Platform.WECHAT_VIDEO, account)
+        adapter = dispatcher.get_adapter(Platform.WECHAT_VIDEO, account)
+        assert isinstance(adapter, WeChatVideoAdapter)
+        assert adapter.account is account
+
+
+# ---------------------------------------------------------------------------
+# P1-2: 视频号适配 + B站撤回
+# ---------------------------------------------------------------------------
+
+
+class TestWeChatVideoAdapter:
+    """微信视频号适配器（半自动模式）。"""
+
+    @pytest.mark.asyncio
+    async def test_publish_semi_auto(self):
+        account = PlatformAccount(
+            platform=Platform.WECHAT_VIDEO, display_name="视频号"
+        )
+        adapter = WeChatVideoAdapter(account)
+        content = Content(title="测试标题", body="测试正文")
+        result = await adapter.publish(content)
+        assert result.success is True
+        assert result.error is not None
+        assert "半自动" in result.error
+        assert "channels.weixin.qq.com" in result.external_url
+
+    def test_validate_title_too_long(self):
+        account = PlatformAccount(
+            platform=Platform.WECHAT_VIDEO, display_name="视频号"
+        )
+        adapter = WeChatVideoAdapter(account)
+        content = Content(title="x" * 65, body="正文")
+        errors = adapter.validate_content(content)
+        assert len(errors) == 1
+        assert "64" in errors[0]
+
+
+class TestBilibiliRecall:
+    """B站撤回能力（P1-2）。"""
+
+    @pytest.mark.asyncio
+    async def test_recall_semi_auto(self):
+        from hermes.content_team.models.publish import PublishTask
+
+        account = PlatformAccount(
+            platform=Platform.BILIBILI, display_name="B站号"
+        )
+        adapter = BilibiliAdapter(account)
+        task = PublishTask(
+            content_id=uuid.uuid4(),
+            platform=Platform.BILIBILI,
+            account_id=account.id,
+            status=PublishStatus.SUCCESS,
+            external_url="https://www.bilibili.com/read/cv123",
+        )
+        result = await adapter.recall(task)
+        assert result.success is True
+        assert "半自动" in result.error
+        assert "bilibili.com" in result.external_url
+
+
+class TestDefaultRecallUnsupported:
+    """不支持撤回的平台（默认实现）应显式暴露能力边界。"""
+
+    @pytest.mark.asyncio
+    async def test_wechat_default_recall(self):
+        from hermes.content_team.models.publish import PublishTask
+
+        account = PlatformAccount(
+            platform=Platform.WECHAT_OFFICIAL, display_name="公众号"
+        )
+        adapter = WeChatOfficialAdapter(account)
+        task = PublishTask(
+            content_id=uuid.uuid4(),
+            platform=Platform.WECHAT_OFFICIAL,
+            account_id=account.id,
+            status=PublishStatus.SUCCESS,
+            external_url="https://mp.weixin.qq.com/s/mock",
+        )
+        result = await adapter.recall(task)
+        assert result.success is True
+        assert "不支持" in result.error
