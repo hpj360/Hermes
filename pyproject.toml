@@ -32,6 +32,13 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.4",
     "mypy>=1.9",
+    "httpx>=0.27",
+]
+content_team = [
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.20",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
 ]
 
 [project.scripts]
@@ -42,10 +49,17 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint]
+# 只启用正确性关键规则（pyflakes + pycodestyle 基础）。其余规则
+# （isort/UP/BLE/S/DTZ/RUF/SIM/PLW 等）在 ruff 0.5+ 升级后成为默认，
+# 与存量代码不符，作为技术债记录在 ROADMAP.md 的 P1/P2，暂不启用。
+select = ["F", "E4", "E7", "E9", "W"]
 
 [tool.mypy]
 python_version = "3.10"
