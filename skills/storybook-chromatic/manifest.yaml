@@ -1,0 +1,4 @@
+version: "1.0"
+provides:
+  - storybook-integration
+test_command: "python -m pytest tests/skills/storybook_chromatic"

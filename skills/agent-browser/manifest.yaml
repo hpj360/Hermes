@@ -1,0 +1,5 @@
+version: "1.0"
+provides:
+  - browser-automation
+requires:
+  - playwright

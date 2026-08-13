@@ -1,0 +1,4 @@
+version: "1.0"
+provides:
+  - design-spec-authoring
+test_command: "python -m pytest tests/skills/design_spec_skill_creator"

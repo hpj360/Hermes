@@ -1,0 +1,4 @@
+version: "1.0"
+provides:
+  - design-system
+test_command: "python -m pytest tests/skills/ui_design_system"

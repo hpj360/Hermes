@@ -12,7 +12,7 @@ utilities to list and inspect them.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +27,65 @@ class SkillInfo:
     has_meta: bool
     meta: dict[str, Any] | None = None
     description: str = ""
+    manifest: SkillManifest | None = None
+
+
+@dataclass
+class SkillManifest:
+    """The ``manifest.yaml`` contract for a single skill (P1-7).
+
+    Fields:
+        version: manifest schema version (informational).
+        requires: external dependencies the skill needs (bins / env / packages).
+        provides: named capabilities the skill exposes (for overlap detection).
+        test_command: command that runs this skill's test suite ("" = untested).
+    """
+
+    version: str = ""
+    requires: list[str] = field(default_factory=list)
+    provides: list[str] = field(default_factory=list)
+    test_command: str = ""
+
+    @property
+    def tested(self) -> bool:
+        """True when the skill declares a test command."""
+        return bool(self.test_command.strip())
+
+
+def _as_str_list(value: Any) -> list[str]:
+    """Normalize a manifest list field into a list of strings."""
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    if isinstance(value, str):
+        return [value]
+    return []
+
+
+def load_skill_manifest(name: str) -> SkillManifest | None:
+    """Load and parse ``skills/<name>/manifest.yaml``.
+
+    Returns ``None`` when the skill or its manifest is missing. A malformed
+    manifest degrades to an empty :class:`SkillManifest` (so discovery never
+    crashes on a bad file).
+    """
+    skill_path = get_skill_path(name)
+    if skill_path is None:
+        return None
+    manifest_path = skill_path / "manifest.yaml"
+    if not manifest_path.exists():
+        return None
+    try:
+        text = manifest_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    lines = text.split("\n")
+    data = _parse_frontmatter_lines(lines)
+    return SkillManifest(
+        version=str(data.get("version", "")),
+        requires=_as_str_list(data.get("requires")),
+        provides=_as_str_list(data.get("provides")),
+        test_command=str(data.get("test_command", "")),
+    )
 
 
 def _project_root() -> Path:
@@ -298,6 +357,7 @@ def discover_skills() -> list[SkillInfo]:
                 has_meta=meta_json.exists(),
                 meta=meta,
                 description=description,
+                manifest=load_skill_manifest(entry.name),
             )
         )
     return result

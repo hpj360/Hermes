@@ -1,0 +1,5 @@
+version: "1.0"
+provides:
+  - notion-integration
+requires:
+  - NOTION_API_KEY

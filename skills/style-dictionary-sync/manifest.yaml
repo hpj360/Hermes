@@ -1,0 +1,4 @@
+version: "1.0"
+provides:
+  - design-token-sync
+test_command: "python -m pytest tests/skills/style_dictionary_sync"

@@ -1,0 +1,6 @@
+version: "1.0"
+provides:
+  - trello-integration
+requires:
+  - TRELLO_API_KEY
+  - TRELLO_API_TOKEN

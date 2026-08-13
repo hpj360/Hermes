@@ -6,6 +6,7 @@ from pathlib import Path
 
 import hermes.skills as skills_mod
 from hermes.skills import (
+    SkillManifest,
     discover_skills,
     get_skill_description,
     get_skill_path,
@@ -13,6 +14,7 @@ from hermes.skills import (
     list_knowledge_docs,
     load_skill_assets,
     load_skill_content,
+    load_skill_manifest,
     parse_skill_frontmatter,
     skills_dir,
 )
@@ -382,3 +384,76 @@ def test_three_level_loading_consistency(monkeypatch, tmp_path) -> None:
     assert all(p.name != "SKILL.md" for p in level3)
     # helper.py 在 assets 中
     assert any(p.name == "helper.py" for p in level3)
+
+
+# ---------------------------------------------------------------------------
+# Skill Manifest (P1-7)
+# ---------------------------------------------------------------------------
+
+
+def _write_manifest(skill_dir: Path, text: str) -> None:
+    (skill_dir / "manifest.yaml").write_text(text, encoding="utf-8")
+
+
+def test_load_skill_manifest_parses_fields(monkeypatch, tmp_path) -> None:
+    skill_dir = tmp_path / "demo"
+    skill_dir.mkdir()
+    _write_manifest(
+        skill_dir,
+        "version: 1.0\n"
+        "requires:\n"
+        "  - python>=3.10\n"
+        "  - brave-api-key\n"
+        "provides:\n"
+        "  - web-search\n"
+        "test_command: python -m pytest tests/skills/demo\n",
+    )
+    monkeypatch.setattr(skills_mod, "skills_dir", lambda: tmp_path)
+
+    m = load_skill_manifest("demo")
+    assert isinstance(m, SkillManifest)
+    assert m.version == "1.0"
+    assert m.requires == ["python>=3.10", "brave-api-key"]
+    assert m.provides == ["web-search"]
+    assert m.test_command == "python -m pytest tests/skills/demo"
+    assert m.tested is True
+
+
+def test_load_skill_manifest_missing_returns_none(monkeypatch, tmp_path) -> None:
+    skill_dir = tmp_path / "nomanifest"
+    skill_dir.mkdir()
+    monkeypatch.setattr(skills_mod, "skills_dir", lambda: tmp_path)
+    assert load_skill_manifest("nomanifest") is None
+
+
+def test_load_skill_manifest_missing_skill_returns_none(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(skills_mod, "skills_dir", lambda: tmp_path)
+    assert load_skill_manifest("does-not-exist") is None
+
+
+def test_manifest_tested_false_when_no_test_command(monkeypatch, tmp_path) -> None:
+    skill_dir = tmp_path / "untested"
+    skill_dir.mkdir()
+    _write_manifest(skill_dir, "version: 1.0\nprovides:\n  - foo\n")
+    monkeypatch.setattr(skills_mod, "skills_dir", lambda: tmp_path)
+    m = load_skill_manifest("untested")
+    assert m is not None
+    assert m.tested is False
+
+
+def test_discover_skills_attaches_manifest(monkeypatch, tmp_path) -> None:
+    skill_dir = tmp_path / "withmanifest"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: withmanifest\ndescription: has manifest\n---\n# Body\n",
+        encoding="utf-8",
+    )
+    _write_manifest(
+        skill_dir,
+        "version: 1.0\ntest_command: python -m pytest tests/withmanifest\n",
+    )
+    monkeypatch.setattr(skills_mod, "skills_dir", lambda: tmp_path)
+
+    found = {s.name: s for s in discover_skills()}
+    assert found["withmanifest"].manifest is not None
+    assert found["withmanifest"].manifest.tested is True

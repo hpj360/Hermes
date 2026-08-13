@@ -1,0 +1,4 @@
+version: "1.0"
+provides:
+  - liquid-glass-ui
+test_command: "python -m pytest tests/skills/liquid_glass_builder"

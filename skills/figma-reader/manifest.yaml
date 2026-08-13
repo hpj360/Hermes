@@ -1,0 +1,6 @@
+version: "1.0"
+provides:
+  - figma-api
+requires:
+  - FIGMA_TOKEN
+test_command: "python -m pytest tests/skills/figma_reader"

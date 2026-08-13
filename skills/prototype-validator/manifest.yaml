@@ -1,0 +1,4 @@
+version: "1.0"
+provides:
+  - prototype-validation
+test_command: "python -m pytest tests/skills/prototype_validator"

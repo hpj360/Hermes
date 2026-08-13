@@ -1,0 +1,4 @@
+version: "1.0"
+provides:
+  - component-selection
+test_command: "python -m pytest tests/skills/component_library_selector"

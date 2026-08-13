@@ -37,6 +37,12 @@ def cmd_skills_list(args: argparse.Namespace) -> int:
     if not skills:
         print(f"No skills found in {skills_dir()}")
         return 0
+    if getattr(args, "untested", False):
+        untested = [s for s in skills if not (s.manifest and s.manifest.tested)]
+        print(f"Untested skills ({len(untested)}/{len(skills)}):")
+        for s in untested:
+            print(f"  - {s.name}")
+        return 0
     print(f"Installed skills ({len(skills)}):")
     for s in skills:
         meta_desc = ""
@@ -202,7 +208,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_skills = sub.add_parser("skills", help="Manage installed skills")
     p_skills_sub = p_skills.add_subparsers(dest="skills_cmd", required=True)
-    p_skills_sub.add_parser("list", help="List installed skills").set_defaults(func=cmd_skills_list)
+    p_list = p_skills_sub.add_parser("list", help="List installed skills")
+    p_list.add_argument(
+        "--untested",
+        action="store_true",
+        help="Only list skills without a test_command in manifest.yaml",
+    )
+    p_list.set_defaults(func=cmd_skills_list)
 
     p_know = sub.add_parser("knowledge", help="List knowledge documents")
     p_know_sub = p_know.add_subparsers(dest="know_cmd", required=True)

@@ -1,0 +1,5 @@
+version: "1.0"
+provides:
+  - web-search
+requires:
+  - BRAVE_API_KEY

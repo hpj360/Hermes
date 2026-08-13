@@ -1,0 +1,4 @@
+version: "1.0"
+provides:
+  - ui-review
+test_command: "python -m pytest tests/skills/ui_review_checklist"
