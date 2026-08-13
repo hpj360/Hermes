@@ -7,6 +7,7 @@ WorkerPool execution (cancel/retry/timeout).
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -265,6 +266,32 @@ class TestJobStore:
 
     def test_update_status_missing(self, store: JobStore) -> None:
         assert not store.update_status("nonexistent", JobStatus.SUCCEEDED)
+
+    def test_migrates_legacy_jobs_json(self, tmp_path: Path, sample_job: ScheduledJob) -> None:
+        """A legacy jobs.json should be migrated into SQLite on construction."""
+        legacy = tmp_path / "jobs.json"
+        legacy.write_text(
+            json.dumps({sample_job.job_id: sample_job.to_dict()}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        store2 = JobStore(state_dir=tmp_path)
+        fetched = store2.get(sample_job.job_id)
+        assert fetched is not None
+        assert fetched.job_id == sample_job.job_id
+        assert fetched.status == sample_job.status
+
+    def test_migrate_legacy_ignores_invalid_json(self, tmp_path: Path) -> None:
+        """A corrupt legacy jobs.json should be skipped without raising."""
+        legacy = tmp_path / "jobs.json"
+        legacy.write_text("not json", encoding="utf-8")
+        store2 = JobStore(state_dir=tmp_path)
+        assert store2.list() == []
+
+    def test_delete(self, store: JobStore, sample_job: ScheduledJob) -> None:
+        store.save(sample_job)
+        assert store.delete(sample_job.job_id) is True
+        assert store.get(sample_job.job_id) is None
+        assert store.delete(sample_job.job_id) is False
 
 
 # ---------------------------------------------------------------------------

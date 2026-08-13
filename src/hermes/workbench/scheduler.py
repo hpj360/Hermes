@@ -20,17 +20,23 @@ the existing ``TaskScheduler.run``. We never re-implement execution logic.
 
 from __future__ import annotations
 
+import builtins
+import json
 import queue as _queue
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, List
+from typing import Any
 
-from hermes.workbench.persistence import atomic_write_json, safe_read_json
+from hermes.workbench.persistence import safe_read_json
+
+# Guards concurrent first-touch schema creation on the JobStore SQLite database.
+_JOBSTORE_SCHEMA_LOCK = threading.Lock()
 
 
 __all__ = [
@@ -96,7 +102,7 @@ class RetryPolicy:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "RetryPolicy":
+    def from_dict(cls, data: dict[str, Any] | None) -> RetryPolicy:
         if not data:
             return cls()
         return cls(
@@ -135,7 +141,7 @@ class JobExecution:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "JobExecution":
+    def from_dict(cls, data: dict[str, Any]) -> JobExecution:
         return cls(
             attempt_num=int(data["attempt_num"]),
             started_at=data["started_at"],
@@ -229,7 +235,7 @@ class ScheduledJob:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ScheduledJob":
+    def from_dict(cls, data: dict[str, Any]) -> ScheduledJob:
         return cls(
             task=_task_from_dict(data.get("task", {})),
             job_id=data.get("job_id", ""),
@@ -247,7 +253,7 @@ class ScheduledJob:
         )
 
     @classmethod
-    def from_template(cls, template: dict[str, Any], submitted_by: str = "cron") -> "ScheduledJob":
+    def from_template(cls, template: dict[str, Any], submitted_by: str = "cron") -> ScheduledJob:
         """Instantiate a new job from a template (job_id/status/attempts regenerated)."""
         template = dict(template)
         template.pop("job_id", None)
@@ -265,58 +271,157 @@ class ScheduledJob:
 
 
 class JobStore:
-    """Thread-safe persistence for ScheduledJob + execution history."""
+    """Thread-safe persistence for ScheduledJob + execution history.
+
+    Backed by SQLite (stdlib ``sqlite3``, WAL mode) for concurrent read/write
+    without a global lock. Each thread uses its own connection (sqlite3
+    connections are thread-affine); schema creation is guarded by a module
+    lock. On first construction, a legacy ``jobs.json`` file (from the pre-SQLite
+    implementation) is migrated in automatically, then left in place for a
+    30-day grace window (never deleted).
+    """
 
     def __init__(self, state_dir: Path | str) -> None:
         self.state_dir = Path(state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        self._path = self.state_dir / "jobs.json"
-        self._lock = threading.Lock()
-        self._jobs: dict[str, dict[str, Any]] = self._load()
+        self._db_path = self.state_dir / "jobs.db"
+        self._legacy_path = self.state_dir / "jobs.json"
+        self._local = threading.local()
+        self._ensure_schema()
+        self._migrate_legacy()
 
-    def _load(self) -> dict[str, dict[str, Any]]:
-        data = safe_read_json(self._path, default={})
-        return data if isinstance(data, dict) else {}
+    @property
+    def _conn(self) -> Any:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = __import__("sqlite3").connect(str(self._db_path), check_same_thread=True)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            self._local.conn = conn
+        return conn
 
-    def _save_locked(self) -> None:
-        atomic_write_json(self._path, self._jobs)
+    def _ensure_schema(self) -> None:
+        import sqlite3
+
+        with _JOBSTORE_SCHEMA_LOCK:
+            conn = sqlite3.connect(str(self._db_path), check_same_thread=True)
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS jobs("
+                    "  job_id TEXT PRIMARY KEY,"
+                    "  status TEXT,"
+                    "  target_project TEXT,"
+                    "  payload TEXT"
+                    ")"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(target_project)"
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+    def _migrate_legacy(self) -> None:
+        """Import a legacy ``jobs.json`` into SQLite (idempotent)."""
+        if not self._legacy_path.exists():
+            return
+        data = safe_read_json(self._legacy_path, default={})
+        if not isinstance(data, dict):
+            return
+        conn = self._conn
+        for job_id, payload in data.items():
+            if not isinstance(payload, dict):
+                continue
+            status = str(payload.get("status", "PENDING"))
+            project = str(payload.get("target_project", "default"))
+            conn.execute(
+                "INSERT OR IGNORE INTO jobs(job_id, status, target_project, payload) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    job_id,
+                    status,
+                    project,
+                    json.dumps(payload, ensure_ascii=False),
+                ),
+            )
+        conn.commit()
 
     def save(self, job: ScheduledJob) -> None:
-        with self._lock:
-            self._jobs[job.job_id] = job.to_dict()
-            self._save_locked()
+        conn = self._conn
+        payload = job.to_dict()
+        conn.execute(
+            "INSERT OR REPLACE INTO jobs(job_id, status, target_project, payload) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                job.job_id,
+                job.status.value,
+                job.target_project,
+                json.dumps(payload, ensure_ascii=False),
+            ),
+        )
+        conn.commit()
 
     def get(self, job_id: str) -> ScheduledJob | None:
-        with self._lock:
-            data = self._jobs.get(job_id)
-        return ScheduledJob.from_dict(data) if data else None
+        row = self._conn.execute(
+            "SELECT payload FROM jobs WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return ScheduledJob.from_dict(json.loads(row[0]))
 
-    def list(self) -> "List[ScheduledJob]":
-        with self._lock:
-            snapshot = list(self._jobs.values())
-        return [ScheduledJob.from_dict(d) for d in snapshot]
+    def list(self) -> builtins.list[ScheduledJob]:
+        rows = self._conn.execute(
+            "SELECT payload FROM jobs ORDER BY rowid"
+        ).fetchall()
+        return [ScheduledJob.from_dict(json.loads(r[0])) for r in rows]
 
-    def list_by_status(self, status: JobStatus) -> "List[ScheduledJob]":
-        target = status.value
-        with self._lock:
-            snapshot = [d for d in self._jobs.values() if d.get("status") == target]
-        return [ScheduledJob.from_dict(d) for d in snapshot]
+    def list_by_status(self, status: JobStatus) -> builtins.list[ScheduledJob]:
+        rows = self._conn.execute(
+            "SELECT payload FROM jobs WHERE status = ? ORDER BY rowid",
+            (status.value,),
+        ).fetchall()
+        return [ScheduledJob.from_dict(json.loads(r[0])) for r in rows]
 
     def update_status(self, job_id: str, status: JobStatus) -> bool:
-        with self._lock:
-            if job_id not in self._jobs:
-                return False
-            self._jobs[job_id]["status"] = status.value
-            self._save_locked()
-            return True
+        conn = self._conn
+        row = conn.execute(
+            "SELECT payload FROM jobs WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        payload = json.loads(row[0])
+        payload["status"] = status.value
+        conn.execute(
+            "UPDATE jobs SET status = ?, payload = ? WHERE job_id = ?",
+            (status.value, json.dumps(payload, ensure_ascii=False), job_id),
+        )
+        conn.commit()
+        return True
 
     def delete(self, job_id: str) -> bool:
-        with self._lock:
-            if job_id not in self._jobs:
-                return False
-            del self._jobs[job_id]
-            self._save_locked()
-            return True
+        conn = self._conn
+        cur = conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+        conn.commit()
+        return bool(cur.rowcount > 0)
+
+    def close(self) -> None:
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._local.conn = None
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ---------------------------------------------------------------------------
