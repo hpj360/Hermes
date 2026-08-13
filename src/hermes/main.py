@@ -11,6 +11,7 @@ from hermes.cli_eval import add_eval_subparser
 from hermes.cli_loop import add_loop_subparser
 from hermes.cli_power import add_power_subparser
 from hermes.cli_secrets import add_secrets_subparser
+from hermes.cli_skill_market import add_skill_market_subcommands
 from hermes.cli_skill_sync import add_skill_sync_subparser
 from hermes.config import get_settings
 from hermes.logging import setup_logging
@@ -215,6 +216,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only list skills without a test_command in manifest.yaml",
     )
     p_list.set_defaults(func=cmd_skills_list)
+
+    add_skill_market_subcommands(p_skills_sub)
 
     p_know = sub.add_parser("knowledge", help="List knowledge documents")
     p_know_sub = p_know.add_subparsers(dest="know_cmd", required=True)

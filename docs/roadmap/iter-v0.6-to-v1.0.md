@@ -206,7 +206,7 @@
 
 ### P2 进行中
 - [x] P2-1 /kb/search proxy（hermes-kb 集成骨架）
-- [ ] P2-2 skill sandbox（RestrictedPython + Deno，需引入第三方依赖 + ADR）
+- [x] P2-2 skill sandbox（stdlib ast 静态门，零依赖，ADR-0009）
 - [x] P2-3 JobQueue BrokerInterface + Redis backend 骨架
 - [x] P2-4 配置指针式继承 + Vault backend
 - [x] P2-5 async bridge 正式化 + ADR-0007
@@ -216,7 +216,7 @@
 - [ ] P3-1 GEPA 红队 variant + denylist（需 LLM）
 - [x] P3-2 Memory 归档（TTL/压缩已有，补 archive_episodes 冷热分离）
 - [ ] P3-3 hermes deploy 一键发布（需发布平台凭证）
-- [ ] P3-4 Skill marketplace（大量工作）
+- [x] P3-4 Skill marketplace（git/HTTP + registry.json，零依赖，ADR-0010）
 
 ---
 

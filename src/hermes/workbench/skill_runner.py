@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from hermes.workbench.sandbox import check_python_file
+
 # ---------------------------------------------------------------------------
 # Platform helpers
 # ---------------------------------------------------------------------------
@@ -150,6 +152,19 @@ def _looks_sensitive_value(value: str) -> bool:
         return False
     lower = value.lower()
     return any(marker in lower for marker in _VALUE_CREDENTIAL_MARKERS)
+
+
+def _parse_sandbox_flag(value: Any) -> bool:
+    """Coerce a frontmatter ``sandbox`` value to a bool (default True).
+
+    The static sandbox is opt-*out*: python entrypoints are gated by default,
+    and a skill may disable it with ``sandbox: false`` (or "no"/"off"/"0").
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in ("false", "no", "off", "0")
+    return True
 
 
 def _parse_front_matter(path: Path) -> dict[str, Any]:
@@ -322,6 +337,7 @@ class SkillSpec:
     requires_env: list[str]
     entrypoint: str | None
     raw_metadata: dict[str, Any]
+    sandbox: bool = True  # static AST gate for python entrypoints (P2-2)
 
 
 @dataclass
@@ -397,6 +413,7 @@ class SkillRunner:
     def _build_spec(self, skill_dir: Path, skill_md: Path) -> SkillSpec:
         fm = _parse_front_matter(skill_md)
         description = str(fm.get("description", "")) or ""
+        sandbox = _parse_sandbox_flag(fm.get("sandbox"))
         raw_metadata = fm.get("metadata")
         if not isinstance(raw_metadata, dict):
             raw_metadata = {}
@@ -422,6 +439,7 @@ class SkillRunner:
             requires_env=requires_env,
             entrypoint=entrypoint,
             raw_metadata=raw_metadata,
+            sandbox=sandbox,
         )
 
     def _run_prompt(self, spec: SkillSpec) -> RunResult:
@@ -462,6 +480,19 @@ class SkillRunner:
                 duration=0.0,
                 error=f"missing bins: {missing}",
             )
+        if spec.runtime == "python" and spec.sandbox and spec.entrypoint:
+            report = check_python_file(spec.path / spec.entrypoint)
+            if not report.clean:
+                first = report.violations[0]
+                return RunResult(
+                    skill=spec.name,
+                    ok=False,
+                    stdout="",
+                    stderr=f"sandbox blocked: {first.message} (line {first.line})",
+                    exit_code=-1,
+                    duration=0.0,
+                    error=f"sandbox blocked at line {first.line}: {first.message}",
+                )
         try:
             cmd = self._build_command(spec, args)
         except FileNotFoundError as exc:

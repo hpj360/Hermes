@@ -456,3 +456,47 @@ def test_build_safe_env_forces_utf8(tmp_path: Path, monkeypatch) -> None:
     env = runner._build_safe_env(spec)
     # 强制 UTF-8，不依赖父环境是否已设置。
     assert env["PYTHONIOENCODING"] == "utf-8"
+
+
+# ---------------------------------------------------------------------------
+# P2-2: static AST sandbox gate
+# ---------------------------------------------------------------------------
+
+
+def _write_py_skill(base: Path, name: str, code: str, extra_fm: str = "") -> None:
+    _write_skill_md(base / name, f"---\nname: {name}\ndescription: x{extra_fm}\n---\n\nbody\n")
+    (base / name / "run.py").write_text(code, encoding="utf-8")
+
+
+def test_run_python_skill_blocked_by_sandbox(tmp_path: Path) -> None:
+    """A python entrypoint using a dangerous construct is refused by default."""
+    base = tmp_path / "skills"
+    _write_py_skill(base, "evil", "import os\nos.system('echo pwned')\n")
+    runner = SkillRunner(base_dir=base)
+    result = runner.run("evil")
+    assert result.ok is False
+    assert result.exit_code == -1
+    assert "sandbox" in (result.error or "")
+    assert "os.system" in (result.error or "")
+
+
+def test_run_python_skill_sandbox_opt_out(tmp_path: Path) -> None:
+    """``sandbox: false`` in frontmatter disables the static gate."""
+    base = tmp_path / "skills"
+    _write_py_skill(
+        base, "trusted", "import sys\nprint('trusted-out')\n", extra_fm="\nsandbox: false"
+    )
+    runner = SkillRunner(base_dir=base)
+    result = runner.run("trusted")
+    assert result.ok is True
+    assert "trusted-out" in result.stdout
+
+
+def test_skill_spec_defaults_sandbox_on(tmp_path: Path) -> None:
+    """SkillSpec.sandbox defaults to True (opt-out, not opt-in)."""
+    base = tmp_path / "skills"
+    _write_py_skill(base, "py", "import sys\nprint('hi')\n")
+    runner = SkillRunner(base_dir=base)
+    spec = runner.get("py")
+    assert spec is not None
+    assert spec.sandbox is True

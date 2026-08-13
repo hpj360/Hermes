@@ -86,6 +86,21 @@
 - **Memory 归档（P3-2）**：`archive_episodes()` 把旧 episode 移入
   `episodes.archive.jsonl` 冷档，热档保持精简，FTS 索引同步重建。
 
+### P2/P3 技术债清零（零依赖落地）
+
+- **skill sandbox（P2-2）**：`workbench/sandbox.py` 用 stdlib `ast` 对 Python
+  entrypoint 做尽力而为的静态门（拒绝 subprocess/socket/eval/exec/`os.system`/
+  `shutil.rmtree`/写入模式 `open`/越权 dunder），默认开启、frontmatter
+  `sandbox: false` 可 opt-out；接入 `skill_runner` 运行前拦截。替代原
+  RestrictedPython/OS 隔离方案（见 ADR-0009）。
+- **Skill marketplace（P3-4）**：`skill_market.py` + `hermes skills
+  install/pack/remote`，registry 降级为 `skills/registry.json` 目录文件 +
+  可选 `HERMES_SKILL_REGISTRY` 远端（stdlib `urllib`）；install 支持 git
+  clone / 本地目录 / zip 归档；pack 用 stdlib `zipfile` 打包为
+  `<name>-<version>.zip`。替代原"在线注册中心/分发服务"（见 ADR-0010）。
+- **Vault backend（P2-4）**：`VaultSecretSource`（stdlib `urllib` 调 KV-v2）与
+  配置指针式继承此前已落地；本次对齐 ROADMAP 勾选状态，消除"技术债"标记。
+
 ## [0.6.0]
 
 - Phase 3 调度中心：Job 队列 / Worker 池 / Cron 触发 / 崩溃恢复 / DAG 依赖 /

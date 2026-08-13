@@ -160,6 +160,8 @@ class Settings(BaseSettings):
     # Skillhub
     # -------------------------------------------------------------------------
     skillhub_api_base: str = Field(default="https://lightmake.site", alias="SKILLHUB_API_BASE")
+    # Skill marketplace registry catalog URL (P3-4). Empty = no remote registry.
+    hermes_skill_registry: str = Field(default="", alias="HERMES_SKILL_REGISTRY")
     skillhub_cos_bucket: str = Field(
         default="skills-store-1259584892", alias="SKILLHUB_COS_BUCKET"
     )
