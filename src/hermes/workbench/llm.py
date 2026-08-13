@@ -13,9 +13,12 @@ Supported providers (all expose ``/chat/completions``):
 Public surface:
     * :class:`LlmMessage`  — role/content message
     * :class:`LlmResponse` — normalized response
-    * :class:`LlmClient`   — chat() / chat_json() methods
+    * :class:`LlmStreamChunk` — a single token/delta chunk from stream()
+    * :class:`LlmClient`   — chat() / chat_json() / stream() / count_tokens()
+    * :class:`LlmRetryPolicy` — exponential backoff retry configuration
     * :func:`make_llm_client` — factory wired to Settings
     * :func:`resolve_provider` — map provider name → (base_url, api_key)
+    * :func:`count_tokens` — approximate token count (tiktoken if available)
 
 Error hierarchy:
     LlmError
@@ -26,8 +29,11 @@ Error hierarchy:
 from __future__ import annotations
 
 import json
+import math
+import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -40,6 +46,9 @@ __all__ = [
     "LlmError",
     "LlmMessage",
     "LlmResponse",
+    "LlmRetryPolicy",
+    "LlmStreamChunk",
+    "count_tokens",
     "make_llm_client",
     "resolve_provider",
 ]
@@ -90,6 +99,34 @@ class LlmResponse:
     model: str = ""
     finish_reason: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class LlmStreamChunk:
+    """A single delta chunk from a streaming chat completion."""
+
+    content: str
+    finish_reason: str = ""
+    model: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class LlmRetryPolicy:
+    """Exponential backoff retry configuration for LLM HTTP calls.
+
+    Retries are triggered on transient failures: HTTP 429 (rate limit),
+    5xx (server error), or network errors (``URLError``). ``max_retries=0``
+    disables retry (the default, preserving prior behavior).
+    """
+
+    max_retries: int = 0
+    base_delay: float = 2.0
+    max_delay: float = 60.0
+
+    def delay_for(self, attempt: int) -> float:
+        """Backoff delay in seconds for *attempt* (0-indexed)."""
+        return min(float(self.base_delay * (2 ** attempt)), self.max_delay)
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +186,7 @@ class LlmClient:
         model: str,
         timeout: float = 60.0,
         temperature: float = 0.2,
+        retry_policy: LlmRetryPolicy | None = None,
     ) -> None:
         # Normalize: ensure base_url has no trailing slash so we can append
         # the path safely.
@@ -157,6 +195,7 @@ class LlmClient:
         self.model = model
         self.timeout = timeout
         self.temperature = temperature
+        self.retry_policy = retry_policy or LlmRetryPolicy()
 
     # ---- public API ---------------------------------------------------
 
@@ -171,6 +210,8 @@ class LlmClient:
     ) -> LlmResponse:
         """Call ``POST {base_url}/chat/completions`` and return the response.
 
+        Retries transient failures (429/5xx/network) per :attr:`retry_policy`.
+
         Raises :class:`LlmApiError` on HTTP failure or malformed payload.
         """
         url = f"{self.base_url}/chat/completions"
@@ -183,6 +224,77 @@ class LlmClient:
             body["max_tokens"] = max_tokens
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
+        last_exc: _RetryableError | None = None
+        for attempt in range(self.retry_policy.max_retries + 1):
+            if attempt > 0:
+                time.sleep(self.retry_policy.delay_for(attempt - 1))
+            try:
+                return self._post_once(url, payload, timeout=timeout)
+            except _RetryableError as exc:
+                last_exc = exc
+                if attempt >= self.retry_policy.max_retries:
+                    raise exc.api_error from exc
+        assert last_exc is not None
+        raise last_exc.api_error
+
+    def stream(
+        self,
+        messages: list[LlmMessage],
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+    ) -> Iterator[LlmStreamChunk]:
+        """Stream a chat completion, yielding one :class:`LlmStreamChunk` per delta.
+
+        The request uses ``stream: true``; the response is parsed as
+        server-sent events (``data: {json}`` lines). Chunks with empty content
+        deltas (e.g. role-only or a trailing ``[DONE]``) are skipped.
+
+        Retries transient failures per :attr:`retry_policy` (only before any
+        bytes are streamed — once streaming begins the caller owns the stream).
+        """
+        url = f"{self.base_url}/chat/completions"
+        body: dict[str, Any] = {
+            "model": model or self.model,
+            "messages": [m.to_dict() for m in messages],
+            "temperature": self.temperature if temperature is None else temperature,
+            "stream": True,
+        }
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
+        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+
+        last_exc: _RetryableError | None = None
+        for attempt in range(self.retry_policy.max_retries + 1):
+            if attempt > 0:
+                time.sleep(self.retry_policy.delay_for(attempt - 1))
+            try:
+                yield from self._stream_once(url, payload, timeout=timeout)
+                return
+            except _RetryableError as exc:
+                last_exc = exc
+                if attempt >= self.retry_policy.max_retries:
+                    raise exc.api_error from exc
+        assert last_exc is not None
+        raise last_exc.api_error
+
+    def count_tokens(self, text: str) -> int:
+        """Approximate the number of tokens in *text*.
+
+        Uses the ``tiktoken`` library when installed (accurate for common
+        OpenAI models); otherwise falls back to a deterministic heuristic of
+        ``ceil(len(text) / 4)``, which is a reasonable approximation for
+        mixed English/CJK text. Returns 0 for empty input.
+        """
+        return count_tokens(text)
+
+    # ---- internals -----------------------------------------------------
+
+    def _post_once(
+        self, url: str, payload: bytes, timeout: float | None
+    ) -> LlmResponse:
         req = urllib.request.Request(url, data=payload, method="POST")
         req.add_header("Content-Type", "application/json; charset=utf-8")
         if self.api_key:
@@ -199,11 +311,15 @@ class LlmClient:
                 text = e.read().decode("utf-8", errors="replace")
             except Exception:  # noqa: BLE001
                 pass
-            raise LlmApiError(
+            exc = LlmApiError(
                 f"LLM HTTP {e.code}: {text or e.reason}", status_code=e.code
-            ) from e
+            )
+            if _is_transient(e.code):
+                raise _RetryableError.from_api_error(exc) from e
+            raise exc from e
         except urllib.error.URLError as e:
-            raise LlmApiError(f"LLM network error: {e.reason}") from e
+            exc = LlmApiError(f"LLM network error: {e.reason}")
+            raise _RetryableError.from_api_error(exc) from e
 
         try:
             data = json.loads(raw_bytes.decode("utf-8"))
@@ -211,6 +327,61 @@ class LlmClient:
             raise LlmApiError(f"LLM returned non-JSON body: {e}") from e
 
         return self._parse_response(data)
+
+    def _stream_once(
+        self, url: str, payload: bytes, timeout: float | None
+    ) -> Iterator[LlmStreamChunk]:
+        req = urllib.request.Request(url, data=payload, method="POST")
+        req.add_header("Content-Type", "application/json; charset=utf-8")
+        req.add_header("Accept", "text/event-stream")
+        if self.api_key:
+            req.add_header("Authorization", f"Bearer {self.api_key}")
+
+        try:
+            resp = urllib.request.urlopen(
+                req, timeout=timeout if timeout is not None else self.timeout
+            )
+        except urllib.error.HTTPError as e:
+            text = ""
+            try:
+                text = e.read().decode("utf-8", errors="replace")
+            except Exception:  # noqa: BLE001
+                pass
+            exc = LlmApiError(
+                f"LLM HTTP {e.code}: {text or e.reason}", status_code=e.code
+            )
+            if _is_transient(e.code):
+                raise _RetryableError.from_api_error(exc) from e
+            raise exc from e
+        except urllib.error.URLError as e:
+            exc = LlmApiError(f"LLM network error: {e.reason}")
+            raise _RetryableError.from_api_error(exc) from e
+
+        try:
+            with resp:
+                for chunk in _parse_sse_stream(resp):
+                    yield chunk
+        finally:
+            resp.close()
+
+    def _parse_response(self, data: dict[str, Any]) -> LlmResponse:
+        """Extract the assistant message from an OpenAI-style response."""
+        try:
+            choices = data.get("choices") or []
+            if not choices:
+                raise LlmApiError(f"LLM response has no choices: {data}")
+            first = choices[0]
+            msg = first.get("message") or {}
+            content = msg.get("content") or ""
+            finish = first.get("finish_reason", "")
+        except (KeyError, TypeError, IndexError) as e:
+            raise LlmApiError(f"malformed LLM response: {e}: {data}") from e
+        return LlmResponse(
+            content=content,
+            model=data.get("model", ""),
+            finish_reason=finish,
+            raw=data,
+        )
 
     def chat_json(
         self,
@@ -238,27 +409,6 @@ class LlmClient:
         )
         return _extract_json(response.content)
 
-    # ---- internals -----------------------------------------------------
-
-    def _parse_response(self, data: dict[str, Any]) -> LlmResponse:
-        """Extract the assistant message from an OpenAI-style response."""
-        try:
-            choices = data.get("choices") or []
-            if not choices:
-                raise LlmApiError(f"LLM response has no choices: {data}")
-            first = choices[0]
-            msg = first.get("message") or {}
-            content = msg.get("content") or ""
-            finish = first.get("finish_reason", "")
-        except (KeyError, TypeError, IndexError) as e:
-            raise LlmApiError(f"malformed LLM response: {e}: {data}") from e
-        return LlmResponse(
-            content=content,
-            model=data.get("model", ""),
-            finish_reason=finish,
-            raw=data,
-        )
-
 
 # ---------------------------------------------------------------------------
 # Factory
@@ -269,11 +419,16 @@ def make_llm_client(
     provider: str | None = None,
     model: str | None = None,
     settings: Settings | None = None,
+    retry_policy: LlmRetryPolicy | None = None,
 ) -> LlmClient:
     """Build an :class:`LlmClient` from Settings.
 
     When *provider* or *model* are None, fall back to
     ``Settings.hermes_llm_provider`` / ``Settings.hermes_llm_model``.
+
+    *retry_policy* defaults to a conservative ``max_retries=2`` exponential
+    backoff so transient 429/5xx failures are retried automatically. Pass
+    ``LlmRetryPolicy(max_retries=0)`` to disable.
 
     Raises :class:`LlmConfigError` when the provider is unconfigured.
     """
@@ -281,12 +436,15 @@ def make_llm_client(
     provider = (provider or s.hermes_llm_provider).strip()
     model = model or s.hermes_llm_model
     base_url, api_key = resolve_provider(provider, settings=s)
+    if retry_policy is None:
+        retry_policy = LlmRetryPolicy(max_retries=2)
     return LlmClient(
         base_url=base_url,
         api_key=api_key,
         model=model,
         timeout=s.hermes_llm_timeout,
         temperature=s.hermes_llm_temperature,
+        retry_policy=retry_policy,
     )
 
 
@@ -334,3 +492,102 @@ def _extract_json(text: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             pass
     raise LlmApiError(f"could not extract JSON from LLM response: {text[:200]!r}")
+
+
+# ---------------------------------------------------------------------------
+# Retry / streaming / token-counting helpers
+# ---------------------------------------------------------------------------
+
+
+class _RetryableError(Exception):
+    """Internal marker for transient LLM errors that should be retried.
+
+    Wraps the original :class:`LlmApiError`; ``chat``/``stream`` catch this,
+    sleep, and re-attempt. When retries are exhausted the wrapped error is
+    re-raised as-is so callers see a normal :class:`LlmApiError`.
+    """
+
+    def __init__(self, api_error: LlmApiError) -> None:
+        super().__init__(str(api_error))
+        self.api_error = api_error
+
+    @classmethod
+    def from_api_error(cls, api_error: LlmApiError) -> _RetryableError:
+        return cls(api_error)
+
+
+def _is_transient(status_code: int) -> bool:
+    """Return True for status codes worth retrying (429 / 5xx)."""
+    return status_code == 429 or 500 <= status_code < 600
+
+
+def _parse_sse_stream(resp: Any) -> Iterator[LlmStreamChunk]:
+    """Parse a streaming SSE response body into :class:`LlmStreamChunk` items.
+
+    Handles the OpenAI chat-completions stream format: ``data: {json}`` lines
+    separated by blank lines, ending with ``data: [DONE]``. Delta content is
+    read from ``choices[0].delta.content``.
+    """
+    for raw_line in resp:
+        line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else raw_line
+        line = line.strip()
+        if not line or line.startswith(":"):
+            continue
+        if line.startswith("data:"):
+            data = line[len("data:"):].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                obj = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            choices = obj.get("choices") or []
+            if not choices:
+                continue
+            first = choices[0]
+            delta = first.get("delta") or {}
+            content = delta.get("content")
+            finish = first.get("finish_reason") or ""
+            if not content:
+                # Skip role-only / empty deltas unless it carries a finish reason.
+                if finish:
+                    yield LlmStreamChunk(
+                        content="", finish_reason=finish, model=obj.get("model", ""), raw=obj
+                    )
+                continue
+            yield LlmStreamChunk(
+                content=content,
+                finish_reason=finish,
+                model=obj.get("model", ""),
+                raw=obj,
+            )
+
+
+def _token_count_fallback(text: str) -> int:
+    """Deterministic token-count heuristic (≈4 chars/token)."""
+    if not text:
+        return 0
+    return max(1, math.ceil(len(text) / 4))
+
+
+def count_tokens(text: str, model: str = "gpt-3.5-turbo") -> int:
+    """Approximate the number of tokens in *text*.
+
+    Uses the ``tiktoken`` library when installed (accurate for OpenAI models);
+    otherwise falls back to a ``len(text)/4`` heuristic. ``model`` is only used
+    when tiktoken is available and is ignored by the fallback.
+
+    This function is deterministic and never raises: any error loading
+    tiktoken or encoding the text degrades to the fallback heuristic.
+    """
+    if not text:
+        return 0
+    try:
+        import tiktoken  # type: ignore[import-not-found]
+
+        enc = tiktoken.get_encoding("cl100k_base")
+        return len(enc.encode(text))
+    except Exception:  # noqa: BLE001 — tiktoken optional; degrade gracefully
+        return _token_count_fallback(text)

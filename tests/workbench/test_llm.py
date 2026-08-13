@@ -14,7 +14,10 @@ from hermes.workbench.llm import (
     LlmConfigError,
     LlmMessage,
     LlmResponse,
+    LlmRetryPolicy,
+    LlmStreamChunk,
     _extract_json,
+    count_tokens,
     make_llm_client,
     resolve_provider,
 )
@@ -314,3 +317,170 @@ def test_extract_json_prose() -> None:
 def test_extract_json_invalid_raises() -> None:
     with pytest.raises(LlmApiError):
         _extract_json("no json at all")
+
+
+# ---------------------------------------------------------------------------
+# retry policy
+# ---------------------------------------------------------------------------
+
+
+def test_retry_policy_delay_exponential() -> None:
+    p = LlmRetryPolicy(max_retries=3, base_delay=2.0, max_delay=60.0)
+    assert p.delay_for(0) == 2.0
+    assert p.delay_for(1) == 4.0
+    assert p.delay_for(2) == 8.0
+    # capped by max_delay
+    assert p.delay_for(10) == 60.0
+
+
+def test_chat_retries_transient_then_succeeds() -> None:
+    """chat should retry a 429 then succeed on the next attempt."""
+    import urllib.error
+
+    client = LlmClient(
+        base_url="https://api.example.com/v1",
+        api_key="k",
+        model="m",
+        retry_policy=LlmRetryPolicy(max_retries=2, base_delay=0.0, max_delay=0.0),
+    )
+    good = {"choices": [{"message": {"content": "recovered"}, "finish_reason": "stop"}]}
+    err = urllib.error.HTTPError(
+        url="x", code=429, msg="Too Many Requests", hdrs=None, fp=None
+    )
+    # First call raises 429, second succeeds.
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=[err, _mock_urlopen_response(good)],
+    ):
+        resp = client.chat([LlmMessage(role="user", content="hi")])
+    assert resp.content == "recovered"
+
+
+def test_chat_gives_up_after_retries() -> None:
+    """chat should raise LlmApiError after retries are exhausted."""
+    import urllib.error
+
+    client = LlmClient(
+        base_url="https://api.example.com/v1",
+        api_key="k",
+        model="m",
+        retry_policy=LlmRetryPolicy(max_retries=2, base_delay=0.0, max_delay=0.0),
+    )
+    err = urllib.error.HTTPError(
+        url="x", code=500, msg="Server Error", hdrs=None, fp=None
+    )
+    with patch("urllib.request.urlopen", side_effect=err):
+        with pytest.raises(LlmApiError) as exc_info:
+            client.chat([LlmMessage(role="user", content="hi")])
+    assert exc_info.value.status_code == 500
+
+
+def test_chat_no_retry_when_disabled() -> None:
+    """chat should not retry when max_retries=0 (default)."""
+    import urllib.error
+
+    client = LlmClient(base_url="https://api.example.com/v1", api_key="k", model="m")
+    err = urllib.error.HTTPError(
+        url="x", code=429, msg="Too Many Requests", hdrs=None, fp=None
+    )
+    with patch("urllib.request.urlopen", side_effect=err):
+        with pytest.raises(LlmApiError):
+            client.chat([LlmMessage(role="user", content="hi")])
+
+
+# ---------------------------------------------------------------------------
+# streaming
+# ---------------------------------------------------------------------------
+
+
+class _FakeStreamResp:
+    """A fake file-like object yielding SSE lines for stream parsing."""
+
+    def __init__(self, lines: list[bytes]) -> None:
+        self._lines = lines
+        self._closed = False
+
+    def __iter__(self):
+        return iter(self._lines)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self._closed = True
+
+    def close(self) -> None:
+        self._closed = True
+
+
+def _sse_lines() -> list[bytes]:
+    return [
+        b"data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n",
+        b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
+        b"data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n",
+        b"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+        b"data: [DONE]\n\n",
+    ]
+
+
+def test_stream_yields_content_chunks() -> None:
+    client = LlmClient(base_url="https://api.example.com/v1", api_key="k", model="m")
+    with patch("urllib.request.urlopen", return_value=_FakeStreamResp(_sse_lines())):
+        chunks = list(client.stream([LlmMessage(role="user", content="hi")]))
+    contents = [c.content for c in chunks]
+    # Non-empty deltas plus a trailing empty chunk carrying the finish reason.
+    assert contents == ["Hello", " world", ""]
+    assert all(isinstance(c, LlmStreamChunk) for c in chunks)
+    assert chunks[-1].finish_reason == "stop"
+
+
+def test_stream_captures_finish_reason() -> None:
+    client = LlmClient(base_url="https://api.example.com/v1", api_key="k", model="m")
+    with patch("urllib.request.urlopen", return_value=_FakeStreamResp(_sse_lines())):
+        chunks = list(client.stream([LlmMessage(role="user", content="hi")]))
+    finish = [c.finish_reason for c in chunks if c.finish_reason]
+    assert finish == ["stop"]
+
+
+def test_stream_retries_transient_before_streaming() -> None:
+    import urllib.error
+
+    client = LlmClient(
+        base_url="https://api.example.com/v1",
+        api_key="k",
+        model="m",
+        retry_policy=LlmRetryPolicy(max_retries=1, base_delay=0.0, max_delay=0.0),
+    )
+    err = urllib.error.HTTPError(
+        url="x", code=503, msg="Unavailable", hdrs=None, fp=None
+    )
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=[err, _FakeStreamResp(_sse_lines())],
+    ):
+        chunks = list(client.stream([LlmMessage(role="user", content="hi")]))
+    assert [c.content for c in chunks] == ["Hello", " world", ""]
+
+
+# ---------------------------------------------------------------------------
+# token counting
+# ---------------------------------------------------------------------------
+
+
+def test_count_tokens_empty() -> None:
+    assert count_tokens("") == 0
+
+
+def test_count_tokens_fallback_positive() -> None:
+    # tiktoken may not be installed; the fallback must be deterministic and > 0.
+    n = count_tokens("hello world")
+    assert isinstance(n, int) and n > 0
+
+
+def test_count_tokens_consistent() -> None:
+    assert count_tokens("abcd") == count_tokens("abcd")
+
+
+def test_llm_client_count_tokens_method() -> None:
+    client = LlmClient(base_url="https://api.example.com/v1", api_key="k", model="m")
+    assert client.count_tokens("test") == count_tokens("test")
