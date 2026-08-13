@@ -15,7 +15,7 @@ from hermes.cli_skill_sync import add_skill_sync_subparser
 from hermes.config import get_settings
 from hermes.logging import setup_logging
 from hermes.profile import get_profile_markdown, load_profile
-from hermes.skills import discover_skills, list_knowledge_docs, skills_dir, knowledge_dir
+from hermes.skills import discover_skills, knowledge_dir, list_knowledge_docs, skills_dir
 from hermes.workbench.cli import add_workbench_subparser
 
 
@@ -115,6 +115,22 @@ def cmd_profile_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_audit_tail(args: argparse.Namespace) -> int:
+    """Print the most recent persistent audit records."""
+    from hermes.workbench.audit import default_audit_store
+
+    records = default_audit_store().tail(n=args.n, server=args.server)
+    if not records:
+        print("(no audit records)")
+        return 0
+    for r in records:
+        flag = "OK" if r.success else "ERR"
+        print(f"{r.timestamp} [{flag}] {r.server}.{r.method} {r.args}")
+        if r.error:
+            print(f"    error: {r.error}")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Run health checks on the Hermes environment (degraded-friendly)."""
     settings = get_settings()
@@ -203,6 +219,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_profile_show = p_profile_sub.add_parser("show", help="Show user profile")
     p_profile_show.add_argument("--json", action="store_true", help="Output raw JSON")
     p_profile_show.set_defaults(func=cmd_profile_show)
+
+    p_audit = sub.add_parser("audit", help="View persistent audit trail")
+    p_audit_sub = p_audit.add_subparsers(dest="audit_cmd", required=True)
+    p_audit_tail = p_audit_sub.add_parser("tail", help="Show recent audit records")
+    p_audit_tail.add_argument("-n", type=int, default=20, help="Number of records (default 20)")
+    p_audit_tail.add_argument("--server", default=None, help="Filter by server name")
+    p_audit_tail.set_defaults(func=cmd_audit_tail)
 
     add_workbench_subparser(sub)
 

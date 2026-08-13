@@ -51,6 +51,9 @@ class GitHubMCPClient:
         self.token = token or os.environ.get("GITHUB_TOKEN", "")
         self.repo = repo or os.environ.get("GITHUB_REPOSITORY", "")
         self._audit_log: list[MCPCallRecord] = []
+        # Optional persistent audit store (lazy import to keep mcp.py light and
+        # avoid a hard dependency on workbench at import time).
+        self._audit_store: Any = None
 
     @property
     def available(self) -> bool:
@@ -58,14 +61,39 @@ class GitHubMCPClient:
         return bool(self.token)
 
     def _record(self, method: str, args: dict[str, Any], success: bool, error: str = "") -> None:
-        self._audit_log.append(MCPCallRecord(
+        record = MCPCallRecord(
             timestamp=datetime.now(timezone.utc).isoformat(),
             server="github",
             method=method,
             args=args,
             success=success,
             error=error,
-        ))
+        )
+        self._audit_log.append(record)
+        self._persist_audit(method, args, success, error)
+
+    def _persist_audit(
+        self, method: str, args: dict[str, Any], success: bool, error: str
+    ) -> None:
+        """Append the call to the persistent audit store (best-effort).
+
+        Persistence failure must never break the MCP operation itself, so any
+        exception is swallowed after logging.
+        """
+        try:
+            if self._audit_store is None:
+                from hermes.workbench.audit import default_audit_store
+
+                self._audit_store = default_audit_store()
+            self._audit_store.record(
+                server="github",
+                method=method,
+                success=success,
+                args=args,
+                error=error,
+            )
+        except Exception:  # noqa: BLE001 — audit persistence is non-critical
+            logger.warning("failed to persist MCP audit record for %s", method)
 
     def _headers(self) -> dict[str, str]:
         return {
