@@ -138,6 +138,25 @@ def test_metrics_prometheus_format(client):
     assert resp.text.count("# TYPE") >= 3
 
 
+def test_kb_search_not_configured(client, monkeypatch):
+    """GET /kb/search should degrade to 503 when hermes-kb is not configured."""
+    class FakeSettings:
+        hermes_kb_base_url = ""
+        openclaw_gateway_token = None
+
+    monkeypatch.setattr("hermes.config.get_settings", lambda: FakeSettings())
+    resp = client("GET", "/kb/search?q=hello")
+    assert resp.status == 503
+    body = _json(resp)
+    assert body["results"] == []
+
+
+def test_kb_search_missing_query(client):
+    """GET /kb/search without ?q should be a validation error (400)."""
+    resp = client("GET", "/kb/search")
+    assert resp.status == 400
+
+
 def test_unknown_route_404(client):
     resp = client("GET", "/nonexistent")
     assert resp.status == 404

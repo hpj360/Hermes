@@ -60,6 +60,7 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("GET", r"^/github/sync$", "h_get_github_sync"),
     ("GET", r"^/ima/knowledge-bases$", "h_get_ima_kbs"),
     ("GET", r"^/ima/search$", "h_get_ima_search"),
+    ("GET", r"^/kb/search$", "h_get_kb_search"),
     ("POST", r"^/ima/push$", "h_post_ima_push"),
     ("POST", r"^/ima/sync$", "h_post_ima_sync"),
     ("POST", r"^/ima/urls$", "h_post_ima_urls"),
@@ -721,6 +722,45 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 ],
             },
         )
+
+    def h_get_kb_search(self) -> None:
+        """Proxy a semantic search to the hermes-kb service (P2-1).
+
+        Degrades gracefully: 503 when ``HERMES_KB_BASE_URL`` is unset, 502 when
+        the upstream is unreachable, otherwise forwards the response verbatim.
+        """
+        import json as _json
+        import urllib.error
+        import urllib.parse
+        import urllib.request
+
+        from hermes.config import get_settings
+
+        params = self._query_params()
+        q = params.get("q", "").strip()
+        if not q:
+            raise ValidationError("query param 'q' is required")
+        base = get_settings().hermes_kb_base_url.strip()
+        if not base:
+            self._send_json(
+                503,
+                {
+                    "query": q,
+                    "results": [],
+                    "error": "hermes-kb not configured (set HERMES_KB_BASE_URL)",
+                },
+            )
+            return
+        url = f"{base.rstrip('/')}/kb/search?q={urllib.parse.quote(q)}"
+        try:
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                data = _json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, OSError, _json.JSONDecodeError):
+            self._send_json(
+                502, {"query": q, "results": [], "error": "hermes-kb unreachable"}
+            )
+            return
+        self._send_json(200, data)
 
     def h_post_ima_push(self) -> None:
         """Push content to IMA as a note."""
