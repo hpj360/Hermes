@@ -8,6 +8,7 @@ from hermes.gepa import (
     GEPAExperiment,
     Variant,
     VariantResult,
+    auto_generate_variants,
     get_latest_promotion,
     list_experiments,
     load_experiment,
@@ -473,3 +474,68 @@ def test_run_gepa_cycle_end_to_end_with_persistence(tmp_path, monkeypatch):
     latest = get_latest_promotion()
     assert latest is not None
     assert latest.winner_id == "v2"
+
+
+# ── P1-5: auto_generate_variants (LLM-driven) ────────────────────────
+
+
+class _FakeLlm:
+    """Minimal stand-in for hermes.workbench.llm.LlmClient."""
+
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def chat_json(self, messages):
+        return self._payload
+
+
+def test_auto_generate_variants_creates_files(tmp_path, monkeypatch):
+    monkeypatch.setattr("hermes.gepa.gepa_dir", lambda: tmp_path)
+    llm = _FakeLlm(
+        {
+            "variants": [
+                {
+                    "description": "diagnose-first",
+                    "agent_prompt": "Diagnose before fixing anything.",
+                },
+                {
+                    "description": "minimal-change",
+                    "agent_prompt": "Only change the smallest necessary surface.",
+                },
+            ]
+        }
+    )
+    variants = auto_generate_variants(llm, "fix failing CI", n_variants=2, output_dir=tmp_path / "out")
+    assert len(variants) == 2
+    assert variants[0].description == "diagnose-first"
+    assert variants[0].metadata["generated_by"] == "llm"
+    # Each variant's agent_file should point to a written .md file.
+    assert (tmp_path / "out" / f"{variants[0].variant_id}.md").exists()
+    assert variants[1].agent_file.endswith(".md")
+
+
+def test_auto_generate_variants_degrades_without_llm(tmp_path, monkeypatch):
+    monkeypatch.setattr("hermes.gepa.gepa_dir", lambda: tmp_path)
+    assert auto_generate_variants(None, "task") == []
+
+
+def test_auto_generate_variants_zero_variants(tmp_path, monkeypatch):
+    monkeypatch.setattr("hermes.gepa.gepa_dir", lambda: tmp_path)
+    llm = _FakeLlm({"variants": []})
+    assert auto_generate_variants(llm, "task", n_variants=0) == []
+
+
+def test_auto_generate_variants_bad_payload(tmp_path, monkeypatch):
+    monkeypatch.setattr("hermes.gepa.gepa_dir", lambda: tmp_path)
+    llm = _FakeLlm({"unexpected": "shape"})
+    assert auto_generate_variants(llm, "task", n_variants=3) == []
+
+
+def test_auto_generate_variants_llm_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr("hermes.gepa.gepa_dir", lambda: tmp_path)
+
+    class _Boom:
+        def chat_json(self, messages):
+            raise RuntimeError("network down")
+
+    assert auto_generate_variants(_Boom(), "task") == []

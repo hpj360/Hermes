@@ -202,6 +202,110 @@ def score_variant(result: VariantResult) -> float:
     return score
 
 
+# ── Variant generation (LLM-driven) ──────────────────────────────────
+
+
+def _build_variant_generation_prompt(
+    benchmark_task: str,
+    benchmark_context: str,
+    n_variants: int,
+    base_agent_file: str | None,
+) -> str:
+    """Compose the LLM prompt that asks for N distinct agent strategies."""
+    lines = [
+        "You are designing agent-definition variants for a self-improvement (GEPA) cycle.",
+        f"Benchmark task the agents must solve: {benchmark_task}",
+    ]
+    if benchmark_context:
+        lines.append(f"Additional context: {benchmark_context}")
+    if base_agent_file:
+        lines.append(
+            f"An incumbent baseline definition exists at: {base_agent_file}. "
+            "Your variants should be meaningfully different strategies, not copies."
+        )
+    lines.append(
+        f"Produce exactly {n_variants} variants. Each variant is a distinct strategy "
+        "for solving the benchmark (e.g. diagnose-first, minimal-change, aggressive-rewrite, "
+        "test-first, plan-then-execute). Respond with valid JSON only: "
+        '{"variants": [{"description": "<strategy name + one-line rationale>", '
+        '"agent_prompt": "<full agent definition prompt>"}, ...]}. '
+        "No prose, no markdown fences."
+    )
+    return "\n".join(lines)
+
+
+def auto_generate_variants(
+    llm: Any,
+    benchmark_task: str,
+    *,
+    base_agent_file: str | None = None,
+    n_variants: int = 3,
+    output_dir: Path | None = None,
+    benchmark_context: str = "",
+) -> list[Variant]:
+    """Generate candidate agent-definition variants via the LLM.
+
+    Each variant is a distinct prompt strategy for solving *benchmark_task*.
+    The LLM is asked to return a JSON list of ``{description, agent_prompt}``;
+    each is written to a ``.md`` file under *output_dir* (default
+    ``.gepa/variants/``) and wrapped in a :class:`Variant`.
+
+    Degrades gracefully: returns ``[]`` when the LLM is unavailable, the
+    response is unparseable, or *n_variants* <= 0 — callers must handle the
+    empty case (e.g. fall back to manually supplied variants).
+    """
+    if n_variants <= 0:
+        return []
+    if llm is None:
+        logger.warning("auto_generate_variants: no LLM provided")
+        return []
+
+    from hermes.workbench.llm import LlmMessage
+
+    prompt = _build_variant_generation_prompt(
+        benchmark_task, benchmark_context, n_variants, base_agent_file
+    )
+    try:
+        resp = llm.chat_json([LlmMessage(role="user", content=prompt)])
+    except Exception as exc:  # noqa: BLE001 — degrade to empty on any LLM failure
+        logger.warning("auto_generate_variants: LLM call failed: %s", exc)
+        return []
+
+    raw_variants = resp.get("variants") if isinstance(resp, dict) else None
+    if not isinstance(raw_variants, list):
+        logger.warning("auto_generate_variants: unexpected LLM payload %r", resp)
+        return []
+
+    out_dir = output_dir or (gepa_dir() / "variants")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    variants: list[Variant] = []
+    for item in raw_variants:
+        if not isinstance(item, dict):
+            continue
+        description = str(item.get("description", "")).strip()
+        agent_prompt = str(item.get("agent_prompt", "")).strip()
+        if not agent_prompt:
+            continue
+        variant_id = f"auto-{uuid.uuid4().hex[:8]}"
+        agent_file = out_dir / f"{variant_id}.md"
+        agent_file.write_text(agent_prompt, encoding="utf-8")
+        variants.append(
+            Variant(
+                variant_id=variant_id,
+                agent_file=str(agent_file),
+                description=description,
+                metadata={
+                    "generated_by": "llm",
+                    "benchmark_task": benchmark_task,
+                },
+            )
+        )
+    if variants:
+        logger.info("auto_generate_variants: generated %d variant(s)", len(variants))
+    return variants
+
+
 # ── Cycle orchestration ──────────────────────────────────────────────
 
 
