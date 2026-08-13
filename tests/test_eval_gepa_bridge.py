@@ -7,7 +7,6 @@ avoid subprocess calls.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -282,8 +281,11 @@ class TestMakeEvaluator:
 
         def custom_resolver(variant):
             captured.append(variant)
-            # Use agent_file's parent as skill_dir
-            return str(Path(variant["agent_file"]).parent)
+            # Use agent_file's parent as skill_dir (POSIX path semantics,
+            # independent of the host OS separator).
+            from pathlib import PurePosixPath
+
+            return str(PurePosixPath(variant["agent_file"]).parent)
 
         evaluator = make_evaluator(custom_resolver, runner=fake_runner)
         variant = {"variant_id": "v1", "agent_file": "/skills/foo/builder.md"}

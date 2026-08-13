@@ -1,6 +1,7 @@
 """Tests for style-dictionary-sync Skill"""
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -49,11 +50,12 @@ class TestResolve:
 class TestSync:
     def test_sync_all_platforms(self, tmp_path):
         import subprocess
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
         result = subprocess.run(
             [sys.executable, str(SCRIPTS / "sync.py"),
              "--input", str(EXAMPLES / "tokens.dtcg.json"),
              "--output-dir", str(tmp_path)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=30, env=env, encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
         # 8 个端产物都应该生成
@@ -64,12 +66,13 @@ class TestSync:
 
     def test_sync_single_platform(self, tmp_path):
         import subprocess
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
         result = subprocess.run(
             [sys.executable, str(SCRIPTS / "sync.py"),
              "--input", str(EXAMPLES / "tokens.dtcg.json"),
              "--output-dir", str(tmp_path),
              "--platforms", "css"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=30, env=env, encoding="utf-8",
         )
         assert result.returncode == 0
         assert (tmp_path / "tokens.css").exists()
@@ -77,12 +80,13 @@ class TestSync:
 
     def test_css_output_format(self, tmp_path):
         import subprocess
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
         subprocess.run(
             [sys.executable, str(SCRIPTS / "sync.py"),
              "--input", str(EXAMPLES / "tokens.dtcg.json"),
              "--output-dir", str(tmp_path),
              "--platforms", "css"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=30, env=env, encoding="utf-8",
         )
         content = (tmp_path / "tokens.css").read_text()
         assert ":root {" in content
@@ -90,12 +94,13 @@ class TestSync:
 
     def test_flutter_output_format(self, tmp_path):
         import subprocess
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
         subprocess.run(
             [sys.executable, str(SCRIPTS / "sync.py"),
              "--input", str(EXAMPLES / "tokens.dtcg.json"),
              "--output-dir", str(tmp_path),
              "--platforms", "flutter"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=30, env=env, encoding="utf-8",
         )
         content = (tmp_path / "tokens.dart").read_text()
         assert "class AppTokens" in content

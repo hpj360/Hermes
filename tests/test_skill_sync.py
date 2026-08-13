@@ -7,6 +7,7 @@ tmp tree so no real agent directories or state files are touched.
 
 from __future__ import annotations
 
+import os
 import types
 from pathlib import Path
 
@@ -27,6 +28,29 @@ from hermes.skill_sync import (
     save_sync_state,
     sync_skill,
 )
+
+
+def _symlink_supported(tmp_path: Path) -> bool:
+    """Probe whether symlinks can be created in this environment.
+
+    On Windows without admin privileges or Developer Mode, ``os.symlink``
+    raises ``OSError`` (WinError 1314). Such environments cannot exercise
+    symlink-mode behavior, so those tests are skipped instead of failing.
+    """
+    probe = tmp_path / "_probe_link"
+    target = tmp_path / "_probe_target"
+    target.write_text("x", encoding="utf-8")
+    try:
+        os.symlink(target, probe)
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            if probe.is_symlink() or probe.exists():
+                os.unlink(probe)
+        except OSError:
+            pass
 
 
 # ── Fixtures ────────────────────────────────────────────────────────
@@ -130,6 +154,8 @@ def test_compute_hash_differs_for_different_content(tmp_path: Path) -> None:
 
 def test_add_skill_symlink_mode(sync_env: types.SimpleNamespace) -> None:
     """symlink 模式：在 agent 目录创建指向中心仓库的 symlink。"""
+    if not _symlink_supported(sync_env.home):
+        pytest.skip("symlinks not supported in this environment")
     _make_skill(sync_env.central, "wechat-reader")
     _make_agent(sync_env.home, "codex")
 
@@ -274,6 +300,8 @@ def test_get_status_shows_managed_and_unmanaged(
     sync_env: types.SimpleNamespace,
 ) -> None:
     """status 同时展示 managed 与未管理（unmanaged）的 skill。"""
+    if not _symlink_supported(sync_env.home):
+        pytest.skip("symlinks not supported in this environment")
     _make_skill(sync_env.central, "managed-one")
     _make_skill(sync_env.central, "free-one")
     _make_agent(sync_env.home, "codex")

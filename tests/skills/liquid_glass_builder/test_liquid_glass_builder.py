@@ -1,6 +1,7 @@
 """Tests for liquid-glass-builder Skill"""
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -36,12 +37,13 @@ class TestWebToIos:
         assert "dispersion: true" in code
 
     def test_cli_basic(self, tmp_path):
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
         result = subprocess.run(
             [sys.executable, str(SCRIPTS / "web_to_ios.py"),
              "--props", "blur=24,alpha=0.6,highlight=true",
              "--content", 'VStack { Text("Hi") }',
              "--output", str(tmp_path / "Generated.swift")],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, env=env, encoding="utf-8",
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert (tmp_path / "Generated.swift").exists()

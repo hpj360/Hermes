@@ -7,6 +7,7 @@ is_available() is tested via monkeypatch of shutil.which.
 from __future__ import annotations
 
 import subprocess
+import sys
 from typing import Any
 
 import pytest
@@ -43,6 +44,10 @@ class TestIsAvailable:
         client = SkillUpClient()
         assert client.is_available() is True
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="executable-bit semantics (st_mode & 0o111) are POSIX-only",
+    )
     def test_explicit_path_checks_executable_bit(self, tmp_path):
         # Non-executable file
         non_exec = tmp_path / "skill-up"

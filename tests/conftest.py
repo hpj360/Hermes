@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+# Force child skill scripts to emit UTF-8 on stdout/stderr. On Windows the
+# locale default is GBK, which crashes scripts that print non-GBK characters
+# (emoji, CJK, etc.) to a pipe. Setting PYTHONIOENCODING makes subprocess
+# captures use UTF-8 regardless of the platform locale.
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 
 @pytest.fixture
