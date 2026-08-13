@@ -370,8 +370,16 @@ def load_skill_assets(name: str) -> list[Path]:
 
 
 def list_knowledge_docs() -> list[Path]:
-    """Return list of knowledge document paths."""
+    """Return list of knowledge document paths.
+
+    Sorted by filename (string comparison on ``Path.name``) so the ordering
+    is deterministic and consistent across platforms regardless of how the
+    underlying ``Path`` type compares components.
+    """
     root = knowledge_dir()
     if not root.exists():
         return []
-    return sorted(p for p in root.glob("*.md") if p.is_file())
+    return sorted(
+        (p for p in root.glob("*.md") if p.is_file()),
+        key=lambda p: p.name,
+    )

@@ -1304,7 +1304,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Submit feedback correction to MemOS plugin."""
         from hermes.workbench.cli import _make_memory
 
-        body = self._parse_body(10_000_000)
+        body = self._read_json_body()
         memory_id = body.get("memory_id", "")
         correction = body.get("correction", "")
         if not memory_id or not correction:

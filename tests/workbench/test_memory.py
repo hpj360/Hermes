@@ -441,7 +441,8 @@ def test_compact_episodes_noop_when_under_threshold(tmp_path: Path) -> None:
         svc.record_episode(make_episode("k", f"ep {i}"))
     result = svc.compact_episodes(keep_recent=10)
     assert result["removed"] == 0
-    assert result["summaries_added"] == 0
+    assert result["l2_summaries"] == 0
+    assert result["l3_summaries"] == 0
     # All 5 episodes should still be present
     assert len(svc.list_episodes()) == 5
 
@@ -454,12 +455,12 @@ def test_compact_episodes_aggregates_old_episodes(tmp_path: Path) -> None:
         svc.record_episode(make_episode("loop", f"old ep {i}", {"i": i}))
     result = svc.compact_episodes(keep_recent=4)
     assert result["removed"] == 6
-    assert result["summaries_added"] == 1  # one summary for "loop" kind
+    assert result["l2_summaries"] == 1  # one L2 summary for "loop" kind
     remaining = svc.list_episodes()
     # 4 recent + 1 summary = 5 total
     assert len(remaining) == 5
     # The summary should be the oldest (created_at smallest)
-    summary = [ep for ep in remaining if ep.kind == "loop_summary"]
+    summary = [ep for ep in remaining if ep.kind == "loop_l2_summary"]
     assert len(summary) == 1
     assert summary[0].details["count"] == 6
     assert summary[0].details["compacted"] is True

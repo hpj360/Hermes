@@ -17,6 +17,7 @@ import json
 import math
 import re
 import sqlite3
+import threading
 import time
 import uuid
 from collections import Counter, deque
@@ -36,6 +37,9 @@ from hermes.workbench.persistence import (
 # ---------------------------------------------------------------------------
 
 _TOKEN_RE = re.compile(r"\w+")
+
+# Guards concurrent first-touch schema creation on the FTS5 index.
+_FTS_SCHEMA_LOCK = threading.Lock()
 
 
 def _tokenize(text: str) -> list[str]:
@@ -646,7 +650,7 @@ class MemoryService:
         """Check if the MemOS local plugin is healthy."""
         return self._memos.health()
 
-    def memos_search(self, query: str, limit: int = 10) -> list[dict]:
+    def memos_search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
         """Proxy a search to the MemOS local plugin."""
         return self._memos.search(query, limit=limit)
 
@@ -683,49 +687,68 @@ class FTS5Index:
 
     Uses Python's built-in ``sqlite3`` module — zero external dependencies.
     The index is stored alongside the episodes JSONL in the state directory.
+
+    Thread safety: each thread gets its own sqlite3 connection (sqlite3
+    connections are bound to the thread that created them). Schema creation
+    is guarded by a module-level lock so concurrent first-touch on a fresh
+    index cannot race. WAL mode allows concurrent readers/writers across
+    connections.
     """
 
     def __init__(self, state_dir: Path) -> None:
         state_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = state_dir / "episodes_fts.db"
-        self._conn = sqlite3.connect(str(self._db_path))
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._ensure_tables()
+        self._local = threading.local()
 
-    def _ensure_tables(self) -> None:
-        self._conn.execute(
-            "CREATE TABLE IF NOT EXISTS episodes_fts("
-            "  id TEXT PRIMARY KEY,"
-            "  kind TEXT,"
-            "  summary TEXT,"
-            "  details_json TEXT,"
-            "  created_at REAL"
-            ")"
-        )
-        self._conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts_idx "
-            "USING fts5(id, kind, summary, details_json, content='episodes_fts',"
-            " content_rowid='rowid')"
-        )
-        # Triggers to keep FTS index in sync
-        self._conn.execute(
-            "CREATE TRIGGER IF NOT EXISTS episodes_fts_ai AFTER INSERT ON episodes_fts BEGIN "
-            "  INSERT INTO episodes_fts_idx(rowid, id, kind, summary, details_json) "
-            "  VALUES (new.rowid, new.id, new.kind, new.summary, new.details_json);"
-            "END"
-        )
-        self._conn.execute(
-            "CREATE TRIGGER IF NOT EXISTS episodes_fts_ad AFTER DELETE ON episodes_fts BEGIN "
-            "  INSERT INTO episodes_fts_idx(episodes_fts_idx, rowid, id, kind, summary, details_json) "
-            "  VALUES('delete', old.rowid, old.id, old.kind, old.summary, old.details_json);"
-            "END"
-        )
-        self._conn.commit()
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        """Return the calling thread's dedicated connection, creating it lazily."""
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(str(self._db_path), check_same_thread=True)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            self._ensure_tables(conn)
+            self._local.conn = conn
+        return conn
+
+    def _ensure_tables(self, conn: sqlite3.Connection) -> None:
+        # Schema creation is not fully atomic across concurrent connections;
+        # guard with a module-level lock (cheap, only taken during first touch).
+        with _FTS_SCHEMA_LOCK:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS episodes_fts("
+                "  id TEXT PRIMARY KEY,"
+                "  kind TEXT,"
+                "  summary TEXT,"
+                "  details_json TEXT,"
+                "  created_at REAL"
+                ")"
+            )
+            conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts_idx "
+                "USING fts5(id, kind, summary, details_json, content='episodes_fts',"
+                " content_rowid='rowid')"
+            )
+            # Triggers to keep FTS index in sync
+            conn.execute(
+                "CREATE TRIGGER IF NOT EXISTS episodes_fts_ai AFTER INSERT ON episodes_fts BEGIN "
+                "  INSERT INTO episodes_fts_idx(rowid, id, kind, summary, details_json) "
+                "  VALUES (new.rowid, new.id, new.kind, new.summary, new.details_json);"
+                "END"
+            )
+            conn.execute(
+                "CREATE TRIGGER IF NOT EXISTS episodes_fts_ad AFTER DELETE ON episodes_fts BEGIN "
+                "  INSERT INTO episodes_fts_idx(episodes_fts_idx, rowid, id, kind, summary, details_json) "
+                "  VALUES('delete', old.rowid, old.id, old.kind, old.summary, old.details_json);"
+                "END"
+            )
+            conn.commit()
 
     def index(self, episode: Episode) -> None:
         """Insert or replace an episode in the FTS index."""
-        self._conn.execute(
+        conn = self._conn
+        conn.execute(
             "INSERT OR REPLACE INTO episodes_fts(id, kind, summary, details_json, created_at) "
             "VALUES (?, ?, ?, ?, ?)",
             (
@@ -736,7 +759,7 @@ class FTS5Index:
                 episode.created_at,
             ),
         )
-        self._conn.commit()
+        conn.commit()
 
     def search(
         self, query: str, limit: int = 20, kind: str | None = None
@@ -782,16 +805,24 @@ class FTS5Index:
 
     def rebuild(self, episodes: list[Episode]) -> None:
         """Rebuild the FTS index from a list of episodes (e.g. after compaction)."""
-        self._conn.execute("DELETE FROM episodes_fts")
+        conn = self._conn
+        conn.execute("DELETE FROM episodes_fts")
         for ep in episodes:
             self.index(ep)
 
     def close(self) -> None:
-        self._conn.close()
+        """Close the calling thread's connection (best-effort)."""
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._local.conn = None
 
     def __del__(self) -> None:
         try:
-            self._conn.close()
+            self.close()
         except Exception:  # noqa: BLE001
             pass
 
@@ -888,7 +919,7 @@ class MemosClient:
     def available(self) -> bool:
         return self.config.enabled
 
-    def _request(self, method: str, path: str, body: dict | None = None) -> dict | None:
+    def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any] | None:
         import urllib.error
         import urllib.request
 
@@ -902,7 +933,8 @@ class MemosClient:
         )
         try:
             with urllib.request.urlopen(req, timeout=self.config.timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                loaded = json.loads(resp.read().decode("utf-8"))
+                return loaded if isinstance(loaded, dict) else None
         except (urllib.error.URLError, OSError, json.JSONDecodeError):
             return None
 
@@ -910,10 +942,11 @@ class MemosClient:
         result = self._request("GET", "/health")
         return result is not None
 
-    def search(self, query: str, limit: int = 10) -> list[dict]:
+    def search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
         result = self._request("GET", f"/api/search?q={query}&limit={limit}")
         if result and isinstance(result, dict):
-            return result.get("results", [])
+            results = result.get("results", [])
+            return results if isinstance(results, list) else []
         return []
 
     def ingest(self, episode: Episode) -> bool:

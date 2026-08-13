@@ -399,6 +399,104 @@ def test_memory_search_empty_results(client):
     assert _json(resp)["results"] == []
 
 
+def test_memory_search_rrf_returns_results(client):
+    """Hybrid RRF search should return fused results."""
+    from hermes.workbench.cli import _make_memory
+    from hermes.workbench.memory import make_episode
+
+    mem = _make_memory()
+    mem.record_episode(make_episode("note", "deploy python service"))
+    mem.record_episode(make_episode("note", "fix javascript bug"))
+
+    resp = client("GET", "/memory/search/rrf?q=python")
+    assert resp.status == 200
+    data = _json(resp)
+    assert data["method"] == "rrf"
+    assert len(data["results"]) >= 1
+    assert all("episode" in r and "score" in r for r in data["results"])
+
+
+def test_memory_search_rrf_no_query_returns_400(client):
+    resp = client("GET", "/memory/search/rrf")
+    assert resp.status == 400
+
+
+def test_memory_search_fts_returns_results(client):
+    """FTS5 search should return BM25-ranked episodes."""
+    from hermes.workbench.cli import _make_memory
+    from hermes.workbench.memory import make_episode
+
+    mem = _make_memory()
+    mem.record_episode(make_episode("note", "deploy python service"))
+    mem.record_episode(make_episode("note", "fix javascript bug"))
+
+    resp = client("GET", "/memory/search/fts?q=python")
+    assert resp.status == 200
+    data = _json(resp)
+    assert data["method"] == "fts5"
+    assert len(data["results"]) >= 1
+
+
+def test_memory_search_fts_no_query_returns_400(client):
+    resp = client("GET", "/memory/search/fts")
+    assert resp.status == 400
+
+
+def test_memory_search_semantic_no_ollama_returns_empty(client):
+    """Semantic search degrades to empty results when Ollama is unavailable."""
+    resp = client("GET", "/memory/search/semantic?q=python")
+    assert resp.status == 200
+    data = _json(resp)
+    assert data["method"] == "semantic"
+    assert data["results"] == []
+
+
+def test_memory_search_semantic_no_query_returns_400(client):
+    resp = client("GET", "/memory/search/semantic")
+    assert resp.status == 400
+
+
+def test_memory_cleanup_returns_count(client):
+    """Cleanup should return the number of expired facts removed."""
+    resp = client("POST", "/memory/cleanup")
+    assert resp.status == 200
+    data = _json(resp)
+    assert "removed" in data
+    assert isinstance(data["removed"], int)
+
+
+def test_memory_learn_returns_insights(client):
+    """Learn endpoint should return profile insights."""
+    from hermes.workbench.cli import _make_memory
+    from hermes.workbench.memory import make_episode
+
+    mem = _make_memory()
+    mem.record_episode(make_episode("loop", "ran a python task", {"skill": "weather"}))
+    mem.record_episode(make_episode("loop", "ran another task", {"skill": "weather"}))
+
+    resp = client("POST", "/memory/learn", body={"recent_count": 100, "top_n": 5})
+    assert resp.status == 200
+    data = _json(resp)
+    assert "insights" in data
+    assert data["insights"]["episode_count"] >= 2
+
+
+def test_memory_compact_returns_summary(client):
+    """Compact endpoint should return compaction stats."""
+    from hermes.workbench.cli import _make_memory
+    from hermes.workbench.memory import make_episode
+
+    mem = _make_memory()
+    for i in range(10):
+        mem.record_episode(make_episode("loop", f"old ep {i}", {"i": i}))
+
+    resp = client("POST", "/memory/compact", body={"keep_recent": 4})
+    assert resp.status == 200
+    data = _json(resp)
+    assert "removed" in data
+    assert data["removed"] >= 1
+
+
 # ---------------------------------------------------------------------------
 # SSE streaming
 # ---------------------------------------------------------------------------
