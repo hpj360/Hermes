@@ -68,6 +68,24 @@
   hermes-kb 栈），选题/创作/发布三页面 + fetch 封装；`app.py` 存在构建产物时
   挂载 dist 并做 SPA 回退。
 
+### P2 扩张 / P3 自治（可落地骨架）
+
+- **async bridge（P2-5）**：`async_bridge.py` 的 `run_async_in_sync` /
+  `run_sync_in_async` 双 helper（`asyncio.run` / `asyncio.to_thread`），嵌套
+  loop 死锁显式拒绝；ADR-0007 记录边界规范。
+- **JobQueue BrokerInterface + Redis（P2-3）**：`broker.py` 的 `BrokerInterface`
+  结构化协议（现有 JobQueue 零改动满足）+ `RedisBroker`（ZSET+BZPOPMIN，惰性
+  import redis），多机传输可插拔，默认仍走 stdlib in-memory。
+- **Vault backend + 配置指针式继承（P2-4）**：`VaultSecretSource`（stdlib
+  urllib 调 KV-v2，VAULT_ADDR/TOKEN/PATH，惰性 fetch + 缓存，缺凭证降级）；
+  `load_inherited_env` 支持 `HERMES_INHERIT_ENV_PATHS` 指针式继承路径。
+- **/kb/search proxy（P2-1）**：`Settings.hermes_kb_base_url` + `GET /kb/search`
+  端点，转发 hermes-kb 检索，未配置 503 / 不可达 502，优雅降级。
+- **OTLP exporter（P2-6）**：`otlp.py` 的 `OtlpExporter` 把 trace_id episode
+  转成 OTLP/HTTP JSON span POST 到 collector，未配置 no-op。
+- **Memory 归档（P3-2）**：`archive_episodes()` 把旧 episode 移入
+  `episodes.archive.jsonl` 冷档，热档保持精简，FTS 索引同步重建。
+
 ## [0.6.0]
 
 - Phase 3 调度中心：Job 队列 / Worker 池 / Cron 触发 / 崩溃恢复 / DAG 依赖 /
