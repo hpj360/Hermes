@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -52,6 +53,39 @@ def _find_posix_shell() -> str | None:
 
 _SENSITIVE_SUBSTRINGS = ("token", "secret", "credential", "password", "passwd", "pwd")
 _SENSITIVE_SUFFIXES = ("_api_key", "_apikey")
+
+# Whitelist of environment variables always passed to a skill subprocess.
+# Everything else is either stripped (if sensitive) or dropped unless the
+# skill explicitly declares it via ``requires.env``. This is the "allow-list"
+# boundary: a skill can only read what it (or the base runtime) explicitly
+# needs, so a compromised skill cannot harvest arbitrary secrets from the
+# parent process environment.
+_SAFE_ENV_KEYS = {
+    "PATH",
+    "HOME",
+    "USER",
+    "USERNAME",
+    "TMP",
+    "TEMP",
+    "TMPDIR",
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "PYTHONIOENCODING",
+    "PYTHONUNBUFFERED",
+    "SHELL",
+    "TERM",
+    "CI",
+    "GITHUB_ACTIONS",
+    "NO_COLOR",
+}
 
 
 def _looks_sensitive(key: str) -> bool:
@@ -143,6 +177,77 @@ def _coerce_stream(val: str | bytes | None) -> str:
     if isinstance(val, bytes):
         return val.decode("utf-8", errors="replace")
     return val
+
+
+def _terminate_process_tree(
+    proc: subprocess.Popen[bytes], cwd: Path
+) -> tuple[bytes, bytes]:
+    """Force-terminate a timed-out subprocess and return partial output.
+
+    Sequence: SIGTERM/terminate → brief grace period → SIGKILL/kill. On
+    Windows, ``taskkill /T /F`` kills the whole process tree (the skill and any
+    children it spawned) so orphaned grandchildren cannot hold the stdout/stderr
+    pipes open. On Unix, ``start_new_session`` put the skill in its own process
+    group, so we signal the entire group via ``os.killpg``.
+
+    Returns a ``(stdout, stderr)`` tuple of whatever partial output could be
+    read after termination (best-effort).
+    """
+
+    # Windows: kill the entire tree first. Killing only the shell leaves
+    # grandchildren holding the pipes open, which blocks Popen.wait().
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                capture_output=True,
+                check=False,
+                cwd=str(cwd),
+            )
+        except OSError:
+            pass
+        try:
+            proc.kill()
+        except (ProcessLookupError, OSError):
+            pass
+        return _drain_streams(proc)
+
+    # Unix: signal the whole process group.
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    try:
+        proc.wait(timeout=2.0)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        try:
+            proc.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            pass
+    return _drain_streams(proc)
+
+
+def _drain_streams(proc: subprocess.Popen[bytes]) -> tuple[bytes, bytes]:
+    """Best-effort, non-blocking read of partial stdout/stderr from *proc*.
+
+    Reading a pipe on Windows can block until every writer handle closes even
+    after the process tree is killed (grandchildren may hold handles briefly).
+    To guarantee a bounded return we close our reader ends first, which flushes
+    any buffered data without blocking, then return empty. Partial output is
+    deliberately sacrificed on the timeout path — correctness of termination
+    takes priority over capturing output from a hung process.
+    """
+    for stream in (proc.stdout, proc.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:  # noqa: BLE001
+                pass
+    return b"", b""
 
 
 # ---------------------------------------------------------------------------
@@ -314,35 +419,10 @@ class SkillRunner:
                 duration=0.0,
                 error=str(exc),
             )
-        env = self._sanitized_env()
+        env = self._build_safe_env(spec)
         start = time.time()
-        # Platform-specific process-group isolation:
-        # - Unix: start_new_session detaches from controlling terminal
-        # - Windows: CREATE_NEW_PROCESS_GROUP allows Ctrl-Break signal handling
-        popen_kwargs: dict[str, Any] = {
-            "cwd": str(spec.path),
-            "env": env,
-            "capture_output": True,
-            "text": True,
-            "timeout": timeout,
-            "check": False,
-        }
-        if sys.platform == "win32":
-            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-        else:
-            popen_kwargs["start_new_session"] = True
         try:
-            proc = subprocess.run(cmd, **popen_kwargs)
-        except subprocess.TimeoutExpired as exc:
-            return RunResult(
-                skill=spec.name,
-                ok=False,
-                stdout=_coerce_stream(exc.stdout),
-                stderr=_coerce_stream(exc.stderr),
-                exit_code=-1,
-                duration=time.time() - start,
-                error=f"timeout after {timeout}s",
-            )
+            proc = self._popen(cmd, spec, env)
         except OSError as exc:
             return RunResult(
                 skill=spec.name,
@@ -353,17 +433,52 @@ class SkillRunner:
                 duration=time.time() - start,
                 error=str(exc),
             )
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            stdout_b, stderr_b = _terminate_process_tree(proc, spec.path)
+            return RunResult(
+                skill=spec.name,
+                ok=False,
+                stdout=_coerce_stream(stdout_b),
+                stderr=_coerce_stream(stderr_b),
+                exit_code=-1,
+                duration=time.time() - start,
+                error=f"timeout after {timeout}s",
+            )
         duration = time.time() - start
         ok = proc.returncode == 0
         return RunResult(
             skill=spec.name,
             ok=ok,
-            stdout=proc.stdout,
-            stderr=proc.stderr,
+            stdout=_coerce_stream(stdout),
+            stderr=_coerce_stream(stderr),
             exit_code=proc.returncode,
             duration=duration,
             error=None if ok else f"exit {proc.returncode}",
         )
+
+    def _popen(
+        self, cmd: list[str], spec: SkillSpec, env: dict[str, str]
+    ) -> subprocess.Popen[bytes]:
+        """Spawn the skill subprocess with platform-appropriate isolation.
+
+        - Unix: ``start_new_session=True`` creates a new process group so the
+          whole tree can be signaled together on timeout.
+        - Windows: ``CREATE_NEW_PROCESS_GROUP`` enables group termination via
+          ``taskkill /T /F`` fallback.
+        """
+        popen_kwargs: dict[str, Any] = {
+            "cwd": str(spec.path),
+            "env": env,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+        }
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            popen_kwargs["start_new_session"] = True
+        return subprocess.Popen(cmd, **popen_kwargs)
 
     def _build_command(self, spec: SkillSpec, args: list[str]) -> list[str]:
         if spec.entrypoint is None:
@@ -382,5 +497,42 @@ class SkillRunner:
         return [spec.entrypoint, *args]
 
     def _sanitized_env(self) -> dict[str, str]:
-        """Return os.environ with sensitive keys stripped."""
+        """Return os.environ with sensitive keys stripped.
+
+        Kept for backward compatibility. New call sites should prefer
+        :meth:`_build_safe_env`, which applies the stricter allow-list.
+        """
         return {k: v for k, v in os.environ.items() if not _looks_sensitive(k)}
+
+    def _build_safe_env(self, spec: SkillSpec) -> dict[str, str]:
+        """Build the allow-listed environment for a skill subprocess.
+
+        Includes, in order:
+          1. Base-safe variables (``_SAFE_ENV_KEYS``) always present in the
+             parent environment.
+          2. Variables explicitly required by the skill (``spec.requires_env``).
+          3. Any other parent variable whose name is *not* sensitive — this
+             preserves broad compatibility (e.g. ``HERMES_STATE_DIR``,
+             ``HERMES_PROJECT_ROOT``) while still blocking secret-shaped names.
+
+        Sensitive variables are never passed unless the skill explicitly lists
+        them, and even then they are omitted (secrets must not leak into
+        arbitrary subprocesses).
+        """
+        parent = os.environ
+        env: dict[str, str] = {}
+        for key in _SAFE_ENV_KEYS:
+            if key in parent:
+                env[key] = parent[key]
+        # Explicitly required env (non-sensitive only).
+        for key in spec.requires_env:
+            if key in parent and not _looks_sensitive(key):
+                env[key] = parent[key]
+        # Non-sensitive passthrough for compatibility.
+        for key, value in parent.items():
+            if key in env:
+                continue
+            if _looks_sensitive(key):
+                continue
+            env[key] = value
+        return env

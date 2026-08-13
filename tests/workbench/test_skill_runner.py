@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import time
 from pathlib import Path
 
 import pytest
@@ -331,3 +332,77 @@ def test_run_shell_skill_with_executable_bit(tmp_path: Path) -> None:
     result = runner.run("sh2")
     assert result.ok is True
     assert "exec-ok" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# P0-3: env allow-list + SIGKILL fallback
+# ---------------------------------------------------------------------------
+
+
+def test_build_safe_env_includes_safe_keys(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("HOME", "/home/user")
+    monkeypatch.setenv("SAFE_VAR", "ok")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-xxx")
+    runner = _make_runner_with_alpha(tmp_path)
+    spec = runner.get("alpha")
+    assert spec is not None
+    env = runner._build_safe_env(spec)
+    assert env["PATH"] == "/usr/bin"
+    assert env["HOME"] == "/home/user"
+    assert env["SAFE_VAR"] == "ok"  # non-sensitive passthrough
+    assert "OPENAI_API_KEY" not in env  # sensitive stripped
+
+
+def test_build_safe_env_respects_requires_env(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CUSTOM_VAR", "custom-value")
+    base = tmp_path / "skills"
+    _write_skill_md(
+        base / "needs-env",
+        '---\nname: needs-env\ndescription: x\nmetadata: {"clawdbot":{"requires":{"env":["CUSTOM_VAR"]}}}\n---\n\nbody\n',
+    )
+    runner = SkillRunner(base_dir=base)
+    spec = runner.get("needs-env")
+    assert spec is not None
+    env = runner._build_safe_env(spec)
+    assert env["CUSTOM_VAR"] == "custom-value"
+
+
+def test_build_safe_env_never_passes_sensitive_required(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.setenv("DB_PASSWORD", "hunter2")
+    base = tmp_path / "skills"
+    _write_skill_md(
+        base / "wants-secret",
+        '---\nname: wants-secret\ndescription: x\nmetadata: {"clawdbot":{"requires":{"env":["DB_PASSWORD"]}}}\n---\n\nbody\n',
+    )
+    runner = SkillRunner(base_dir=base)
+    spec = runner.get("wants-secret")
+    assert spec is not None
+    env = runner._build_safe_env(spec)
+    assert "DB_PASSWORD" not in env
+
+
+def test_run_timeout_kills_process_tree(tmp_path: Path) -> None:
+    """A timed-out skill should be force-terminated, returning a timeout error.
+
+    Uses a Python entrypoint (single process) so the kill path is verifiable
+    across platforms; a shell script spawning a child ``sleep`` is not reliably
+    tree-killable on Windows Git Bash, where the grandchild is not a Windows
+    child process.
+    """
+    base = tmp_path / "skills"
+    _write_skill_md(base / "slow", PROMPT_SKILL_MD)
+    (base / "slow" / "run.py").write_text(
+        "import time\ntime.sleep(10)\nprint('never')\n", encoding="utf-8"
+    )
+    runner = SkillRunner(base_dir=base)
+    start = time.time()
+    result = runner.run("slow", timeout=0.5)
+    elapsed = time.time() - start
+    assert result.ok is False
+    assert result.exit_code == -1
+    assert (result.error or "").startswith("timeout")
+    # The kill path should return quickly (well under the 10s sleep).
+    assert elapsed < 5.0
