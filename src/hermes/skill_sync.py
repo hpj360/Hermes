@@ -179,6 +179,16 @@ def _resolve_link(link_path: Path) -> Path:
     return target.resolve()
 
 
+def _make_dir_symlink(source: Path, dest: Path) -> None:
+    """Create a directory symlink ``dest → source`` (cross-platform).
+
+    On Windows, linking a directory requires ``target_is_directory=True``;
+    omitting it produces a broken file link even with Developer Mode enabled.
+    On POSIX the argument is accepted and ignored.
+    """
+    os.symlink(source, dest, target_is_directory=True)
+
+
 def get_sync_state(
     skill_name: str, agent_dir: AgentDir, managed_info: dict[str, Any] | None
 ) -> AgentSyncState:
@@ -305,7 +315,7 @@ def add_skill(skill_name: str, copy: bool = False) -> SyncResult:
                 if dest.exists():
                     errors.append(f"{ad.name}: existing content, skipped")
                     continue
-                os.symlink(central_path, dest)
+                _make_dir_symlink(central_path, dest)
                 agents_record[ad.name] = {"path": str(dest), "hash": central_hash}
             else:  # copy
                 if dest.is_symlink():
@@ -486,7 +496,7 @@ def sync_skill(skill_name: str | None = None) -> SyncResult:
                         skipped.append(f"{name}/{agent_name}")
                         continue
                     if need_create:
-                        os.symlink(central_path, dest)
+                        _make_dir_symlink(central_path, dest)
                     agents[agent_name] = {"path": str(dest), "hash": central_hash}
                 else:  # copy
                     # 存在 external 改动/冲突时跳过，避免覆盖用户修改

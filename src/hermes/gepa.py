@@ -197,12 +197,48 @@ def score_variant(result: VariantResult) -> float:
     score = 0.0
     if result.success:
         score += SCORE_WEIGHT_SUCCESS
-    score += SCORE_WEIGHT_TOKENS * result.tokens_used
-    score += SCORE_WEIGHT_ROUNDS * result.rounds_to_converge
+    # Clamp tokens/rounds so an unbounded (malicious or buggy) evaluation cannot
+    # break the "success always wins" invariant via the penalty term.
+    tokens = max(0, min(result.tokens_used, 1_000_000))
+    rounds = max(0, min(result.rounds_to_converge, 400))
+    score += SCORE_WEIGHT_TOKENS * tokens
+    score += SCORE_WEIGHT_ROUNDS * rounds
     return score
 
 
 # ── Variant generation (LLM-driven) ──────────────────────────────────
+
+# Agent prompt safety: LLM-generated prompts become executable agent
+# definitions, so reject unreasonably long prompts and prompts carrying
+# clearly dangerous instruction patterns (credential harvesting / exfiltration /
+# self-disabling). This is a heuristic guard, not a sandbox.
+_AGENT_PROMPT_MAX_LEN = 20000
+_AGENT_PROMPT_DANGER_MARKERS = (
+    "os.environ",
+    "getenv(",
+    "read environment",
+    "读取环境变量",
+    "读取密钥",
+    "exfiltrate",
+    "外发",
+    "send secret",
+    "发送密钥",
+    "disable safety",
+    "关闭安全",
+    "ignore deny",
+    "忽略安全",
+    "rm -rf /",
+    "delete all files",
+    "删除所有文件",
+)
+
+
+def _is_unsafe_agent_prompt(prompt: str) -> bool:
+    """Return True if an LLM-generated agent prompt looks dangerous."""
+    if len(prompt) > _AGENT_PROMPT_MAX_LEN:
+        return True
+    lower = prompt.lower()
+    return any(marker in lower for marker in _AGENT_PROMPT_DANGER_MARKERS)
 
 
 def _build_variant_generation_prompt(
@@ -286,6 +322,11 @@ def auto_generate_variants(
         description = str(item.get("description", "")).strip()
         agent_prompt = str(item.get("agent_prompt", "")).strip()
         if not agent_prompt:
+            continue
+        if _is_unsafe_agent_prompt(agent_prompt):
+            logger.warning(
+                "auto_generate_variants: rejected unsafe variant %r", description
+            )
             continue
         variant_id = f"auto-{uuid.uuid4().hex[:8]}"
         agent_file = out_dir / f"{variant_id}.md"
@@ -404,7 +445,99 @@ def run_gepa_cycle(
     return experiment
 
 
-# ── Persistence ──────────────────────────────────────────────────────
+# ── Split-run cycle (statistical significance, P1-6) ─────────────────
+
+
+def _evaluate_repeated(
+    variant: Variant,
+    evaluate_fn: EvaluateFn,
+    benchmark_task: str,
+    benchmark_context: str,
+    min_repeats: int,
+) -> tuple[list[float], list[VariantResult]]:
+    """Evaluate *variant* ``min_repeats`` times, returning (scores, results)."""
+    scores: list[float] = []
+    results: list[VariantResult] = []
+    for _ in range(min_repeats):
+        try:
+            result = evaluate_fn(variant, benchmark_task, benchmark_context)
+        except Exception as exc:  # noqa: BLE001
+            result = VariantResult(
+                variant_id=variant.variant_id,
+                success=False,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        if not result.variant_id:
+            result.variant_id = variant.variant_id
+        results.append(result)
+        scores.append(score_variant(result))
+    return scores, results
+
+
+def run_gepa_split_run(
+    benchmark_task: str,
+    baseline: Variant,
+    challengers: list[Variant],
+    evaluate_fn: EvaluateFn,
+    *,
+    benchmark_context: str = "",
+    min_repeats: int = 5,
+    alpha: float = 0.05,
+) -> GEPAExperiment:
+    """Run a statistically-gated GEPA split-run.
+
+    Evaluates the incumbent *baseline* and each *challenger* ``min_repeats``
+    times, then promotes a challenger only if its repeated scores beat the
+    baseline with statistical significance (Welch's t-test, ``p < alpha`` —
+    see :mod:`hermes.gepa_stats`). This is the gate that prevents a single
+    lucky run from being promoted.
+
+    Returns a :class:`GEPAExperiment` whose ``winner_id`` is set only when a
+    challenger passes the gate; otherwise ``winner_id`` is None with a reason.
+    """
+    from hermes.gepa_stats import mean, should_promote
+
+    experiment = GEPAExperiment(
+        experiment_id=str(uuid.uuid4()),
+        benchmark_task=benchmark_task,
+        benchmark_context=benchmark_context,
+        variants=[baseline, *challengers],
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    baseline_scores, baseline_results = _evaluate_repeated(
+        baseline, evaluate_fn, benchmark_task, benchmark_context, min_repeats
+    )
+    experiment.results.extend(baseline_results)
+
+    winner: Variant | None = None
+    winner_scores: list[float] = []
+    for challenger in challengers:
+        c_scores, c_results = _evaluate_repeated(
+            challenger, evaluate_fn, benchmark_task, benchmark_context, min_repeats
+        )
+        experiment.results.extend(c_results)
+        if should_promote(baseline_scores, c_scores, alpha=alpha, min_repeats=min_repeats):
+            if winner is None or mean(c_scores) > mean(winner_scores):
+                winner = challenger
+                winner_scores = c_scores
+
+    if winner is not None:
+        experiment.winner_id = winner.variant_id
+        experiment.promotion_reason = (
+            f"split-run significant (min_repeats={min_repeats}, alpha={alpha}); "
+            f"baseline_mean={mean(baseline_scores):.2f}, "
+            f"challenger_mean={mean(winner_scores):.2f}"
+        )
+    else:
+        experiment.winner_id = None
+        experiment.promotion_reason = (
+            f"no challenger significantly beat baseline out of {len(challengers)} "
+            f"(min_repeats={min_repeats}, alpha={alpha})"
+        )
+
+    experiment.completed_at = datetime.now(timezone.utc).isoformat()
+    return experiment
 
 
 def gepa_dir() -> Path:

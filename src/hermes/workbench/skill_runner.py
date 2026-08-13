@@ -29,6 +29,12 @@ _WIN_SH_CANDIDATES = (
     r"C:\Program Files\Git\usr\bin\sh.exe",
     r"C:\Program Files (x86)\Git\bin\sh.exe",
     r"C:\Program Files (x86)\Git\usr\bin\sh.exe",
+    # Official "current user only" installer path.
+    r"%LOCALAPPDATA%\Programs\Git\bin\sh.exe",
+    # Scoop / Chocolatey / MSYS2 / portable layouts.
+    r"%USERPROFILE%\scoop\apps\git\current\bin\sh.exe",
+    r"%USERPROFILE%\scoop\apps\msys2\current\usr\bin\sh.exe",
+    r"C:\msys64\usr\bin\sh.exe",
 )
 
 
@@ -43,16 +49,49 @@ def _find_posix_shell() -> str | None:
         return sh
     if sys.platform == "win32":
         for candidate in _WIN_SH_CANDIDATES:
-            if os.path.isfile(candidate):
-                return candidate
+            expanded = os.path.expandvars(candidate)
+            if os.path.isfile(expanded):
+                return expanded
     return None
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-_SENSITIVE_SUBSTRINGS = ("token", "secret", "credential", "password", "passwd", "pwd")
-_SENSITIVE_SUFFIXES = ("_api_key", "_apikey")
+_SENSITIVE_SUBSTRINGS = (
+    "token",
+    "secret",
+    "credential",
+    "password",
+    "passwd",
+    "pwd",
+    "key",
+    "private",
+    "cookie",
+    "jwt",
+    "session",
+    "database",
+    "auth",
+    "cert",
+    "signature",
+)
+_SENSITIVE_SUFFIXES = (
+    "_api_key",
+    "_apikey",
+    "_access_key",
+    "_secret_key",
+    "_private_key",
+    "_auth_token",
+    "_session",
+)
+
+# Value-level patterns that look like embedded credentials. A variable whose
+# name is not sensitive but whose VALUE carries a credential (e.g. a
+# ``user:pass@host`` connection URL) must still be stripped.
+_VALUE_CREDENTIAL_MARKERS = (
+    "-----begin",  # PEM private key / cert blocks
+    "://",  # scheme prefixes commonly embedding userinfo
+)
 
 # Whitelist of environment variables always passed to a skill subprocess.
 # Everything else is either stripped (if sensitive) or dropped unless the
@@ -98,6 +137,19 @@ def _looks_sensitive(key: str) -> bool:
         if lower.endswith(suffix):
             return True
     return False
+
+
+def _looks_sensitive_value(value: str) -> bool:
+    """Return True if a variable *value* carries an embedded credential.
+
+    Catches secrets whose variable name is innocuous but whose value embeds
+    credentials — e.g. ``DATABASE_URL=postgres://user:pass@host/db`` or a PEM
+    private-key block stored under an arbitrary name.
+    """
+    if not value:
+        return False
+    lower = value.lower()
+    return any(marker in lower for marker in _VALUE_CREDENTIAL_MARKERS)
 
 
 def _parse_front_matter(path: Path) -> dict[str, Any]:
@@ -182,7 +234,7 @@ def _coerce_stream(val: str | bytes | None) -> str:
 def _terminate_process_tree(
     proc: subprocess.Popen[bytes], cwd: Path
 ) -> tuple[bytes, bytes]:
-    """Force-terminate a timed-out subprocess and return partial output.
+    """Force-terminate a timed-out subprocess.
 
     Sequence: SIGTERM/terminate → brief grace period → SIGKILL/kill. On
     Windows, ``taskkill /T /F`` kills the whole process tree (the skill and any
@@ -190,8 +242,11 @@ def _terminate_process_tree(
     pipes open. On Unix, ``start_new_session`` put the skill in its own process
     group, so we signal the entire group via ``os.killpg``.
 
-    Returns a ``(stdout, stderr)`` tuple of whatever partial output could be
-    read after termination (best-effort).
+    Returns ``(b"", b"")`` — partial output is deliberately NOT captured on the
+    timeout path. Reading a pipe on Windows can block until every writer handle
+    closes even after the tree is killed, so the reader ends are closed instead
+    to guarantee a bounded return. Correctness of termination takes priority
+    over capturing output from a hung process.
     """
 
     # Windows: kill the entire tree first. Killing only the shell leaves
@@ -511,9 +566,10 @@ class SkillRunner:
           1. Base-safe variables (``_SAFE_ENV_KEYS``) always present in the
              parent environment.
           2. Variables explicitly required by the skill (``spec.requires_env``).
-          3. Any other parent variable whose name is *not* sensitive — this
-             preserves broad compatibility (e.g. ``HERMES_STATE_DIR``,
-             ``HERMES_PROJECT_ROOT``) while still blocking secret-shaped names.
+          3. Any other parent variable whose name is *not* sensitive AND whose
+             value does not look like an embedded credential — this preserves
+             broad compatibility while blocking both secret-shaped names and
+             secret-bearing values (e.g. connection URLs with userinfo).
 
         Sensitive variables are never passed unless the skill explicitly lists
         them, and even then they are omitted (secrets must not leak into
@@ -521,18 +577,25 @@ class SkillRunner:
         """
         parent = os.environ
         env: dict[str, str] = {}
+        # Force UTF-8 on the subprocess regardless of the parent locale: on
+        # Windows the default stdout encoding is the ANSI code page (GBK), which
+        # crashes scripts printing emoji/CJK. This must be set explicitly, not
+        # merely passed through.
+        env["PYTHONIOENCODING"] = "utf-8"
         for key in _SAFE_ENV_KEYS:
             if key in parent:
                 env[key] = parent[key]
-        # Explicitly required env (non-sensitive only).
+        # Explicitly required env (non-sensitive name AND non-credential value).
         for key in spec.requires_env:
-            if key in parent and not _looks_sensitive(key):
+            if key in parent and not _looks_sensitive(key) and not _looks_sensitive_value(parent[key]):
                 env[key] = parent[key]
-        # Non-sensitive passthrough for compatibility.
+        # Non-sensitive passthrough for compatibility (name AND value gated).
         for key, value in parent.items():
             if key in env:
                 continue
             if _looks_sensitive(key):
+                continue
+            if _looks_sensitive_value(value):
                 continue
             env[key] = value
         return env
