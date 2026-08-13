@@ -16,6 +16,7 @@ from hermes.workbench.llm import (
     LlmResponse,
     LlmRetryPolicy,
     LlmStreamChunk,
+    LlmToolCall,
     _extract_json,
     count_tokens,
     make_llm_client,
@@ -484,3 +485,108 @@ def test_count_tokens_consistent() -> None:
 def test_llm_client_count_tokens_method() -> None:
     client = LlmClient(base_url="https://api.example.com/v1", api_key="k", model="m")
     assert client.count_tokens("test") == count_tokens("test")
+
+
+# ---------------------------------------------------------------------------
+# function calling (tools)
+# ---------------------------------------------------------------------------
+
+
+def test_chat_forwards_tools_payload() -> None:
+    """chat should include the tools payload in the request body."""
+    client = LlmClient(base_url="https://api.example.com/v1", api_key="k", model="m")
+    captured: dict[str, Any] = {}
+
+    class FakeRequest:
+        def __init__(self, url: str, data: bytes, method: str) -> None:
+            captured["data"] = data
+            self._headers: dict[str, str] = {}
+
+        def add_header(self, k: str, v: str) -> None:
+            pass
+
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get weather",
+                "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
+            },
+        }
+    ]
+    fake_data = {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+    with patch("urllib.request.Request", FakeRequest):
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen_response(fake_data)):
+            client.chat([LlmMessage(role="user", content="hi")], tools=tools)
+    sent = json.loads(captured["data"].decode("utf-8"))
+    assert sent["tools"] == tools
+
+
+def test_chat_parses_tool_calls() -> None:
+    """chat should parse tool_calls from the assistant message into LlmToolCall."""
+    client = LlmClient(base_url="https://api.example.com/v1", api_key="k", model="m")
+    fake_data = {
+        "model": "gpt-4o",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": '{"city": "Beijing"}',
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+    }
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen_response(fake_data)):
+        resp = client.chat([LlmMessage(role="user", content="weather?")])
+    assert resp.finish_reason == "tool_calls"
+    assert len(resp.tool_calls) == 1
+    call = resp.tool_calls[0]
+    assert isinstance(call, LlmToolCall)
+    assert call.id == "call_1"
+    assert call.name == "get_weather"
+    assert call.arguments == {"city": "Beijing"}
+
+
+def test_chat_no_tool_calls_returns_empty_list() -> None:
+    """chat without tool_calls should return an empty tool_calls list."""
+    client = LlmClient(base_url="https://api.example.com/v1", api_key="k", model="m")
+    fake_data = {"choices": [{"message": {"content": "plain"}, "finish_reason": "stop"}]}
+    with patch("urllib.request.urlopen", return_value=_mock_urlopen_response(fake_data)):
+        resp = client.chat([LlmMessage(role="user", content="hi")])
+    assert resp.tool_calls == []
+
+
+def test_tool_call_from_dict_unparseable_arguments() -> None:
+    """LlmToolCall.from_dict should degrade to {} on unparseable arguments."""
+    call = LlmToolCall.from_dict(
+        {
+            "id": "call_x",
+            "type": "function",
+            "function": {"name": "f", "arguments": "not json"},
+        }
+    )
+    assert call.id == "call_x"
+    assert call.name == "f"
+    assert call.arguments == {}
+
+
+def test_tool_call_to_dict_roundtrip() -> None:
+    """LlmToolCall.to_dict should emit the OpenAI wire shape."""
+    call = LlmToolCall(id="call_1", name="get_weather", arguments={"city": "Beijing"})
+    d = call.to_dict()
+    assert d["id"] == "call_1"
+    assert d["type"] == "function"
+    assert d["function"]["name"] == "get_weather"
+    assert json.loads(d["function"]["arguments"]) == {"city": "Beijing"}

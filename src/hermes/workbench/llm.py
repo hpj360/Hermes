@@ -98,7 +98,58 @@ class LlmResponse:
     content: str
     model: str = ""
     finish_reason: str = ""
+    tool_calls: list[LlmToolCall] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class LlmToolCall:
+    """A single tool/function call requested by the model.
+
+    Mirrors the OpenAI ``tool_calls`` shape: an id, a function name, and a
+    JSON-arguments blob (parsed into a dict). ``arguments`` may be ``{}`` when
+    the model returns no arguments or unparseable JSON.
+    """
+
+    id: str
+    name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "LlmToolCall":
+        """Build from an OpenAI ``tool_calls`` item (handles string or dict args).
+
+        Accepts both the OpenAI wire shape (``{"function": {"name", "arguments"}}``)
+        and a flattened ``{"name", "arguments"}`` form used by some providers.
+        """
+        fn = data.get("function") or {}
+        name = fn.get("name") or data.get("name") or ""
+        raw_args = fn.get("arguments", data.get("arguments"))
+        if isinstance(raw_args, str):
+            try:
+                args = json.loads(raw_args)
+            except json.JSONDecodeError:
+                args = {}
+        elif isinstance(raw_args, dict):
+            args = raw_args
+        else:
+            args = {}
+        return cls(
+            id=str(data.get("id", "")),
+            name=str(name),
+            arguments=args,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize back to the OpenAI wire format."""
+        return {
+            "id": self.id,
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "arguments": json.dumps(self.arguments, ensure_ascii=False),
+            },
+        }
 
 
 @dataclass
@@ -207,10 +258,15 @@ class LlmClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         timeout: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> LlmResponse:
         """Call ``POST {base_url}/chat/completions`` and return the response.
 
         Retries transient failures (429/5xx/network) per :attr:`retry_policy`.
+
+        When *tools* is given, it is forwarded as the OpenAI ``tools`` payload
+        and any ``tool_calls`` the model returns are parsed into
+        :attr:`LlmResponse.tool_calls` (each a :class:`LlmToolCall`).
 
         Raises :class:`LlmApiError` on HTTP failure or malformed payload.
         """
@@ -222,6 +278,8 @@ class LlmClient:
         }
         if max_tokens is not None:
             body["max_tokens"] = max_tokens
+        if tools:
+            body["tools"] = tools
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
         last_exc: _RetryableError | None = None
@@ -374,12 +432,19 @@ class LlmClient:
             msg = first.get("message") or {}
             content = msg.get("content") or ""
             finish = first.get("finish_reason", "")
+            raw_calls = msg.get("tool_calls") or []
+            tool_calls = [
+                LlmToolCall.from_dict(tc)
+                for tc in raw_calls
+                if isinstance(tc, dict)
+            ]
         except (KeyError, TypeError, IndexError) as e:
             raise LlmApiError(f"malformed LLM response: {e}: {data}") from e
         return LlmResponse(
             content=content,
             model=data.get("model", ""),
             finish_reason=finish,
+            tool_calls=tool_calls,
             raw=data,
         )
 
