@@ -294,9 +294,12 @@ class JobStore:
     def _conn(self) -> Any:
         conn = getattr(self._local, "conn", None)
         if conn is None:
-            conn = __import__("sqlite3").connect(str(self._db_path), check_same_thread=True)
+            conn = __import__("sqlite3").connect(
+                str(self._db_path), check_same_thread=True, timeout=30.0
+            )
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA busy_timeout=30000")
             self._local.conn = conn
         return conn
 
@@ -304,9 +307,12 @@ class JobStore:
         import sqlite3
 
         with _JOBSTORE_SCHEMA_LOCK:
-            conn = sqlite3.connect(str(self._db_path), check_same_thread=True)
+            conn = sqlite3.connect(
+                str(self._db_path), check_same_thread=True, timeout=30.0
+            )
             try:
                 conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=30000")
                 conn.execute(
                     "CREATE TABLE IF NOT EXISTS jobs("
                     "  job_id TEXT PRIMARY KEY,"
@@ -374,33 +380,39 @@ class JobStore:
         return ScheduledJob.from_dict(json.loads(row[0]))
 
     def list(self) -> builtins.list[ScheduledJob]:
+        # Order by the job's creation timestamp (inside payload JSON) so
+        # re-saving a job (INSERT OR REPLACE reassigns rowid) does not change
+        # its ordering position.
         rows = self._conn.execute(
-            "SELECT payload FROM jobs ORDER BY rowid"
+            "SELECT payload FROM jobs "
+            "ORDER BY json_extract(payload, '$.created_at'), rowid"
         ).fetchall()
         return [ScheduledJob.from_dict(json.loads(r[0])) for r in rows]
 
     def list_by_status(self, status: JobStatus) -> builtins.list[ScheduledJob]:
         rows = self._conn.execute(
-            "SELECT payload FROM jobs WHERE status = ? ORDER BY rowid",
+            "SELECT payload FROM jobs WHERE status = ? "
+            "ORDER BY json_extract(payload, '$.created_at'), rowid",
             (status.value,),
         ).fetchall()
         return [ScheduledJob.from_dict(json.loads(r[0])) for r in rows]
 
     def update_status(self, job_id: str, status: JobStatus) -> bool:
+        """Atomically update a job's status (single SQL statement).
+
+        Uses SQLite's ``json_set`` so the read-modify-write of the payload's
+        status field is one atomic statement — no lost-update window between a
+        SELECT and an UPDATE.
+        """
         conn = self._conn
-        row = conn.execute(
-            "SELECT payload FROM jobs WHERE job_id = ?", (job_id,)
-        ).fetchone()
-        if row is None:
-            return False
-        payload = json.loads(row[0])
-        payload["status"] = status.value
-        conn.execute(
-            "UPDATE jobs SET status = ?, payload = ? WHERE job_id = ?",
-            (status.value, json.dumps(payload, ensure_ascii=False), job_id),
+        cur = conn.execute(
+            "UPDATE jobs SET status = ?, "
+            "payload = json_set(payload, '$.status', ?) "
+            "WHERE job_id = ?",
+            (status.value, status.value, job_id),
         )
         conn.commit()
-        return True
+        return bool(cur.rowcount > 0)
 
     def delete(self, job_id: str) -> bool:
         conn = self._conn

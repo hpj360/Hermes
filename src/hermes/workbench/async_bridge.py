@@ -17,16 +17,16 @@ context" rule.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from typing import TypeVar
+from collections.abc import Callable, Coroutine
+from typing import Any, TypeVar
 
 __all__ = ["run_async_in_sync", "run_sync_in_async"]
 
 T = TypeVar("T")
 
 
-def run_async_in_sync(coro: Awaitable[T]) -> T:
-    """Run an awaitable from synchronous code.
+def run_async_in_sync(coro: Coroutine[Any, Any, T]) -> T:
+    """Run a coroutine from synchronous code.
 
     Creates a fresh event loop when no loop is running (the common case for the
     synchronous workbench layer). Raises :class:`RuntimeError` when called from

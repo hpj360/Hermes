@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -63,9 +64,15 @@ class SkillUpClient:
         decide whether to fall back to guidance mode.
         """
         if "/" in self.binary or "\\" in self.binary:
-            # Explicit path: check file exists and is executable
+            # Explicit path: on POSIX require an executable bit; on Windows the
+            # execute bit is meaningless (st_mode & 0o111 is always 0), so
+            # existence of a regular file (or any *.exe/*.bat/*.cmd) suffices.
             p = Path(self.binary)
-            return p.exists() and p.stat().st_mode & 0o111 != 0
+            if not p.exists() or not p.is_file():
+                return False
+            if sys.platform == "win32":
+                return True
+            return p.stat().st_mode & 0o111 != 0
         return shutil.which(self.binary) is not None
 
     def _build_argv(self, subcommand: str, *args: str) -> list[str]:

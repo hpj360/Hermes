@@ -175,6 +175,10 @@ class LlmRetryPolicy:
     base_delay: float = 2.0
     max_delay: float = 60.0
 
+    def __post_init__(self) -> None:
+        if self.max_retries < 0:
+            raise ValueError("max_retries must be >= 0")
+
     def delay_for(self, attempt: int) -> float:
         """Backoff delay in seconds for *attempt* (0-indexed)."""
         return min(float(self.base_delay * (2 ** attempt)), self.max_delay)
@@ -375,8 +379,12 @@ class LlmClient:
             if _is_transient(e.code):
                 raise _RetryableError.from_api_error(exc) from e
             raise exc from e
-        except urllib.error.URLError as e:
-            exc = LlmApiError(f"LLM network error: {e.reason}")
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            # socket.timeout surfaces as a bare TimeoutError, not a URLError,
+            # so it must be caught explicitly or the retry policy silently
+            # skips the most common transient failure (slow LLM responses).
+            reason = getattr(e, "reason", None) or str(e)
+            exc = LlmApiError(f"LLM network error: {reason}")
             raise _RetryableError.from_api_error(exc) from e
 
         try:
@@ -411,8 +419,12 @@ class LlmClient:
             if _is_transient(e.code):
                 raise _RetryableError.from_api_error(exc) from e
             raise exc from e
-        except urllib.error.URLError as e:
-            exc = LlmApiError(f"LLM network error: {e.reason}")
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            # socket.timeout surfaces as a bare TimeoutError, not a URLError,
+            # so it must be caught explicitly or the retry policy silently
+            # skips the most common transient failure (slow LLM responses).
+            reason = getattr(e, "reason", None) or str(e)
+            exc = LlmApiError(f"LLM network error: {reason}")
             raise _RetryableError.from_api_error(exc) from e
 
         try:
@@ -546,16 +558,36 @@ def _extract_json(text: str) -> dict[str, Any]:
             return v if isinstance(v, dict) else {"value": v}
         except json.JSONDecodeError:
             pass
-    # Case 3: first {...} block
+    # Case 3: first balanced {...} block (scan brackets so multiple objects or
+    # trailing braces don't cause over-extraction).
     start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        fragment = text[start : end + 1]
-        try:
-            v = json.loads(fragment)
-            return v if isinstance(v, dict) else {"value": v}
-        except json.JSONDecodeError:
-            pass
+    if start != -1:
+        depth = 0
+        in_str = False
+        escaped = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_str:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    fragment = text[start : i + 1]
+                    try:
+                        v = json.loads(fragment)
+                        return v if isinstance(v, dict) else {"value": v}
+                    except json.JSONDecodeError:
+                        break
     raise LlmApiError(f"could not extract JSON from LLM response: {text[:200]!r}")
 
 

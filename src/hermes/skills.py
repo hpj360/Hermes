@@ -76,7 +76,9 @@ def load_skill_manifest(name: str) -> SkillManifest | None:
         return None
     try:
         text = manifest_path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        # UnicodeDecodeError (a ValueError subclass, not OSError) must also be
+        # caught — a non-UTF-8 manifest should degrade, not crash discovery.
         return None
     lines = text.split("\n")
     data = _parse_frontmatter_lines(lines)

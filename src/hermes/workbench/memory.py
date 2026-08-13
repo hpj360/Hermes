@@ -14,6 +14,7 @@ Enhanced with:
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 import sqlite3
@@ -31,6 +32,8 @@ from hermes.workbench.persistence import (
     atomic_write_json,
     safe_read_json,
 )
+
+logger = logging.getLogger("hermes.workbench.memory")
 
 # ---------------------------------------------------------------------------
 # TF-IDF helpers (pure stdlib, no external dependencies)
@@ -225,8 +228,14 @@ class MemoryService:
             "created_at": episode.created_at,
         }
         atomic_append_jsonl(self._episodes_path, payload)
-        # Sync to FTS5 index
-        self._fts.index(episode)
+        # Sync to FTS5 index (best-effort). The JSONL append has already
+        # committed the episode, so a failed FTS write must not raise and cause
+        # a caller retry that would duplicate the JSONL row — degrade like the
+        # MemOS sync below instead.
+        try:
+            self._fts.index(episode)
+        except Exception:  # noqa: BLE001
+            logger.exception("FTS5 index failed for episode %s; JSONL already appended", episode.id)
         # Sync to MemOS if enabled (best-effort, non-blocking)
         if self._memos.available:
             try:
