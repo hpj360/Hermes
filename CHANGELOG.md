@@ -53,6 +53,21 @@
 - **skill_exec 安全回归套件（P1-10）**：`tests/security/test_skill_sandbox.py`
   8 个敏感变量反例 + `requires_env` 无法强取密钥。
 
+### P1 闭环（content-team 业务部分）
+
+- **analytics 平台指标适配器（P1-1）**：`analytics/adapters.py` 定义
+  `PlatformMetricsAdapter` 协议 + `MetricsAdapterRegistry` +
+  `WechatOfficialMetricsAdapter` 参考实现；`MetricsCollector` 注入 registry 后
+  优先走真实 API，缺凭证/失败时回退可复现模拟（保持向后兼容）。
+- **视频号适配 + B站撤回（P1-2）**：新增 `wechat_video.py`（半自动模式，视频号
+  无公开投稿 API）；`BaseAdapter.recall` 默认实现显式暴露"不支持撤回"的能力边界，
+  `BilibiliAdapter` 重写 recall（半自动下架）；`get_adapter` 接入 WECHAT_VIDEO。
+- **OAuth 标准化（P1-3）**：`auth/oauth_flow.py` 的 `OAuthTokenManager` 统一
+  token 过期检查（skew 提前刷新）+ 可注入 `refresh_fn` 的刷新流程，降级语义明确。
+- **前端 UI（P1-4）**：`apps/web/`（Vite + React + Tailwind + wouter，复用
+  hermes-kb 栈），选题/创作/发布三页面 + fetch 封装；`app.py` 存在构建产物时
+  挂载 dist 并做 SPA 回退。
+
 ## [0.6.0]
 
 - Phase 3 调度中心：Job 队列 / Worker 池 / Cron 触发 / 崩溃恢复 / DAG 依赖 /
