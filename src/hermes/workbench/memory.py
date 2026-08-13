@@ -126,6 +126,7 @@ class MemoryService:
         self._facts_path = state_dir / "facts.json"
         self._fact_ttls_path = state_dir / "fact_ttls.json"
         self._episodes_path = state_dir / "episodes.jsonl"
+        self._embeddings_path = state_dir / "embeddings.json"
         self._profile_loader = profile_loader
         self._profile_saver = profile_saver
 
@@ -134,8 +135,10 @@ class MemoryService:
         self._embed = embed_client or EmbeddingClient()
         self._memos = MemosClient(memos_config or MemosConfig())
 
-        # Cache for vector embeddings (episode_id → vector)
-        self._embedding_cache: dict[str, list[float]] = {}
+        # Cache for vector embeddings (episode_id → vector). Persisted to
+        # ``embeddings.json`` so embeddings survive a process restart (P3-2),
+        # avoiding expensive re-computation via the Ollama embed endpoint.
+        self._embedding_cache: dict[str, list[float]] = self._load_embeddings()
 
     # ------------------------------------------------------------------
     # L1 — Facts
@@ -393,7 +396,11 @@ class MemoryService:
         return scored[:limit]
 
     def _get_or_compute_embedding(self, episode: Episode) -> list[float] | None:
-        """Get cached embedding or compute and cache it."""
+        """Get cached embedding or compute and cache it.
+
+        Newly computed embeddings are persisted to ``embeddings.json`` so they
+        survive process restarts (avoiding re-computation).
+        """
         if episode.id in self._embedding_cache:
             return self._embedding_cache[episode.id]
         text = episode.summary
@@ -403,7 +410,26 @@ class MemoryService:
         if result is None:
             return None
         self._embedding_cache[episode.id] = result.vector
+        self._save_embeddings()
         return result.vector
+
+    def _load_embeddings(self) -> dict[str, list[float]]:
+        """Load the persisted embedding cache (best-effort)."""
+        data = safe_read_json(self._embeddings_path, default={})
+        if not isinstance(data, dict):
+            return {}
+        cache: dict[str, list[float]] = {}
+        for key, value in data.items():
+            if isinstance(value, list) and all(isinstance(x, (int, float)) for x in value):
+                cache[str(key)] = [float(x) for x in value]
+        return cache
+
+    def _save_embeddings(self) -> None:
+        """Persist the embedding cache (best-effort; failure is non-fatal)."""
+        try:
+            atomic_write_json(self._embeddings_path, self._embedding_cache)
+        except OSError:
+            logger.exception("failed to persist embedding cache")
 
     # ------------------------------------------------------------------
     # Enhanced search: RRF-4 fusion (substring + TF-IDF + FTS5 + vector)

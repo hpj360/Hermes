@@ -495,6 +495,34 @@ def test_compact_episodes_kind_scoped_preserves_other_kinds(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
+# P3-2: embedding cache persistence
+# ---------------------------------------------------------------------------
+
+
+def test_embedding_cache_persists_across_instances(tmp_path: Path) -> None:
+    """Computed embeddings should be written to disk and reloaded (P3-2)."""
+    svc = _make_service(tmp_path)
+    svc._embedding_cache["ep-1"] = [0.1, 0.2, 0.3]
+    svc._save_embeddings()
+
+    svc2 = _make_service(tmp_path)
+    assert svc2._embedding_cache["ep-1"] == [0.1, 0.2, 0.3]
+
+
+def test_embedding_cache_load_ignores_malformed(tmp_path: Path) -> None:
+    """Malformed entries in embeddings.json should be skipped, not crash."""
+    state = tmp_path / "state"
+    state.mkdir()
+    import json
+    (state / "embeddings.json").write_text(
+        json.dumps({"good": [1.0, 2.0], "bad": "not-a-list", "weird": ["a"]}),
+        encoding="utf-8",
+    )
+    svc = _make_service(tmp_path)
+    assert svc._embedding_cache == {"good": [1.0, 2.0]}
+
+
+# ---------------------------------------------------------------------------
 # archive_episodes (P3-2)
 # ---------------------------------------------------------------------------
 
