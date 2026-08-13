@@ -126,6 +126,18 @@ def test_health(client):
     assert _json(resp)["status"] == "ok"
 
 
+def test_metrics_prometheus_format(client):
+    """GET /metrics should return Prometheus text exposition."""
+    resp = client("GET", "/metrics")
+    assert resp.status == 200
+    assert resp.getheader("Content-Type", "").startswith("text/plain")
+    assert "hermes_jobs_total" in resp.text
+    assert "hermes_jobs_queue_depth" in resp.text
+    assert "hermes_jobs_by_status" in resp.text
+    # All three metrics are gauges.
+    assert resp.text.count("# TYPE") >= 3
+
+
 def test_unknown_route_404(client):
     resp = client("GET", "/nonexistent")
     assert resp.status == 404

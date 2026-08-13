@@ -32,6 +32,7 @@ __all__ = ["DashboardHandler", "make_server", "run_server"]
 # Route table: (method, regex, handler_name). Named groups become kwargs.
 _ROUTES: list[tuple[str, str, str]] = [
     ("GET", r"^/health$", "h_get_health"),
+    ("GET", r"^/metrics$", "h_get_metrics"),
     ("GET", r"^/$", "h_get_root"),
     ("GET", r"^/dashboard\.html$", "h_get_root"),
     ("GET", r"^/skills$", "h_get_skills"),
@@ -195,6 +196,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _send_text(
+        self, status: int, text: str, content_type: str = "text/plain; charset=utf-8"
+    ) -> None:
+        """Send a plain-text response (used by the Prometheus /metrics endpoint)."""
+        body = text.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self._send_cors_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
     def _read_json_body(self) -> Any:
         length = int(self.headers.get("Content-Length", "0") or "0")
         if length == 0:
@@ -235,6 +248,45 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "recovery": "ready",
                 },
             },
+        )
+
+    # metrics (Prometheus) ----------------------------------------------
+
+    def h_get_metrics(self) -> None:
+        """Prometheus text exposition for the scheduler (scrape endpoint).
+
+        Exposes ``hermes_jobs_total``, ``hermes_jobs_queue_depth``, and
+        per-status counts (``hermes_jobs_by_status``) in the Prometheus
+        0.0.4 text format for scraping by Prometheus / VictoriaMetrics.
+        """
+        from hermes.workbench.cli import _make_scheduler_center
+        from hermes.workbench.scheduler import JobStatus
+
+        center = _make_scheduler_center()
+        jobs = center.job_store.list()
+        queue_depth = center.job_queue.size()
+
+        status_counts: dict[str, int] = {s.value: 0 for s in JobStatus}
+        for job in jobs:
+            status_counts[job.status.value] = status_counts.get(job.status.value, 0) + 1
+
+        lines = [
+            "# HELP hermes_jobs_total Total number of scheduled jobs.",
+            "# TYPE hermes_jobs_total gauge",
+            f"hermes_jobs_total {len(jobs)}",
+            "# HELP hermes_jobs_queue_depth Current scheduler job-queue depth.",
+            "# TYPE hermes_jobs_queue_depth gauge",
+            f"hermes_jobs_queue_depth {queue_depth}",
+            "# HELP hermes_jobs_by_status Number of jobs grouped by lifecycle status.",
+            "# TYPE hermes_jobs_by_status gauge",
+        ]
+        for status in sorted(status_counts):
+            lines.append(f'hermes_jobs_by_status{{status="{status}"}} {status_counts[status]}')
+
+        self._send_text(
+            200,
+            "\n".join(lines) + "\n",
+            content_type="text/plain; version=0.0.4; charset=utf-8",
         )
 
     # root (HTML dashboard) ---------------------------------------------
