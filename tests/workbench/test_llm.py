@@ -320,6 +320,39 @@ def test_extract_json_invalid_raises() -> None:
         _extract_json("no json at all")
 
 
+def test_extract_json_multiple_objects_uses_first() -> None:
+    """Multiple JSON objects: extract the first balanced one, not the span."""
+    result = _extract_json('The result is {"a": 1} and also {"b": 2}.')
+    assert result == {"a": 1}
+
+
+def test_extract_json_adjacent_objects() -> None:
+    result = _extract_json('{"a": 1} {"b": 2}')
+    assert result == {"a": 1}
+
+
+def test_retry_policy_rejects_negative_max_retries() -> None:
+    with pytest.raises(ValueError):
+        LlmRetryPolicy(max_retries=-1)
+
+
+def test_chat_retries_on_timeout_error() -> None:
+    """A bare TimeoutError (socket.timeout) should be retried, not surfaced."""
+    client = LlmClient(
+        base_url="https://api.example.com/v1",
+        api_key="k",
+        model="m",
+        retry_policy=LlmRetryPolicy(max_retries=1, base_delay=0.0, max_delay=0.0),
+    )
+    good = {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=[TimeoutError("timed out"), _mock_urlopen_response(good)],
+    ):
+        resp = client.chat([LlmMessage(role="user", content="hi")])
+    assert resp.content == "ok"
+
+
 # ---------------------------------------------------------------------------
 # retry policy
 # ---------------------------------------------------------------------------

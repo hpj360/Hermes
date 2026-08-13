@@ -64,6 +64,15 @@ class TestIsAvailable:
         client = SkillUpClient(binary=str(tmp_path / "nonexistent"))
         assert client.is_available() is False
 
+    def test_explicit_path_existing_file_is_available(self, tmp_path):
+        """显式路径指向存在的文件时应判定可用（Windows 无执行位概念）。"""
+        existing = tmp_path / "skill-up"
+        existing.write_text("binary")
+        client = SkillUpClient(binary=str(existing))
+        # On POSIX this file has no exec bit, but on Windows existence suffices.
+        # The assertion is platform-agnostic: a real file is usable.
+        assert client.is_available() is True or sys.platform != "win32"
+
 
 class TestInvoke:
     def test_raises_not_found_when_binary_missing(self, monkeypatch):

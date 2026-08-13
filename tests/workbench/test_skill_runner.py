@@ -16,6 +16,7 @@ from hermes.workbench.skill_runner import (
     SkillSpec,
     _detect_entrypoint,
     _looks_sensitive,
+    _looks_sensitive_value,
     _parse_front_matter,
 )
 
@@ -406,3 +407,52 @@ def test_run_timeout_kills_process_tree(tmp_path: Path) -> None:
     assert (result.error or "").startswith("timeout")
     # The kill path should return quickly (well under the 10s sleep).
     assert elapsed < 5.0
+
+
+# ---------------------------------------------------------------------------
+# 对抗性审查回溯：敏感检测扩充 + 值级检测 + UTF-8 强制注入
+# ---------------------------------------------------------------------------
+
+
+def test_looks_sensitive_key_and_private():
+    """PRIVATE_KEY / AWS_ACCESS_KEY_ID 等真实密钥格式应被判敏感。"""
+    assert _looks_sensitive("PRIVATE_KEY") is True
+    assert _looks_sensitive("GITHUB_APP_PRIVATE_KEY") is True
+    assert _looks_sensitive("AWS_ACCESS_KEY_ID") is True
+    assert _looks_sensitive("OPENAI_KEY") is True
+    assert _looks_sensitive("SESSION_COOKIE") is True
+    assert _looks_sensitive("JWT") is True
+    assert _looks_sensitive("DATABASE_URL") is True
+
+
+def test_looks_sensitive_value_detects_credentials():
+    """值级检测：无敏感名的变量若值含凭据也应被剥离。"""
+    assert _looks_sensitive_value("postgres://user:pass@host/db") is True
+    assert _looks_sensitive_value("-----BEGIN PRIVATE KEY-----") is True
+    assert _looks_sensitive_value("hello world") is False
+    assert _looks_sensitive_value("") is False
+
+
+def test_build_safe_env_strips_key_named_vars(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("PRIVATE_KEY", "-----BEGIN RSA PRIVATE KEY-----")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIA...")
+    monkeypatch.setenv("DATABASE_URL", "postgres://u:p@host/db")
+    monkeypatch.setenv("SAFE_VAR", "ok")
+    runner = _make_runner_with_alpha(tmp_path)
+    spec = runner.get("alpha")
+    assert spec is not None
+    env = runner._build_safe_env(spec)
+    assert "PRIVATE_KEY" not in env
+    assert "AWS_ACCESS_KEY_ID" not in env
+    assert "DATABASE_URL" not in env
+    assert env["SAFE_VAR"] == "ok"
+
+
+def test_build_safe_env_forces_utf8(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+    runner = _make_runner_with_alpha(tmp_path)
+    spec = runner.get("alpha")
+    assert spec is not None
+    env = runner._build_safe_env(spec)
+    # 强制 UTF-8，不依赖父环境是否已设置。
+    assert env["PYTHONIOENCODING"] == "utf-8"

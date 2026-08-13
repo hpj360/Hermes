@@ -431,6 +431,15 @@ def test_load_skill_manifest_missing_skill_returns_none(monkeypatch, tmp_path) -
     assert load_skill_manifest("does-not-exist") is None
 
 
+def test_load_skill_manifest_non_utf8_degrades(monkeypatch, tmp_path) -> None:
+    """非 UTF-8 的 manifest 不应崩溃，应降级返回 None。"""
+    skill_dir = tmp_path / "badenc"
+    skill_dir.mkdir()
+    (skill_dir / "manifest.yaml").write_bytes(b"version: 1.0\xff\xfe\x00bad")
+    monkeypatch.setattr(skills_mod, "skills_dir", lambda: tmp_path)
+    assert load_skill_manifest("badenc") is None
+
+
 def test_manifest_tested_false_when_no_test_command(monkeypatch, tmp_path) -> None:
     skill_dir = tmp_path / "untested"
     skill_dir.mkdir()
