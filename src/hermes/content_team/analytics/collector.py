@@ -1,19 +1,25 @@
 """数据采集服务 - 按计划从平台 API 拉取指标。
 
 ``MetricsCollector`` 提供单任务采集、批量采集以及按内容采集三种入口。
-当前未接入真实平台 API，使用 ``random`` 模块按平台特定的范围与互动率
-模拟指标数据；为便于测试，使用固定随机种子保证可复现。
+优先通过 :class:`MetricsAdapterRegistry` 中注册的真实平台适配器拉取指标；
+当平台未注册适配器、适配器返回 ``None``（缺凭证/网络失败）时，回退到
+基于 ``random`` 的可复现模拟（固定种子），保证无凭证环境仍可运行。
 """
 from __future__ import annotations
 
 import random
 import uuid
 from datetime import date
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from hermes.content_team.analytics.adapters import (
+    MetricsAdapterRegistry,
+    MetricsSnapshot,
+)
 from hermes.content_team.models.content import Content
 from hermes.content_team.models.metrics import ContentMetric
 from hermes.content_team.models.platform import Platform
@@ -84,10 +90,48 @@ class MetricsCollector:
     对应适配器的真实调用即可。
     """
 
-    def __init__(self, db_session: AsyncSession) -> None:
+    def __init__(
+        self,
+        db_session: AsyncSession,
+        adapters: MetricsAdapterRegistry | None = None,
+    ) -> None:
         self.db_session = db_session
         # 每个 collector 实例独立维护一个种子化的 RNG，避免全局状态污染
         self._rng = random.Random(_RANDOM_SEED)
+        self._adapters = adapters or MetricsAdapterRegistry()
+
+    async def _fetch_metrics(
+        self, task: PublishTask, account: Any
+    ) -> MetricsSnapshot | None:
+        """Try a real adapter; return None when unavailable (fall back to sim)."""
+        adapter = self._adapters.get(task.platform)
+        if adapter is None:
+            return None
+        try:
+            return await adapter.fetch_metrics(account, task.external_url)
+        except Exception:  # noqa: BLE001 — real API failure must not break collection
+            log_event(
+                "metrics_adapter_failed",
+                "真实指标适配器调用失败，回退模拟",
+                platform=task.platform.value,
+            )
+            return None
+
+    def _snapshot_to_dict(self, snap: MetricsSnapshot) -> dict[str, int | float]:
+        engagement_rate = snap.engagement_rate
+        if engagement_rate < 0:
+            engagement_rate = ContentMetric.compute_engagement_rate(
+                snap.views, snap.likes, snap.comments, snap.shares
+            )
+        return {
+            "views": snap.views,
+            "likes": snap.likes,
+            "comments": snap.comments,
+            "shares": snap.shares,
+            "followers_gained": snap.followers_gained,
+            "followers_lost": snap.followers_lost,
+            "engagement_rate": engagement_rate,
+        }
 
     async def collect_single(
         self, publish_task_id: uuid.UUID
@@ -116,7 +160,17 @@ class MetricsCollector:
             )
             return None
 
-        simulated = _simulate_metrics_for_platform(task.platform, self._rng)
+        # 1. 尝试真实平台适配器；2. 回退到模拟。
+        from hermes.content_team.models.platform import PlatformAccount
+
+        account = await self.db_session.get(PlatformAccount, task.account_id)
+        snapshot = await self._fetch_metrics(task, account)
+        if snapshot is not None:
+            metrics_data = self._snapshot_to_dict(snapshot)
+            source = "adapter"
+        else:
+            metrics_data = _simulate_metrics_for_platform(task.platform, self._rng)
+            source = "simulation"
         snapshot_date = date.today()
 
         # 提前缓存日志所需字段，避免 commit/rollback 后访问已过期的属性
@@ -128,7 +182,7 @@ class MetricsCollector:
             publish_task_id=task.id,
             platform=platform_value,
             date=snapshot_date,
-            **simulated,
+            **metrics_data,
         )
         self.db_session.add(metric)
         try:
@@ -160,6 +214,7 @@ class MetricsCollector:
             comments=metric.comments,
             shares=metric.shares,
             engagement_rate=metric.engagement_rate,
+            source=source,
         )
         return metric
 
