@@ -547,13 +547,25 @@ class MemoryService:
 
         Returns a dict describing the compaction result:
             {"compacted_kinds": [...], "removed": N, "l2_summaries": M, "l3_summaries": P}
+
+        When *kind* is set, only that kind's episodes are compacted; episodes
+        of every other kind are preserved verbatim (they are never dropped).
         """
-        all_episodes = self.list_episodes(kind=kind, limit=10**9)
-        if len(all_episodes) <= keep_recent:
+        # Load ALL episodes (unfiltered) so a kind-scoped compaction does not
+        # silently discard other kinds when rewriting the JSONL file.
+        all_episodes = self.list_episodes(limit=10**9)
+        if kind is not None:
+            target = [e for e in all_episodes if e.kind == kind]
+            others = [e for e in all_episodes if e.kind != kind]
+        else:
+            target = all_episodes
+            others = []
+
+        if len(target) <= keep_recent:
             return {"compacted_kinds": [], "removed": 0, "l2_summaries": 0, "l3_summaries": 0}
 
-        recent = all_episodes[:keep_recent]
-        old = all_episodes[keep_recent:]
+        recent = target[:keep_recent]
+        old = target[keep_recent:]
 
         # --- L2: Group by kind + day ---
         by_kind_day: dict[tuple[str, int], list[Episode]] = {}
@@ -609,11 +621,14 @@ class MemoryService:
                 remaining_l2.extend(summaries)
 
         # --- Rewrite episodes file ---
-        # Order: L3 abstracts (oldest) → L2 summaries → recent (newest)
+        # Order: L3 abstracts (oldest) → L2 summaries → recent (newest).
+        # Other-kind episodes are appended verbatim (reversed to oldest-first,
+        # matching list_episodes' newest-first return order).
         to_write: list[Episode] = []
         to_write.extend(l3_summaries)
         to_write.extend(remaining_l2)
         to_write.extend(reversed(recent))
+        to_write.extend(reversed(others))
 
         lines = []
         for ep in to_write:
@@ -642,6 +657,70 @@ class MemoryService:
             "l2_summaries": len(remaining_l2),
             "l3_summaries": len(l3_summaries),
         }
+
+    def archive_episodes(self, older_than_days: float = 30.0) -> int:
+        """Move episodes older than *older_than_days* into a cold archive file.
+
+        Unlike :meth:`compact_episodes` (which summarizes old episodes in
+        place), archiving *moves* old episodes out of the hot ``episodes.jsonl``
+        into ``episodes.archive.jsonl``, keeping the active log small while
+        preserving the full record for audit. Returns the number archived.
+        """
+        cutoff = time.time() - older_than_days * 86400.0
+        if not self._episodes_path.exists():
+            return 0
+
+        active: list[Episode] = []
+        archived: list[Episode] = []
+        with self._episodes_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ep = _parse_episode_line(line)
+                except (ValueError, KeyError):
+                    continue
+                (archived if ep.created_at < cutoff else active).append(ep)
+
+        if not archived:
+            return 0
+
+        archive_path = self.state_dir / "episodes.archive.jsonl"
+        for ep in archived:
+            atomic_append_jsonl(
+                archive_path,
+                {
+                    "id": ep.id,
+                    "kind": ep.kind,
+                    "summary": ep.summary,
+                    "details": ep.details,
+                    "created_at": ep.created_at,
+                },
+            )
+
+        # Rewrite the hot file with only the active episodes.
+        lines = [
+            json.dumps(
+                {
+                    "id": ep.id,
+                    "kind": ep.kind,
+                    "summary": ep.summary,
+                    "details": ep.details,
+                    "created_at": ep.created_at,
+                },
+                ensure_ascii=False,
+            )
+            for ep in active
+        ]
+        self._episodes_path.write_text(
+            "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8"
+        )
+
+        # FTS index must reflect only the active set.
+        self._fts.rebuild(active)
+
+        return len(archived)
 
     # ------------------------------------------------------------------
     # MemOS integration
@@ -799,7 +878,10 @@ class FTS5Index:
                 details=json.loads(row[3]) if row[3] else {},
                 created_at=row[4],
             )
-            score = 1.0 - (abs(row[5]) / max_rank)
+            # FTS5 rank is negative (more negative = more relevant). Normalize
+            # so the best match gets score 1.0 (higher = better, consistent
+            # with the TF-IDF / cosine scorers).
+            score = abs(row[5]) / max_rank
             results.append((ep, score))
         return results
 

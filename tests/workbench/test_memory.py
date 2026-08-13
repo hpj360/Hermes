@@ -478,3 +478,70 @@ def test_compact_episodes_preserves_recent_intact(tmp_path: Path) -> None:
     before_summaries = [ep.summary for ep in before]
     after_summaries = [ep.summary for ep in after]
     assert before_summaries == after_summaries
+
+
+def test_compact_episodes_kind_scoped_preserves_other_kinds(tmp_path: Path) -> None:
+    """A kind-scoped compaction must NOT drop episodes of other kinds."""
+    svc = _make_service(tmp_path)
+    for i in range(10):
+        svc.record_episode(make_episode("loop", f"loop ep {i}"))
+    for i in range(3):
+        svc.record_episode(make_episode("note", f"note ep {i}"))
+
+    svc.compact_episodes(keep_recent=2, kind="loop")
+
+    remaining_notes = svc.list_episodes(kind="note")
+    assert len(remaining_notes) == 3  # other kind fully preserved
+
+
+# ---------------------------------------------------------------------------
+# archive_episodes (P3-2)
+# ---------------------------------------------------------------------------
+
+
+def _episode(created_at: float, kind: str = "loop", summary: str = "s") -> Episode:
+    return Episode(
+        id=f"id-{created_at}",
+        kind=kind,
+        summary=summary,
+        details={},
+        created_at=created_at,
+    )
+
+
+def test_archive_episodes_moves_old_out_of_hot(tmp_path: Path) -> None:
+    svc = _make_service(tmp_path)
+    now = _time.time()
+    old = _episode(now - 60 * 86400.0, summary="old episode")
+    recent = _episode(now, summary="recent episode")
+    svc.record_episode(old)
+    svc.record_episode(recent)
+
+    n = svc.archive_episodes(older_than_days=30.0)
+
+    assert n == 1
+    active = svc.list_episodes(limit=100)
+    assert [ep.summary for ep in active] == ["recent episode"]
+    # Archive file must contain the moved episode.
+    archive_path = tmp_path / "state" / "episodes.archive.jsonl"
+    assert archive_path.exists()
+    assert "old episode" in archive_path.read_text(encoding="utf-8")
+
+
+def test_archive_episodes_returns_zero_when_nothing_old(tmp_path: Path) -> None:
+    svc = _make_service(tmp_path)
+    svc.record_episode(_episode(_time.time(), summary="fresh"))
+
+    assert svc.archive_episodes(older_than_days=30.0) == 0
+    assert len(svc.list_episodes(limit=100)) == 1  # untouched
+
+
+def test_archive_episodes_older_than_zero_archives_all(tmp_path: Path) -> None:
+    svc = _make_service(tmp_path)
+    svc.record_episode(_episode(_time.time(), summary="a"))
+    svc.record_episode(_episode(_time.time(), summary="b"))
+
+    n = svc.archive_episodes(older_than_days=0.0)
+
+    assert n == 2
+    assert svc.list_episodes(limit=100) == []
