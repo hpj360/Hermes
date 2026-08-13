@@ -7,9 +7,13 @@
 | 里程碑 | 版本 | 主题 | 状态 |
 |---|---|---|---|
 | M0 稳基 | v0.6.1 | memory search / LLM 三能力 / skill 安全 / SQLite JobStore / 文档对齐 | ✅ 完成（P0） |
-| M1 闭环 | v0.7.0 | content-team 业务真实化 + GEPA 自进化 + 前端 UI | ✅ 完成（P1） |
+| M1 闭环 | v0.7.0 | content-team 业务真实化 + GEPA 自进化 + 前端 UI | ⚠️ 部分完成（P1 工程完成，**真实平台 API 未接**） |
 | M2 扩张 | v0.8.0 | hermes-kb 集成 + broker 抽象 + async bridge + OTLP | ✅ 完成（P2） |
 | M3 自治 | v1.0.0 | GEPA 红队 + memory 向量化 + 一键发布 | ✅ 完成（P3） |
+
+> **路线图诚信说明**：M1 的"content-team 业务真实化"当前为**适配器架构就位**，
+> 发布/数据仍是 `random` 模拟，真实平台 API 接入是产品规划的**阶段 2（生死线）**，
+> 详见 `docs/roadmap/product-plan.md`。
 
 ## P0 稳基
 
@@ -24,9 +28,9 @@
 
 ## P1 闭环
 
-- [x] P1-1 analytics 平台指标适配器架构（真实 API + 模拟 fallback）
-- [x] P1-2 视频号适配 + B站撤回（recall 能力边界）
-- [x] P1-3 OAuth 标准化（token 过期检查 + 可注入刷新）
+- [x] P1-1 analytics 平台指标**适配器架构**（真实 API 接口就位，默认仍为 random 模拟）
+- [x] P1-2 视频号适配 + B站撤回（recall 能力边界，半自动模式）
+- [x] P1-3 OAuth 标准化（token 过期检查 + 可注入刷新，真实刷新待接）
 - [x] P1-4 前端 UI（Vite + React + Tailwind，选题/创作/发布三页面）
 - [x] P1-5 GEPA 自动 variant 生成（LLM 驱动）
 - [x] P1-6 GEPA split-run + Welch's t 检验显著性
