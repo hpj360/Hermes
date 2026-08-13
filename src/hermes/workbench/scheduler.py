@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from hermes.workbench.persistence import safe_read_json
 
@@ -43,6 +43,7 @@ __all__ = [
     "EmptyError",
     "JobExecution",
     "JobQueue",
+    "JobQueueBackend",
     "JobStatus",
     "JobStore",
     "RetryPolicy",
@@ -445,8 +446,27 @@ class EmptyError(_queue.Empty):
     """Raised by JobQueue.get when no job available within timeout."""
 
 
+class JobQueueBackend(Protocol):
+    """Backend contract for the scheduler's job queue (P2-3).
+
+    The in-process :class:`JobQueue` is the default implementation (stdlib
+    ``queue.PriorityQueue``). A broker-backed implementation (e.g. Redis
+    Streams / RQ / RabbitMQ) only needs to satisfy ``put`` / ``get`` /
+    ``size`` to plug into :class:`WorkerPool` — the lifecycle of the *job
+    payload* remains the same ``ScheduledJob`` object (serialized to JSON by
+    the broker adapter). This keeps a clean seam for future multi-machine
+    scheduling without changing WorkerPool's execution logic.
+    """
+
+    def put(self, job: ScheduledJob) -> None: ...
+
+    def get(self, timeout: float = 0.0) -> ScheduledJob: ...
+
+    def size(self) -> int: ...
+
+
 class JobQueue:
-    """Thread-safe priority queue.
+    """Thread-safe priority queue (in-memory ``JobQueueBackend`` implementation).
 
     Items are dequeued by ``(priority, seq)`` ascending — lower priority value
     means higher urgency. Within the same priority, FIFO order is preserved via
@@ -553,7 +573,7 @@ class WorkerPool:
         self,
         size: int,
         router: Any,
-        queue: JobQueue,
+        queue: JobQueueBackend,
         store: JobStore,
         bus: StatusBus | None = None,
         requeue_sleep: float = 1.0,

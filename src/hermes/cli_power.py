@@ -254,6 +254,106 @@ def cmd_init(args: argparse.Namespace) -> int:
 # ── Subparser registration ──────────────────────────────────────────
 
 
+_DOCKERFILE_TEMPLATE = """# Hermes 运行时镜像（由 `hermes deploy` 生成）
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# 先拷贝依赖清单以利用 Docker 层缓存
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 安装 hermes 包（editable 或 sdist 均可，这里用 sdist 保持镜像自包含）
+COPY . .
+RUN pip install --no-cache-dir .
+
+# 状态目录（持久化卷挂载点）
+ENV HERMES_STATE_DIR=/app/.state \\
+    HERMES_CACHE_DIR=/app/.cache
+
+EXPOSE 8000
+
+CMD ["hermes", "workbench", "serve", "--host", "0.0.0.0", "--port", "8000"]
+"""
+
+_COMPOSE_TEMPLATE = """# Hermes 工作台编排（由 `hermes deploy` 生成）
+services:
+  hermes:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - hermes-state:/app/.state
+      - hermes-cache:/app/.cache
+    env_file:
+      - .env
+    restart: unless-stopped
+
+volumes:
+  hermes-state:
+  hermes-cache:
+"""
+
+_DEPLOY_README_TEMPLATE = """# Hermes 部署指南（由 `hermes deploy` 生成）
+
+## Docker 本地运行
+
+```bash
+docker compose up --build
+```
+
+## Render
+
+1. 创建 Web Service，连接本仓库。
+2. Build Command: `pip install -r requirements.txt && pip install .`
+3. Start Command: `hermes workbench serve --host 0.0.0.0 --port $PORT`
+4. 在 Environment 中配置 `.env` 里的密钥变量。
+
+## Fly.io
+
+```bash
+fly launch --no-deploy
+fly deploy
+```
+
+## Railway
+
+1. New Project → Deploy from GitHub。
+2. 启动命令设为 `hermes workbench serve --host 0.0.0.0 --port $PORT`。
+3. 在 Variables 中配置密钥。
+"""
+
+
+def cmd_deploy(args: argparse.Namespace) -> int:
+    """生成部署资产（Dockerfile / docker-compose.yml / deploy 说明）。
+
+    Output directory defaults to ``deploy/`` under the project root. Generated
+    files are plain text; re-running overwrites them (they are templates).
+    """
+    settings = get_settings()
+    out_dir = Path(args.output) if args.output else settings.hermes_project_root / "deploy"
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"Error: failed to create {out_dir}: {exc}")
+        return 2
+
+    files = {
+        "Dockerfile": _DOCKERFILE_TEMPLATE,
+        "docker-compose.yml": _COMPOSE_TEMPLATE,
+        "README.md": _DEPLOY_README_TEMPLATE,
+    }
+    for name, content in files.items():
+        try:
+            (out_dir / name).write_text(content, encoding="utf-8")
+            print(f"  wrote {out_dir / name}")
+        except OSError as exc:
+            print(f"Error: failed to write {name}: {exc}")
+            return 2
+    print(f"Deploy assets generated in {out_dir}")
+    return 0
+
+
 def add_power_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """注册 power 子命令：sh / diff / context / init（均为顶层子命令）。"""
     # sh —— 执行 shell 命令
@@ -284,3 +384,10 @@ def add_power_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     # init —— 生成/更新 AGENTS.md
     p_init = sub.add_parser("init", help="Generate or update AGENTS.md")
     p_init.set_defaults(func=cmd_init)
+
+    # deploy —— 生成部署资产（Dockerfile / docker-compose / 说明）
+    p_deploy = sub.add_parser("deploy", help="Generate deploy assets (Dockerfile, compose)")
+    p_deploy.add_argument(
+        "--output", default=None, help="Output directory (default: <project>/deploy)"
+    )
+    p_deploy.set_defaults(func=cmd_deploy)

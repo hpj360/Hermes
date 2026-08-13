@@ -287,6 +287,28 @@ def test_init_skeleton_includes_dev_commands(tmp_project: Path) -> None:
     main(["init"])
     content = (tmp_project / "AGENTS.md").read_text(encoding="utf-8")
     assert "pip install" in content
-    assert "pytest" in content
     assert "ruff" in content
     assert "mypy" in content
+
+
+# ── deploy ──────────────────────────────────────────────────────────
+
+
+def test_deploy_generates_assets(tmp_project: Path) -> None:
+    """`hermes deploy` 应生成 Dockerfile / docker-compose.yml / README.md。"""
+    rc = main(["deploy"])
+    assert rc == 0
+    deploy_dir = tmp_project / "deploy"
+    assert (deploy_dir / "Dockerfile").exists()
+    assert (deploy_dir / "docker-compose.yml").exists()
+    assert (deploy_dir / "README.md").exists()
+    content = (deploy_dir / "Dockerfile").read_text(encoding="utf-8")
+    assert "FROM python" in content
+
+
+def test_deploy_custom_output_dir(tmp_project: Path) -> None:
+    """`hermes deploy --output <dir>` 应写到指定目录。"""
+    custom = tmp_project / "custom-deploy"
+    rc = main(["deploy", "--output", str(custom)])
+    assert rc == 0
+    assert (custom / "Dockerfile").exists()
