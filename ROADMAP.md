@@ -8,8 +8,8 @@
 |---|---|---|---|
 | M0 稳基 | v0.6.1 | memory search / LLM 三能力 / skill 安全 / SQLite JobStore / 文档对齐 | ✅ 完成（P0） |
 | M1 闭环 | v0.7.0 | content-team 业务真实化 + GEPA 自进化 + 前端 UI | ✅ 完成（P1） |
-| M2 扩张 | v0.8.0 | hermes-kb 集成 + skill sandbox + broker 抽象 | 计划（P2） |
-| M3 自治 | v1.0.0 | GEPA 红队 + memory 向量化 + 一键发布 + marketplace | 计划（P3） |
+| M2 扩张 | v0.8.0 | hermes-kb 集成 + broker 抽象 + async bridge + OTLP | ✅ 完成（P2，sandbox/Vault 留技术债） |
+| M3 自治 | v1.0.0 | GEPA 红队 + memory 向量化 + 一键发布 | ✅ 完成（P3，marketplace 留技术债） |
 
 ## P0 稳基
 
@@ -34,5 +34,21 @@
 - [x] P1-8 /metrics Prometheus 端点 + dashboard trace 消费
 - [x] P1-9 LLM function calling（tools 参数 + tool_calls 解析）
 - [x] P1-10 skill_exec 安全回归套件
+
+## P2 扩张
+
+- [x] P2-1 /kb/search proxy + content_team RAG 调用
+- [ ] P2-2 skill sandbox（RestrictedPython / OS 级隔离）— 技术债：需第三方库或 OS 能力，违反零依赖
+- [x] P2-3 JobQueue Backend 协议（in-memory / broker 双实现，ADR-0008）
+- [ ] P2-4 配置指针式 + Vault backend — 技术债：需 HashiCorp Vault 外部服务
+- [x] P2-5 async bridge（asyncio.to_thread 桥，ADR-0007）
+- [x] P2-6 OTLP exporter
+
+## P3 自治
+
+- [x] P3-1 GEPA 红队 variant + denylist 强度回归（gepa_redteam.py）
+- [x] P3-2 memory TTL + 归档 + 向量化（embedding 缓存持久化）
+- [x] P3-3 hermes deploy 一键发布（Dockerfile / compose / 说明）
+- [ ] P3-4 Skill marketplace — 技术债：需在线注册中心/分发服务
 
 详见 `docs/roadmap/iter-v0.6-to-v1.0.md`。
