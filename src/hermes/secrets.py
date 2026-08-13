@@ -11,8 +11,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
+import urllib.error
+import urllib.request
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -135,12 +138,68 @@ class OnePasswordSecretSource(SecretSource):
         return "onepassword"
 
 
+class VaultSecretSource(SecretSource):
+    """HashiCorp Vault KV-v2 secret backend (stdlib-only HTTP client).
+
+    Reads credentials from ``VAULT_ADDR`` / ``VAULT_TOKEN`` environment
+    variables and a ``VAULT_PATH`` (default ``hermes``) KV-v2 secret path.
+    The whole secret is fetched lazily on first ``get_secret`` and cached for
+    the process lifetime, so repeated lookups do not hammer Vault.
+
+    Degrades cleanly: when the address/token are missing or the fetch fails,
+    ``is_available()`` returns False / ``get_secret`` returns ``default``, and
+    the caller falls back to ``env_file`` per the standard degradation chain.
+    """
+
+    def __init__(
+        self,
+        addr: str | None = None,
+        token: str | None = None,
+        path: str | None = None,
+    ) -> None:
+        self._addr = (addr or os.environ.get("VAULT_ADDR", "")).rstrip("/")
+        self._token = token or os.environ.get("VAULT_TOKEN", "")
+        self._path = (path or os.environ.get("VAULT_PATH", "hermes")).strip("/")
+        self._cache: dict[str, str] = {}
+        self._fetched = False
+
+    def is_available(self) -> bool:
+        return bool(self._addr and self._token)
+
+    def get_secret(self, key: str, default: str | None = None) -> str | None:
+        if not self.is_available():
+            return default
+        if not self._fetched:
+            self._fetch()
+        return self._cache.get(key, default)
+
+    def _fetch(self) -> None:
+        url = f"{self._addr}/v1/secret/data/{self._path}"
+        req = urllib.request.Request(
+            url, headers={"X-Vault-Token": self._token, "Accept": "application/json"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            # KV v2 shape: {"data": {"data": {key: value}}}
+            data = (payload.get("data") or {}).get("data") or {}
+            self._cache = {str(k): str(v) for k, v in data.items()}
+        except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError):
+            self._cache = {}
+        finally:
+            self._fetched = True
+
+    def source_name(self) -> str:
+        return "vault"
+
+
 # 已注册的 SecretSource 名称 → 类映射
 SECRET_SOURCES: dict[str, type[SecretSource]] = {
     "env_file": EnvFileSecretSource,
     "env_var": EnvVarSecretSource,
     "bitwarden": BitwardenSecretSource,
     "onepassword": OnePasswordSecretSource,
+    "vault": VaultSecretSource,
 }
 
 # 默认 SecretSource 名称

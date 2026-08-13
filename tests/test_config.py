@@ -40,3 +40,19 @@ def test_knowledge_discovery() -> None:
     assert root.exists()
     docs = list_knowledge_docs()
     assert len(docs) >= 4
+
+
+def test_load_inherited_env_pointer_paths(monkeypatch, tmp_path) -> None:
+    """HERMES_INHERIT_ENV_PATHS should inject extra .env files (pointer-style)."""
+    import os
+
+    import hermes.config as config_mod
+
+    extra = tmp_path / "extra.env"
+    extra.write_text("POINTER_INHERITED_KEY=from-pointer\n", encoding="utf-8")
+    monkeypatch.setenv("HERMES_INHERIT_ENV_PATHS", str(extra))
+    monkeypatch.delenv("POINTER_INHERITED_KEY", raising=False)
+
+    config_mod.load_inherited_env()
+
+    assert os.environ["POINTER_INHERITED_KEY"] == "from-pointer"

@@ -14,6 +14,7 @@ from hermes.secrets import (
     EnvVarSecretSource,
     OnePasswordSecretSource,
     SECRET_SOURCES,
+    VaultSecretSource,
     get_secret_source,
     list_available_sources,
 )
@@ -236,5 +237,67 @@ def test_known_secret_keys_includes_api_keys() -> None:
     assert "OPENAI_API_KEY" in keys
     assert "ANTHROPIC_API_KEY" in keys
     assert "GITHUB_TOKEN" in keys
-    # 端口/路径类配置不应被纳入
+    # 端口/非密钥字段不应被识别为密钥
     assert "OPENCLAW_GATEWAY_PORT" not in keys
+
+
+# ── VaultSecretSource (P2-4) ─────────────────────────────────────────
+
+
+def test_vault_source_not_available_without_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("VAULT_ADDR", raising=False)
+    monkeypatch.delenv("VAULT_TOKEN", raising=False)
+    source = VaultSecretSource()
+    assert source.is_available() is False
+    assert source.get_secret("ANY_KEY", default="fallback") == "fallback"
+
+
+def test_vault_source_registered() -> None:
+    assert "vault" in SECRET_SOURCES
+
+
+def _mock_vault_response(payload: dict) -> object:
+    import json
+    from unittest.mock import MagicMock
+
+    resp = MagicMock()
+    resp.read.return_value = json.dumps(payload).encode("utf-8")
+    resp.__enter__ = MagicMock(return_value=resp)
+    resp.__exit__ = MagicMock(return_value=False)
+    return resp
+
+
+def test_vault_source_fetches_kv_v2(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import patch
+
+    source = VaultSecretSource(addr="http://vault:8200", token="t", path="hermes")
+    payload = {"data": {"data": {"OPENAI_API_KEY": "sk-vault", "REGION": "us-east"}}}
+    with patch("urllib.request.urlopen", return_value=_mock_vault_response(payload)):
+        assert source.get_secret("OPENAI_API_KEY") == "sk-vault"
+        assert source.get_secret("REGION") == "us-east"
+
+
+def test_vault_source_caches_single_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import patch
+
+    source = VaultSecretSource(addr="http://vault:8200", token="t", path="hermes")
+    payload = {"data": {"data": {"K": "v"}}}
+    with patch(
+        "urllib.request.urlopen", return_value=_mock_vault_response(payload)
+    ) as mock_open:
+        source.get_secret("K")
+        source.get_secret("K")
+        source.get_secret("K")
+    assert mock_open.call_count == 1  # cached after first fetch
+
+
+def test_vault_source_degrades_on_fetch_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    import urllib.error
+    from unittest.mock import patch
+
+    source = VaultSecretSource(addr="http://vault:8200", token="t", path="hermes")
+    err = urllib.error.URLError("connection refused")
+    with patch("urllib.request.urlopen", side_effect=err):
+        assert source.get_secret("K", default="dflt") == "dflt"

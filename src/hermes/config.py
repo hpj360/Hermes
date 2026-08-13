@@ -14,6 +14,7 @@ to stay within sandbox allow-listed directories.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import ClassVar
 
@@ -239,13 +240,27 @@ class Settings(BaseSettings):
 
 
 def load_inherited_env() -> None:
-    """Load environment variables from main project .env files.
+    """Load environment variables from inherited .env files (pointer-style).
+
+    Inherited paths come from two sources, in order:
+
+    1. Hard-coded defaults in :attr:`Settings.inherit_env_paths` (back-compat
+       with the original Linux sandbox layout).
+    2. ``HERMES_INHERIT_ENV_PATHS`` — a path-separator-delimited list of extra
+       ``.env`` files. This is *pointer-style* inheritance: the paths are
+       referenced, not copied, so a single source of truth can be shared
+       across environments without duplication.
 
     Existing non-empty environment variables are never overwritten.
     """
     for path in Settings.inherit_env_paths:
         if path.exists():
             load_dotenv(path, override=False, verbose=False)
+    extra = os.environ.get("HERMES_INHERIT_ENV_PATHS", "")
+    for raw in extra.split(os.pathsep):
+        raw = raw.strip()
+        if raw and Path(raw).exists():
+            load_dotenv(Path(raw), override=False, verbose=False)
 
 
 def load_hermes_env() -> None:
