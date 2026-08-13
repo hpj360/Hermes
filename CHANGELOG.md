@@ -36,6 +36,23 @@
 - ADR-0004（同步/异步边界）、ADR-0005（LLM 三能力）、ADR-0006（SQLite JobStore）。
 - 新增 `CHANGELOG.md`、`ROADMAP.md` 与迭代 Spec `docs/roadmap/iter-v0.6-to-v1.0.md`。
 
+### P1 闭环（纯代码部分）
+
+- **LLM function calling（P1-9）**：`LlmClient.chat(tools=[...])` + `LlmToolCall`
+  结构化解析，为 orchestrator 原生工具调用打基础。
+- **GEPA split-run + t 检验（P1-6）**：`gepa_stats.py` 纯 stdlib 实现 Welch's
+  t 检验（连分数不完全 beta），`compare_variants` 三重门（≥5 次重复 +
+  challenger 均值更高 + p<0.05）才 promote。
+- **GEPA 自动 variant 生成（P1-5）**：`auto_generate_variants()` LLM 驱动产出
+  差异化策略 variant，失败优雅降级为空列表。
+- **Skill Manifest 协议（P1-7）**：`manifest.yaml`（version/requires/provides/
+  test_command），`discover_skills` 自动加载，`hermes skills list --untested`。
+  44 个 skill 全部补齐 manifest（9 个有测试、35 个待补）。
+- **`/metrics` Prometheus 端点（P1-8）**：`hermes_jobs_total` /
+  `hermes_jobs_queue_depth` / `hermes_jobs_by_status{status=...}`。
+- **skill_exec 安全回归套件（P1-10）**：`tests/security/test_skill_sandbox.py`
+  8 个敏感变量反例 + `requires_env` 无法强取密钥。
+
 ## [0.6.0]
 
 - Phase 3 调度中心：Job 队列 / Worker 池 / Cron 触发 / 崩溃恢复 / DAG 依赖 /

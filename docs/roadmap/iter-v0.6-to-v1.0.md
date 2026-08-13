@@ -182,18 +182,27 @@
 
 > 用 `- [ ]` 标记；完成 `- [x]`；阻塞 `- [!]`
 
-### P0 In Progress
-- [ ] P0-1 memory_search.py + 7 handlers
-- [ ] P0-2 LLM stream + retry + token counter（并行 3 项）
-- [ ] P0-3 Skill env 白名单 + SIGKILL 兜底
-- [ ] P0-4 JobStore SQLite + migrator
-- [ ] P0-5 CHANGELOG / ROADMAP / ADR-0004..0006
-- [ ] P0-6 sync-forks.sh
-- [ ] P0-7 调度器命名空间隔离
-- [ ] P0-8 Audit log 持久化 + AuditStore
+### P0 完成 ✅
+- [x] P0-1 memory_search.py + 7 handlers
+- [x] P0-2 LLM stream + retry + token counter（并行 3 项）
+- [x] P0-3 Skill env 白名单 + SIGKILL 兜底
+- [x] P0-4 JobStore SQLite + migrator
+- [x] P0-5 CHANGELOG / ROADMAP / ADR-0004..0006
+- [x] P0-6 sync-forks.sh
+- [x] P0-7 调度器命名空间隔离
+- [x] P0-8 Audit log 持久化 + AuditStore
 
-### P1 Pending
-- [ ] P1-1 .. P1-10
+### P1 进行中
+- [x] P1-5 GEPA 自动 variant 生成
+- [x] P1-6 GEPA split-run + t 检验显著性
+- [x] P1-7 Skill Manifest 协议 + skills list --untested
+- [x] P1-8 /metrics Prometheus 端点
+- [x] P1-9 LLM function calling
+- [x] P1-10 skill_exec 安全回归套件
+- [ ] P1-1 content_team analytics 接真实平台 API（需微信公众号/小红书凭证）
+- [ ] P1-2 视频号适配 + B站撤回（需 OAuth 凭证）
+- [ ] P1-3 content_team OAuth 标准化（需平台凭证）
+- [ ] P1-4 content_team 前端 UI（需 hermes-kb webpack 栈）
 
 ### P2 Pending
 - [ ] P2-1 .. P2-6
