@@ -29,6 +29,7 @@ from hermes.loop import (
     record_round,
 )
 from hermes.orchestrator import Orchestrator, RoundResult
+from hermes.trajectory import TrajectoryLogger, archive_trajectory
 
 logger = logging.getLogger("hermes.runner")
 
@@ -266,7 +267,9 @@ def _run_builder_checker(
     loop_dir: Path,
 ) -> dict[str, Any]:
     """Execute a builder-checker round via the Orchestrator."""
-    orchestrator = Orchestrator()
+    orchestrator = Orchestrator(
+        trajectory=TrajectoryLogger(loops_dir() / name / "trajectory.jsonl")
+    )
 
     if not orchestrator.is_available():
         # Guidance mode: print execution instructions
@@ -338,7 +341,16 @@ def _run_builder_checker(
         collaboration_metrics=result.collaboration_metrics,
     )
 
-    record_result = record_round(name, round_data, tokens_used=result.total_tokens)
+    record_result = record_round(
+        name,
+        round_data,
+        tokens_used=result.total_tokens,
+        trajectory_seq=(
+            orchestrator.trajectory.last_seq()
+            if orchestrator.trajectory is not None
+            else None
+        ),
+    )
 
     # Check stop rules
     updated_loop = get_loop(name)
@@ -373,7 +385,9 @@ def _run_multi_perspective(
     Gateway 可用时调用 orchestrator.run_parallel_perspectives，
     不可用时降级到 guidance 模式。
     """
-    orchestrator = Orchestrator()
+    orchestrator = Orchestrator(
+        trajectory=TrajectoryLogger(loops_dir() / name / "trajectory.jsonl")
+    )
 
     if not orchestrator.is_available():
         return _guidance_multi_perspective(name, loop, round_num, loop_dir)
@@ -434,7 +448,16 @@ def _run_multi_perspective(
     if deliverables:
         loop.deliverables = deliverables
 
-    record_result = record_round(name, round_data, tokens_used=result.total_tokens)
+    record_result = record_round(
+        name,
+        round_data,
+        tokens_used=result.total_tokens,
+        trajectory_seq=(
+            orchestrator.trajectory.last_seq()
+            if orchestrator.trajectory is not None
+            else None
+        ),
+    )
 
     # Check stop rules
     updated_loop = get_loop(name)
@@ -742,6 +765,8 @@ def resume_loop(name: str, gated: bool = False) -> dict[str, Any]:
         loop.rounds = []
         loop.current_round = 0
         loop.budget_used_tokens = 0
+        # ADR-0017: 新周期开始前归档旧轨迹，避免跨周期事件混流。
+        archive_trajectory(loops_dir() / name / "trajectory.jsonl")
         from hermes.loop import _save_loop_meta
         _save_loop_meta(loop)
         logger.info("Loop '%s' reset to IDLE for fresh resume (history cleared)", name)

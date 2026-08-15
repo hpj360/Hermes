@@ -26,7 +26,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from hermes.config import get_settings
+from hermes.presets import apply_prompt_sections, merged_presets, resolve_preset
 from hermes.tool_recovery import analyze_failures, format_recovery_section
+from hermes.trajectory import TrajectoryDesyncError, TrajectoryLogger
+from hermes.workbench.errors import ValidationError
 
 logger = logging.getLogger("hermes.orchestrator")
 
@@ -137,6 +140,17 @@ class AgentTask:
     denylist: list[str] = field(default_factory=list)
     # fan_in 审计后填充：检测到的违规文件路径写入操作列表。
     path_violations: list[str] = field(default_factory=list)
+    # Stage 2 (ADR-0018)：能力面收窄。
+    # preset: 命名的 AgentPreset；tools: 内置工具白名单（None=不限制）；
+    # model: 模型覆盖；isolated: 是否隔离会话（默认 True，与旧 spawn_agent 一致）。
+    preset: str | None = None
+    tools: list[str] | None = None
+    model: str | None = None
+    isolated: bool = True
+    # fan_in 审计后填充：检测到的越权内置工具调用列表。
+    tool_violations: list[str] = field(default_factory=list)
+    # ADR-0017：transient 轨迹关联键（不进 to_dict、不入 Gateway payload）。
+    trajectory_request_seq: int | None = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -156,6 +170,11 @@ class AgentTask:
             "token_limit": self.token_limit,
             "denylist": self.denylist,
             "path_violations": self.path_violations,
+            "preset": self.preset,
+            "tools": self.tools,
+            "model": self.model,
+            "isolated": self.isolated,
+            "tool_violations": self.tool_violations,
         }
 
 
@@ -198,6 +217,43 @@ class RoundResult:
             "role_violation_count": self.role_violation_count,
             "collaboration_metrics": self.collaboration_metrics,
         }
+
+
+def _build_spawn_payload(task: AgentTask) -> dict[str, Any]:
+    """Build the Gateway ``/api/subagent/spawn`` payload from a task.
+
+    This is the single construction point for the dispatch payload (ADR-0017):
+    any field that affects the model's upstream context must be assembled here
+    so the trajectory snapshot and the dispatched payload can never diverge.
+    ``preset`` (if any) contributes prompt sections to ``agent_definition``.
+    """
+    agent_content = ""
+    if task.agent_file:
+        agent_path = Path(task.agent_file)
+        if agent_path.exists():
+            agent_content = agent_path.read_text(encoding="utf-8")
+
+    if task.preset:
+        preset = merged_presets().get(task.preset)
+        if preset and preset.prompt_sections:
+            agent_content = apply_prompt_sections(agent_content, preset)
+
+    payload: dict[str, Any] = {
+        "task": task.task_description,
+        "context": task.context,
+        "isolated": task.isolated,
+    }
+    if agent_content:
+        payload["agent_definition"] = agent_content
+    if task.model:
+        payload["model"] = task.model
+    if task.allowed_mcp_tools is not None:
+        payload["allowed_tools"] = task.allowed_mcp_tools
+    if task.tools is not None:
+        payload["allowed_builtin_tools"] = task.tools
+    if task.denylist:
+        payload["denylist"] = task.denylist
+    return payload
 
 
 class OpenClawClient:
@@ -282,26 +338,26 @@ class OpenClawClient:
         Returns:
             Session ID string, or None if the gateway is unavailable.
         """
-        agent_content = ""
-        if agent_file:
-            agent_path = Path(agent_file)
-            if agent_path.exists():
-                agent_content = agent_path.read_text(encoding="utf-8")
+        task_obj = AgentTask(
+            role="legacy",
+            agent_file=agent_file,
+            task_description=task,
+            context=context,
+            model=model,
+            isolated=isolated,
+            allowed_mcp_tools=allowed_tools,
+            denylist=list(denylist) if denylist else [],
+        )
+        payload = _build_spawn_payload(task_obj)
+        return self.spawn_payload(payload)
 
-        payload: dict[str, Any] = {
-            "task": task,
-            "context": context,
-            "isolated": isolated,
-        }
-        if agent_content:
-            payload["agent_definition"] = agent_content
-        if model:
-            payload["model"] = model
-        if allowed_tools is not None:
-            payload["allowed_tools"] = allowed_tools
-        if denylist:  # Stage 6: 前向兼容——Gateway 支持则强制执行，不支持则忽略
-            payload["denylist"] = denylist
+    def spawn_payload(self, payload: dict[str, Any]) -> str | None:
+        """Spawn a sub-agent from an already-built payload dict.
 
+        Returns the session ID, or None if the gateway is unavailable. This is
+        the single HTTP entry point for dispatch (ADR-0017); ``spawn_agent``
+        delegates here after building the payload.
+        """
         result = self._request("POST", "/api/subagent/spawn", data=payload, timeout=60.0)
         if result and "session_id" in result:
             session_id: str = result["session_id"]
@@ -358,8 +414,13 @@ class Orchestrator:
     and enforces the "don't filter" principle for checker reports.
     """
 
-    def __init__(self, client: OpenClawClient | None = None) -> None:
+    def __init__(
+        self,
+        client: OpenClawClient | None = None,
+        trajectory: TrajectoryLogger | None = None,
+    ) -> None:
         self.client = client or OpenClawClient()
+        self.trajectory = trajectory
 
     def is_available(self) -> bool:
         """Check if the orchestrator can actually execute agents."""
@@ -385,34 +446,95 @@ class Orchestrator:
         return tasks
 
     def _prepare_and_spawn(self, task: AgentTask) -> None:
-        """填充默认白名单并 spawn 单个 task（P0 分舱 + Stage 6 denylist）。"""
-        # 白名单未显式指定时，按角色填充默认值
+        """解析 preset、构造 payload、写轨迹并 spawn 单个 task。
+
+        P0 分舱（MCP 白名单）+ Stage 2 preset 收窄（ADR-0018）+
+        Stage 6 denylist + ADR-0017 派发轨迹不变量。
+        """
+        # Stage 2: 先解析 preset（显式字段 > preset > 角色默认）
+        try:
+            resolve_preset(task, merged_presets())
+        except ValidationError as exc:
+            task.started_at = datetime.now(timezone.utc).isoformat()
+            task.status = "failed"
+            task.result = f"preset resolution failed: {exc}"
+            logger.warning("Preset resolution failed for role=%s: %s", task.role, exc)
+            self._record_dispatch_result(task, None, "failed", 0)
+            return
+
+        # 白名单仍未指定时，按角色填充默认值
         if task.allowed_mcp_tools is None:
             task.allowed_mcp_tools = _get_role_whitelist(task.role)
 
         task.started_at = datetime.now(timezone.utc).isoformat()
         task.status = "running"
-        session_id = self.client.spawn_agent(
-            agent_file=task.agent_file,
-            task=task.task_description,
-            context=task.context,
-            allowed_tools=task.allowed_mcp_tools,
-            denylist=task.denylist or None,
-        )
+
+        payload = _build_spawn_payload(task)
+
+        # ADR-0017: 记录派发快照 + 可重建校验（fail loud）
+        if self.trajectory is not None:
+            try:
+                request_seq = self.trajectory.record(
+                    "dispatch/request",
+                    {
+                        "role": task.role,
+                        "agent_file": task.agent_file,
+                        "payload": payload,
+                    },
+                )
+                task.trajectory_request_seq = request_seq
+                self.trajectory.assert_reconstructable(request_seq, payload)
+            except (TrajectoryDesyncError, OSError) as exc:
+                task.status = "failed"
+                task.result = f"trajectory invariant failed: {exc}"
+                logger.warning(
+                    "Trajectory invariant failed for role=%s: %s", task.role, exc
+                )
+                self._record_dispatch_result(task, None, "failed", 0)
+                return
+
+        session_id = self.client.spawn_payload(payload)
         task.session_id = session_id
         if session_id is None:
             task.status = "failed"
             task.result = "Gateway unavailable"
+            self._record_dispatch_result(task, None, "failed", 0)
         logger.info(
-            "Spawned agent: %s -> session=%s (allowed_mcp_tools=%s)",
-            task.role, session_id, task.allowed_mcp_tools,
+            "Spawned agent: %s -> session=%s (allowed_mcp_tools=%s, tools=%s)",
+            task.role, session_id, task.allowed_mcp_tools, task.tools,
         )
+
+    def _record_dispatch_result(
+        self,
+        task: AgentTask,
+        session_id: str | None,
+        status: str,
+        tokens_used: int,
+    ) -> None:
+        """补记 dispatch/result 轨迹事件（失败路径同样记录，保证配对完备）。"""
+        if self.trajectory is None:
+            return
+        try:
+            self.trajectory.record(
+                "dispatch/result",
+                {
+                    "request_seq": task.trajectory_request_seq,
+                    "role": task.role,
+                    "session_id": session_id,
+                    "status": status,
+                    "tokens_used": tokens_used,
+                    "completed_at": task.completed_at,
+                },
+            )
+        except OSError:
+            logger.warning("Failed to record dispatch/result for role=%s", task.role)
 
     def fan_in(self, tasks: list[AgentTask], timeout: float = 300.0) -> list[AgentTask]:
         """Wait for all spawned tasks to complete and collect results.
 
         Updates each task's result, status, and tokens_used.
         P0: 完成后审计 MCP 工具调用，检测角色越权。
+        ADR-0017: 完成后补记 dispatch/result 轨迹事件。
         """
         for task in tasks:
             if task.status == "failed" or task.session_id is None:
@@ -424,6 +546,7 @@ class Orchestrator:
             if result is None:
                 task.status = "failed"
                 task.result = "Timeout or gateway error"
+                self._record_dispatch_result(task, task.session_id, "failed", 0)
             else:
                 task.status = "completed" if result.get("status") == "completed" else "failed"
                 messages = self.client.get_session_messages(task.session_id)
@@ -442,8 +565,13 @@ class Orchestrator:
                 self._check_token_limit(task)
                 # P0: 审计 MCP 工具调用违规
                 self._audit_mcp_violations(task, messages)
+                # Stage 2: 审计内置工具越权（ADR-0018 兜底审计）
+                self._audit_builtin_tool_violations(task, messages)
                 # Stage 6: 审计 denylist 路径违规（L3 安全强制执行）
                 self._audit_path_violations(task, messages)
+                self._record_dispatch_result(
+                    task, task.session_id, task.status, task.tokens_used
+                )
 
         return tasks
 
@@ -510,6 +638,42 @@ class Orchestrator:
             logger.warning(
                 "MCP 违规: role=%s 调用了未授权工具 %s (白名单=%s)",
                 task.role, violations, task.allowed_mcp_tools,
+            )
+
+    @staticmethod
+    def _audit_builtin_tool_violations(
+        task: AgentTask, messages: list[dict[str, Any]]
+    ) -> None:
+        """扫描 session 消息，检测 sub-agent 是否调用了 preset 之外的**内置**工具。
+
+        ADR-0018 兜底审计：preset 的 ``tools``（内置工具白名单）传入 Gateway
+        是前向兼容的；Gateway 不支持时由本审计在 fan_in 兜底。只审计非 ``mcp_``
+        前缀的 tool_calls（``mcp_`` 由 :meth:`_audit_mcp_violations` 负责）。
+        """
+        if task.tools is None:
+            return  # 无内置工具白名单 = 不限制，跳过审计
+
+        whitelist = set(task.tools)
+        violations: list[str] = []
+        for msg in messages:
+            tool_calls = msg.get("tool_calls") or []
+            for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                func = tc.get("function") or {}
+                name = str(func.get("name", ""))
+                if not name:
+                    continue
+                if name.startswith("mcp_"):
+                    continue  # MCP 工具走 MCP 审计
+                if name not in whitelist:
+                    violations.append(name)
+
+        task.tool_violations = violations
+        if violations:
+            logger.warning(
+                "内置工具违规: role=%s 调用了未授权工具 %s (tools=%s)",
+                task.role, violations, task.tools,
             )
 
     @staticmethod

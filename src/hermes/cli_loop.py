@@ -469,6 +469,85 @@ def cmd_loop_gepa(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_loop_trajectory(args: argparse.Namespace) -> int:
+    """Show or verify the dispatch trajectory for a loop (ADR-0017)."""
+    from hermes.loop import loops_dir
+    from hermes.trajectory import TrajectoryLogger, verify_trajectory
+
+    path = loops_dir() / args.name / "trajectory.jsonl"
+
+    if args.verify:
+        result = verify_trajectory(path)
+        if args.json:
+            _print_json(result)
+            return 0 if result.get("ok") else 1
+        print(f"Trajectory verification for loop '{args.name}':")
+        print(f"  OK: {result.get('ok')}")
+        print(f"  Events: {result.get('events', 0)} "
+              f"(requests={result.get('requests', 0)}, results={result.get('results', 0)})")
+        for gap in result.get("seq_gaps", []):
+            print(f"  seq gap: {gap}")
+        for req in result.get("unpaired_requests", []):
+            print(f"  unpaired request: seq={req}")
+        for item in result.get("hash_mismatches", []):
+            print(f"  hash mismatch: request={item.get('request_seq')} "
+                  f"file={item.get('agent_file')}")
+        return 0 if result.get("ok") else 1
+
+    logger = TrajectoryLogger(path)
+    events = logger.events()
+    if args.json:
+        _print_json([e.to_dict() for e in events])
+        return 0
+
+    print(f"Trajectory for loop '{args.name}' ({len(events)} events):")
+    for ev in events:
+        if ev.type == "dispatch/request":
+            print(f"  [{ev.seq}] {ev.type} role={ev.data.get('role')} "
+                  f"file={ev.data.get('agent_file')}")
+        elif ev.type == "dispatch/result":
+            print(f"  [{ev.seq}] {ev.type} request_seq={ev.data.get('request_seq')} "
+                  f"role={ev.data.get('role')} status={ev.data.get('status')} "
+                  f"tokens={ev.data.get('tokens_used', 0)}")
+        else:
+            print(f"  [{ev.seq}] {ev.type}")
+    return 0
+
+
+def cmd_loop_presets(args: argparse.Namespace) -> int:
+    """List or show Agent Presets (ADR-0018)."""
+    from hermes.presets import merged_presets
+
+    presets = merged_presets()
+
+    if args.name is not None:
+        if args.name not in presets:
+            print(f"Preset '{args.name}' not found.")
+            return 1
+        preset = presets[args.name]
+        if args.json:
+            _print_json(preset.to_dict())
+            return 0
+        print(f"Preset: {preset.name}")
+        print(f"  Description: {preset.description}")
+        print(f"  tools: {preset.tools}")
+        print(f"  mcp_tools: {preset.mcp_tools}")
+        print(f"  denylist: {preset.denylist}")
+        print(f"  token_limit: {preset.token_limit}")
+        print(f"  model: {preset.model}")
+        print(f"  prompt_sections: {len(preset.prompt_sections)} section(s)")
+        return 0
+
+    if args.json:
+        _print_json([p.to_dict() for p in presets.values()])
+        return 0
+
+    print(f"Agent Presets ({len(presets)}):")
+    for name, preset in presets.items():
+        print(f"  {name:<18} tools={preset.tools} mcp_tools={preset.mcp_tools}")
+    return 0
+
+
 # ── Subparser registration ──────────────────────────────────────────
 
 
@@ -565,3 +644,16 @@ def add_loop_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser])
     p_gepa.add_argument("--run", action="store_true", help="Manually trigger a GEPA cycle")
     p_gepa.add_argument("--json", action="store_true", help="Output JSON")
     p_gepa.set_defaults(func=cmd_loop_gepa)
+
+    # trajectory (ADR-0017: dispatch trajectory log)
+    p_traj = loop_sub.add_parser("trajectory", help="Show/verify dispatch trajectory")
+    p_traj.add_argument("name", help="Loop name")
+    p_traj.add_argument("--json", action="store_true", help="Output JSON")
+    p_traj.add_argument("--verify", action="store_true", help="Run offline audit checks")
+    p_traj.set_defaults(func=cmd_loop_trajectory)
+
+    # presets (ADR-0018: Agent Presets)
+    p_presets = loop_sub.add_parser("presets", help="List/show Agent Presets")
+    p_presets.add_argument("name", nargs="?", default=None, help="Preset name (omit to list all)")
+    p_presets.add_argument("--json", action="store_true", help="Output JSON")
+    p_presets.set_defaults(func=cmd_loop_presets)

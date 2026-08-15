@@ -1933,11 +1933,16 @@ def record_round(
     name: str,
     round_data: LoopRound,
     tokens_used: int = 0,
+    trajectory_seq: int | None = None,
 ) -> dict[str, Any]:
     """Record a completed round and persist state.
 
     Updates the loop's rounds list, current_round counter, budget, last_run
     timestamp, and status. Also writes a human-readable summary to STATE.md.
+
+    ``trajectory_seq`` (ADR-0017) is the last trajectory sequence number for
+    this round, echoed back for cross-reference; None when no trajectory was
+    recorded (e.g. local/guidance modes).
     """
     loop = get_loop(name)
     if not loop:
@@ -2006,6 +2011,7 @@ def record_round(
         "budget_remaining": loop.budget_limit_tokens - loop.budget_used_tokens,
         "missing_deliverables": missing_deliverables,
         "gepa": gepa_result,
+        "trajectory_seq": trajectory_seq,
     }
 
 

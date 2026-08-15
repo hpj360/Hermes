@@ -4,6 +4,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- 派发轨迹日志 + 可重建不变量（见 ADR-0017）：
+  - `hermes/trajectory.py`：追加式 JSONL 轨迹（`.loops/<name>/trajectory.jsonl`），
+    记录每个 sub-agent 的 `dispatch/request` / `dispatch/result` 事件；
+  - 派发前校验 `assert_reconstructable`（序列化 round-trip 门禁，desync 中止派发）；
+  - `OpenClawClient.spawn_agent` 保持旧签名，新增 `spawn_payload` 入口，
+    `_build_spawn_payload` 成为唯一 payload 构造点；
+  - `hermes loop trajectory <name> [--json] [--verify]` CLI（离线审计：
+    行完整性/seq 连续/配对完备/agent_definition 哈希一致）；
+  - `resume_loop` 新周期开始时归档旧轨迹（`trajectory.<cycle>.jsonl`）；
+  - `hermes.workbench.llm` 可选 `trajectory` 参数（`request/header`/`request/context`），
+    由 `HERMES_LLM_TRAJECTORY_ENABLED` 门控（默认关）。
+- Agent Preset（见 ADR-0018）：
+  - `hermes/presets.py`：命名的能力面组合（tools/mcp_tools/denylist/token_limit/
+    model/prompt_sections），内置 `builder-default`/`checker`/`synthesizer`/
+    `perspective`/`data-analyst`；
+  - 解析优先级：显式字段 > preset > 角色默认；denylist 并集（L3 红线不可清空）；
+    mcp_tools 只可收紧不可放宽；
+  - `AgentTask` 新增 `preset`/`tools`/`model`/`isolated`/`tool_violations` 字段；
+  - Gateway payload 新增 `allowed_builtin_tools` 键（`allowed_tools` 保持 MCP 语义）；
+  - 内置工具越权审计 `_audit_builtin_tool_violations`（fan_in 兜底）；
+  - `hermes loop presets [list|show <name>]` CLI。
+
 ### Fixed
 
 - `FTS5Index` 线程安全：改用 thread-local sqlite3 连接，修复 `ThreadingHTTPServer`

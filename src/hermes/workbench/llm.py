@@ -29,6 +29,7 @@ Error hierarchy:
 from __future__ import annotations
 
 import json
+import logging
 import math
 import time
 import urllib.error
@@ -38,6 +39,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from hermes.config import Settings, get_settings
+
+logger = logging.getLogger("hermes.workbench.llm")
 
 __all__ = [
     "LlmApiError",
@@ -263,6 +266,7 @@ class LlmClient:
         max_tokens: int | None = None,
         timeout: float | None = None,
         tools: list[dict[str, Any]] | None = None,
+        trajectory: Any = None,
     ) -> LlmResponse:
         """Call ``POST {base_url}/chat/completions`` and return the response.
 
@@ -271,6 +275,10 @@ class LlmClient:
         When *tools* is given, it is forwarded as the OpenAI ``tools`` payload
         and any ``tool_calls`` the model returns are parsed into
         :attr:`LlmResponse.tool_calls` (each a :class:`LlmToolCall`).
+
+        *trajectory* (ADR-0017, opt-in) is an optional :class:`TrajectoryLogger`;
+        when provided, a ``request/header`` and ``request/context`` event are
+        recorded before the request is sent.
 
         Raises :class:`LlmApiError` on HTTP failure or malformed payload.
         """
@@ -284,6 +292,8 @@ class LlmClient:
             body["max_tokens"] = max_tokens
         if tools:
             body["tools"] = tools
+        if trajectory is not None:
+            _record_llm_trajectory(trajectory, body, max_tokens)
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
         last_exc: _RetryableError | None = None
@@ -528,6 +538,32 @@ def make_llm_client(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _record_llm_trajectory(
+    trajectory: Any, body: dict[str, Any], max_tokens: int | None
+) -> None:
+    """Record request header/context events to a trajectory logger (best-effort).
+
+    ADR-0017: the direct-LLM path records what was sent so it can be replayed.
+    A failure to record is non-fatal here (the LLM call proceeds) — the
+    orchestrator dispatch path, by contrast, treats recording as fail-loud.
+    """
+    try:
+        seq = trajectory.record(
+            "request/header",
+            {
+                "model": body["model"],
+                "temperature": body["temperature"],
+                "max_tokens": max_tokens,
+            },
+        )
+        trajectory.record(
+            "request/context",
+            {"request_seq": seq, "messages": body["messages"]},
+        )
+    except Exception as exc:  # noqa: BLE001 — recording is best-effort
+        logger.warning("failed to record LLM trajectory: %s", exc)
 
 
 def _extract_json(text: str) -> dict[str, Any]:

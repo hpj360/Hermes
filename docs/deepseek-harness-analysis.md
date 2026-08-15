@@ -203,8 +203,8 @@ vendor/cordis                  插件生命周期底层
 
 | 优先级 | 借鉴项 | 落地方式 | 业务理由 | 工作量 |
 |--------|--------|---------|---------|--------|
-| **P0** | **log-reconstruction 不变量** | Loop Runner 发 LLM 请求前，把 `{system_prompt, tools, messages, model, temperature}` 写入 trajectory 事件（`.loops/<name>/trajectory.jsonl`），mock 层重放比对校验 | L3 无人值守的审计可信度质变（从"事后看摘要"到"可重建模型所见"）；也是排障工具 | 中（200-400 行 + 测试） |
-| **P0** | **AgentPreset（工具面 + prompt 收窄）** | 将 `ROLE_MCP_WHITELIST` 泛化为 per-session `AgentPreset`（tools 白名单 + prompt 片段 + 权限级），loop pattern / sub-agent 角色默认挂 preset | 直接降低 sub-agent token 开销与串味率——对内容业务 sub-agent（选题/文案）是**直接成本收益** | 中 |
+| **P0** ✅ | **log-reconstruction 不变量（派发可重建）** | Loop Runner 派发前把完整 payload 写入 trajectory 事件（`.loops/<name>/trajectory.jsonl`），record 后重放比对校验，desync 中止派发；`hermes loop trajectory --verify` 离线审计 | L3 无人值守审计可信度提升（从"事后看摘要"到"可重建 Hermes→Gateway 派发输入"）；也是排障工具 | 中（已实施，ADR-0017） |
+| **P0** ✅ | **AgentPreset（工具面 + prompt 收窄）** | 将 `ROLE_MCP_WHITELIST` 泛化为 per-session `AgentPreset`（tools 白名单 + prompt 片段 + 权限级），角色名约定挂 preset；denylist 并集、mcp 只可收紧 | 直接降低 sub-agent token 开销与串味率——对内容业务 sub-agent（选题/文案）是**直接成本收益** | 中（已实施，ADR-0018） |
 | P1 | **Trajectory 视图** | apps/web 增加会话轨迹页（时间轴 + request/token/tool 调用 + cache 命中），数据源为 P0 的 trajectory.jsonl，复用现有 tracing | 调试上下文压缩、skill 过多、模型犯错场景；对标 DSH 口碑最好的功能 | 中 |
 | P1 | **`hermes dump-config`** | 打印最终生效组装视图（providers + skills + loop patterns + preset + denylist），与真实启动共用组装逻辑 | 回答三问之①；配置漂移排查；成本极低 | 小 |
 | P2 | **执行 seam（fs/subprocess provider 抽象）** | 抽象 `ExecutionProvider` 协议，工具经 provider 消费；写入加 `replaceIfVersion` | 回答三问之③；**但当前单机业务无远程执行需求**，纯框架项 | 中-大 |
@@ -216,7 +216,7 @@ vendor/cordis                  插件生命周期底层
 ### 3.3 影响评估
 
 **正面影响**
-1. **审计可信度质变**：不变量把 L3 无人值守从"事后看摘要"升级为"可完整重建模型所见"，与现有事前拦截（denylist 入 payload）+ 事后审计（fan_in 扫描）构成完整闭环。
+1. **审计可信度提升**：不变量把 L3 无人值守从"事后看摘要"升级为"可重建 Hermes→Gateway 派发输入"（Gateway 内部加工受控范围外，见 ADR-0017 边界声明），与现有事前拦截（denylist 入 payload）+ 事后审计（fan_in 扫描）构成完整闭环。
 2. **成本可控**：Preset 收窄直接回应 13.4k token 首包教训；对内容业务 sub-agent 是直接省钱项。
 3. **排障效率**：Trajectory 视图让"模型为什么这么干"从猜测变为可查。
 4. **测试基建增强**：快照回放让 eval 回归零 API 成本。
@@ -230,7 +230,7 @@ vendor/cordis                  插件生命周期底层
 ### 3.4 决策建议
 
 1. **不替换、不强绑**：Hermes 继续以 Python 控制平面为主干；DSH 作为参考架构与未来可选执行后端。
-2. **立即做（P0，业务相关）**：log-reconstruction 不变量 + AgentPreset 收窄。两者直接回应三问中 Hermes 失分最重的②和上下文成本，与现有架构（audit/episodes/MCP 白名单）同源，风险低、业务收益直接。
+2. **立即做（P0，业务相关）** ✅：log-reconstruction 不变量 + AgentPreset 收窄——已实施并验收（ADR-0017 / ADR-0018，`docs/roadmap/p0-harness-borrow.md`）。两者直接回应三问中 Hermes 失分最重的②和上下文成本，与现有架构（audit/episodes/MCP 白名单）同源。
 3. **低成本顺手做（P1）**：`hermes dump-config`（工作量小，回答三问之①）+ Trajectory 视图（体验与排障双收）。
 4. **审慎做（P2，需 ADR + 业务触发）**：Python 版 PTC、执行 seam、快照回放——均需先在 ADR 中证明业务必要性。
 5. **方案 B 触发条件**：DSH 首个 tagged 稳定版发布 **且** 出现真实领域 Agent 收窄需求，二者缺一不立项。

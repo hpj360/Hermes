@@ -70,15 +70,15 @@ def test_loop_subcommand_requires_subcommand() -> None:
 @pytest.mark.parametrize("sub", [
     "list", "init", "run", "continuous", "resume", "audit",
     "status", "metrics", "stop-rules", "budget", "advance", "history", "patterns",
-    "gepa",
+    "gepa", "trajectory", "presets",
 ])
 def test_all_loop_subcommands_registered(sub: str) -> None:
-    """All 14 loop subcommands are registered and parseable."""
+    """All loop subcommands are registered and parseable."""
     parser = build_parser()
     # Commands that need a name arg
-    if sub in ("init", "run", "continuous", "resume", "status", "metrics", "budget", "advance", "history", "gepa"):
+    if sub in ("init", "run", "continuous", "resume", "status", "metrics", "budget", "advance", "history", "gepa", "trajectory"):
         args = parser.parse_args(["loop", sub, "test-loop"])
-    elif sub == "audit":
+    elif sub in ("audit", "presets"):
         args = parser.parse_args(["loop", sub])  # name is optional
     else:
         args = parser.parse_args(["loop", sub])
@@ -498,3 +498,72 @@ def test_loop_gepa_list_after_run_shows_experiment(tmp_loops, capsys) -> None:
     finally:
         set_gepa_evaluator(None)
         gepa_mod.gepa_dir = original_gepa_dir
+
+
+# ── trajectory (ADR-0017) ───────────────────────────────────────────
+
+
+def test_loop_trajectory_empty(tmp_loops, capsys) -> None:
+    """`hermes loop trajectory <name>` on a loop with no events prints empty."""
+    main(["loop", "init", "traj-loop"])
+    rc = main(["loop", "trajectory", "traj-loop"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "0 events" in out
+
+
+def test_loop_trajectory_verify_missing_ok(tmp_loops, capsys) -> None:
+    """`hermes loop trajectory <name> --verify` on missing file is OK."""
+    main(["loop", "init", "traj-verify-loop"])
+    rc = main(["loop", "trajectory", "traj-verify-loop", "--verify"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "OK: True" in out
+
+
+def test_loop_trajectory_verify_detects_tamper(tmp_loops, capsys) -> None:
+    """`--verify` exits non-zero when a request has no paired result."""
+    from hermes.trajectory import TrajectoryLogger
+
+    main(["loop", "init", "traj-bad-loop"])
+    traj_path = tmp_loops / "traj-bad-loop" / "trajectory.jsonl"
+    logger = TrajectoryLogger(traj_path)
+    logger.record(
+        "dispatch/request",
+        {"role": "builder", "agent_file": None, "payload": {}},
+    )
+    rc = main(["loop", "trajectory", "traj-bad-loop", "--verify"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "OK: False" in out
+
+
+# ── presets (ADR-0018) ──────────────────────────────────────────────
+
+
+def test_loop_presets_list(tmp_loops, capsys) -> None:
+    """`hermes loop presets` lists built-in presets."""
+    rc = main(["loop", "presets"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "builder-default" in out
+    assert "data-analyst" in out
+
+
+def test_loop_presets_show_unknown(tmp_loops, capsys) -> None:
+    """`hermes loop presets <unknown>` exits non-zero."""
+    rc = main(["loop", "presets", "does-not-exist"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "not found" in out
+
+
+def test_loop_presets_show_json(tmp_loops, capsys) -> None:
+    """`hermes loop presets data-analyst --json` emits preset JSON."""
+    rc = main(["loop", "presets", "data-analyst", "--json"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    import json
+    data = json.loads(out)
+    assert data["name"] == "data-analyst"
+    assert data["tools"] == ["read", "grep", "glob"]

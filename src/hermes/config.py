@@ -208,6 +208,14 @@ class Settings(BaseSettings):
     hermes_llm_timeout: float = Field(default=60.0, alias="HERMES_LLM_TIMEOUT")
     hermes_llm_temperature: float = Field(default=0.2, alias="HERMES_LLM_TEMPERATURE")
 
+    # ADR-0017: 直连 LLM 路径（workbench.llm）的轨迹记录开关（opt-in）。
+    # Orchestrator 派发路径的轨迹默认始终开启，不受此开关门控。
+    hermes_llm_trajectory_enabled: bool = Field(
+        default=False, alias="HERMES_LLM_TRAJECTORY_ENABLED"
+    )
+    # ADR-0018: 用户自定义 Agent Preset 目录。None = 使用 hermes_state_dir/presets。
+    hermes_presets_dir: str | None = Field(default=None, alias="HERMES_PRESETS_DIR")
+
     # Search paths that are consulted for inherited .env files.
     inherit_env_paths: ClassVar[list[Path]] = [
         Path("/workspace/.env"),

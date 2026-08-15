@@ -2376,9 +2376,13 @@ def test_fan_out_fills_default_whitelist_by_role():
         def health_check(self):
             return True
 
-        def spawn_agent(self, agent_file, task, context="", model=None,
-                        isolated=True, allowed_tools=None, denylist=None):
-            captured_payloads.append({"allowed_tools": allowed_tools, "denylist": denylist})
+        def spawn_payload(self, payload):
+            captured_payloads.append(
+                {
+                    "allowed_tools": payload.get("allowed_tools"),
+                    "denylist": payload.get("denylist"),
+                }
+            )
             return "session-1"
 
     orch.client = FakeClient()
@@ -2392,7 +2396,7 @@ def test_fan_out_fills_default_whitelist_by_role():
     assert builder.allowed_mcp_tools == ["github.get_pr", "github.list_prs", "github.get_issue"]
     # checker 填充了空白名单（禁止所有 MCP）
     assert checker.allowed_mcp_tools == []
-    # spawn_agent 收到了白名单
+    # spawn payload 收到了白名单
     assert captured_payloads[0]["allowed_tools"] == ["github.get_pr", "github.list_prs", "github.get_issue"]
     assert captured_payloads[1]["allowed_tools"] == []
 
@@ -2407,8 +2411,7 @@ def test_fan_out_preserves_explicit_whitelist():
         def health_check(self):
             return True
 
-        def spawn_agent(self, agent_file, task, context="", model=None,
-                        isolated=True, allowed_tools=None, denylist=None):
+        def spawn_payload(self, payload):
             return "session-1"
 
     orch.client = FakeClient()
@@ -2783,8 +2786,7 @@ def test_run_builder_checker_round_passes_denylist_to_builder():
         def health_check(self):
             return True
 
-        def spawn_agent(self, agent_file, task, context="", model=None,
-                        isolated=True, allowed_tools=None, denylist=None):
+        def spawn_payload(self, payload):
             return "session-1"
 
         def wait_for_completion(self, session_id, timeout=300.0):
@@ -2852,8 +2854,9 @@ def test_runner_wires_denylist_from_loop_patterns(monkeypatch):
     captured: dict[str, Any] = {}
 
     class FakeOrchestrator:
-        def __init__(self):
+        def __init__(self, client=None, trajectory=None):
             self.client = None
+            self.trajectory = None
 
         def is_available(self):
             return True

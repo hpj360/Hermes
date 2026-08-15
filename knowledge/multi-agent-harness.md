@@ -183,6 +183,68 @@ L3 自动化的本质是"无人值守修改代码"。要让这种自动化可接
 
 ---
 
+## 提升 6：派发轨迹不变量（P0，可观测性，借鉴 DeepSeek Harness）✅ 已实现
+
+### 现状（已修复）
+
+[orchestrator.py](file:///workspace/src/hermes/orchestrator.py) 的 sub-agent 派发
+payload（task/context/agent_definition/allowed_tools/denylist/model）此前散落在
+`AgentTask` 字段与 `spawn_agent` 内联构造中，无持久化快照，无法回答"第 N 轮 builder
+当时收到了什么输入"。
+
+### 实现内容（见 ADR-0017）
+
+1. `src/hermes/trajectory.py`：追加式 JSONL 轨迹 + `assert_reconstructable` 不变量
+   （record 后从磁盘重放比对，desync 中止派发）+ `verify_trajectory` 离线审计
+   （行完整性/seq 连续/request-result 配对完备/agent_definition 哈希一致）
+2. `_build_spawn_payload` 提纯为唯一 payload 构造点；`OpenClawClient` 新增
+   `spawn_payload` 入口（旧 `spawn_agent` 委托，向后兼容）
+3. `_prepare_and_spawn` 派发前写 `dispatch/request` 快照，`fan_in` 补记
+   `dispatch/result`（失败路径同样补记，保证配对完备；`AgentTask.trajectory_request_seq`
+   作关联键）
+4. `runner._run_builder_checker` / `_run_multi_perspective` 注入
+   `TrajectoryLogger`；`record_round` 回填 `trajectory_seq`
+5. `resume_loop` 新周期归档旧轨迹（防跨周期混流）
+6. `hermes loop trajectory <name> [--json] [--verify]` CLI
+
+### 边界
+
+不变量验证的是 **Hermes → Gateway 派发边界**（Gateway 内部加工不受控）。运行时校验
+实际价值 = 序列化 round-trip 门禁 + 防篡改 + 契约测试防字段漂移；离线 verify 才是
+审计工具。详见 ADR-0017"边界（诚实声明）"。
+
+---
+
+## 提升 7：Agent Preset 能力面收窄（P0，成本控制，借鉴 DSH Preset）✅ 已实现
+
+### 现状（已修复）
+
+[orchestrator.py:85](file:///workspace/src/hermes/orchestrator.py#L85) 的
+`ROLE_MCP_WHITELIST` 只白名单 MCP 工具，不含内置工具、prompt、model、token 预算；
+sub-agent 能力面散落在 4 个位置（LOOP_PATTERNS.sub_agents、ROLE_MCP_WHITELIST、
+AgentTask 字段、agent .md 文件），无法一处声明、复用、dump 审计。
+
+### 实现内容（见 ADR-0018）
+
+1. `src/hermes/presets.py`：`AgentPreset`（tools/mcp_tools/denylist/token_limit/
+   model/prompt_sections）+ 内置 preset（builder-default/checker/synthesizer/
+   perspective/data-analyst）+ `load_user_presets`（`.state/presets/*.json`）
+2. `resolve_preset` 解析优先级：显式字段 > preset > 角色默认；**denylist 并集**
+   （L3 红线：pattern 级保护不可被 preset 清空）；mcp_tools 只可收紧不可放宽
+3. `AgentTask` 新增 `preset`/`tools`/`model`/`isolated` 字段；Gateway payload 新增
+   `allowed_builtin_tools` 键（`allowed_tools` 保持 MCP 语义不变）
+4. `_audit_builtin_tool_violations`：preset 内置工具白名单的 fan_in 兜底审计
+5. `hermes loop presets [list|show <name>]` CLI（能力面审计视图）
+
+### 设计约束
+
+- 尊重 `DECISIONS.md` D018：不激活 `LOOP_PATTERNS.sub_agents` 运行时读取，
+  preset 注入走角色名约定（`_ROLE_PRESET_MAP`）。
+- "显式"判定逐字段定义（`allowed_mcp_tools`/`tools`/`model` 以 `is not None` 为准，
+  `token_limit` 以 `== 50000` 为未设置）。
+
+---
+
 ## 不做的事（避免无意义沉淀）
 
 以下内容在 IMA 文章中出现，但**项目已实现或不采用**，不再沉淀：

@@ -56,3 +56,15 @@
 - [x] P3-4 Skill marketplace（git/HTTP 分发 + registry.json 目录，见 ADR-0010）
 
 详见 `docs/roadmap/iter-v0.6-to-v1.0.md`。
+
+## P0 之后：DSH 借鉴（Harness 能力补齐）
+
+> 依据 `docs/deepseek-harness-analysis.md` §3.1 方案 C。P0 两项已实施并验收。
+
+- [x] DSH-P0-1 派发轨迹不变量（`hermes/trajectory.py`，见 ADR-0017）
+- [x] DSH-P0-2 Agent Preset 能力面收窄（`hermes/presets.py`，见 ADR-0018）
+- [ ] DSH-P1 Trajectory 视图（apps/web 会话轨迹页，数据源已就位）
+- [ ] DSH-P1 `hermes dump-config`（最终组装视图）
+- [ ] DSH-P2 执行 seam / Python 版 PTC / 快照回放（均需 ADR + 业务触发）
+
+详见 `docs/roadmap/p0-harness-borrow.md`。
