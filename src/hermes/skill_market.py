@@ -33,6 +33,12 @@ from typing import Any
 from hermes.config import get_settings
 from hermes.skills import load_skill_manifest, skills_dir
 
+# A skill name is a single path component: letters/digits plus ``._-``.
+# Rejects path separators, ``..``, drive letters, and anything that could
+# escape the skills directory via ``target = skills_dir() / name`` or
+# ``shutil.rmtree(target)``.
+_SKILL_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
 
 @dataclass
 class MarketResult:
@@ -123,8 +129,7 @@ def _is_skill_dir(path: Path) -> bool:
 def _extract_zip(archive: Path, workdir: Path) -> Path:
     extract_dir = workdir / "extract"
     extract_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(archive) as zf:
-        zf.extractall(extract_dir)
+    _safe_extract_zip(archive, extract_dir)
     return extract_dir
 
 
@@ -183,6 +188,53 @@ def _locate_skill_dir(root: Path, name: str) -> Path | None:
     return None
 
 
+def validate_skill_name(name: str) -> str | None:
+    """Return an error message when *name* is not a safe single path component.
+
+    Return ``None`` when the name is safe. A safe name is non-empty, contains
+    only ``[A-Za-z0-9._-]``, does not begin with a dot (hidden files), and
+    never equals ``.`` or ``..``. This guards both the ``skills_dir()/name``
+    join and the ``shutil.rmtree(target)`` call in :func:`install_skill`.
+    """
+    if not name or not isinstance(name, str):
+        return "skill name must be a non-empty string"
+    if not _SKILL_NAME_RE.match(name):
+        return (
+            f"invalid skill name {name!r}: only letters, digits, '.', '_', '-', and "
+            "a single path component are allowed"
+        )
+    if name in (".", "..") or name.startswith("."):
+        return f"invalid skill name {name!r}: hidden or parent-directory name"
+    return None
+
+
+def _safe_extract_zip(archive: Path, extract_dir: Path) -> None:
+    """Extract *archive* into *extract_dir*, rejecting path-traversal entries.
+
+    This is a zip-slip guard: every entry's resolved target must stay inside
+    ``extract_dir``. Symlink entries are skipped entirely (a symlink can point
+    outside the extraction sandbox). Duplicate names and directories are
+    handled consistently with an ordinary ``extractall``.
+    """
+    extract_dir = extract_dir.resolve()
+    with zipfile.ZipFile(archive) as zf:
+        for member in zf.infolist():
+            # Skip directory entries and symlinks; regular files only.
+            if member.is_dir():
+                continue
+            mode = (member.external_attr >> 16) & 0o170000
+            if mode == 0o120000:  # symlink
+                continue
+            target = (extract_dir / member.filename).resolve()
+            if extract_dir != target and extract_dir not in target.parents:
+                raise OSError(f"zip entry escapes extraction dir: {member.filename!r}")
+            # Defend against a prior file entry creating the dir for a later
+            # path, and against a crafted dir entry sitting where a file must go.
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(member) as src, open(target, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -200,7 +252,19 @@ def install_skill(
     Resolution order: an explicit ``source`` (git URL / local path / zip), else
     the vendored registry, else the remote registry (if configured).
     """
+    name_err = validate_skill_name(name)
+    if name_err is not None:
+        return MarketResult(False, name_err)
+
     target = (dest or skills_dir()) / name
+    # Defense-in-depth: even with a validated name, never let the resolved
+    # target escape its parent (guards an unexpected ``dest`` or a symlinked
+    # skills dir).
+    target_parent = target.parent.resolve()
+    resolved = target.resolve()
+    if resolved != target_parent / name and target_parent not in resolved.parents:
+        return MarketResult(False, f"skill target escapes skills directory: {name!r}")
+
     resolved_from = "source"
 
     src = source

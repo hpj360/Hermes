@@ -34,7 +34,7 @@ class PlatformAccountCreate(BaseModel):
 
 
 class PlatformAccountResponse(BaseModel):
-    """平台账号响应体。"""
+    """平台账号响应体（凭据脱敏：不回传 token 明文）。"""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -42,13 +42,35 @@ class PlatformAccountResponse(BaseModel):
     platform: Platform
     display_name: str
     account_id: str | None = None
-    auth_token: str | None = None
-    refresh_token: str | None = None
+    has_auth_token: bool = False
+    has_refresh_token: bool = False
     token_expires_at: datetime | None = None
     status: str
     metadata_: str | None = None
     created_at: datetime
     updated_at: datetime
+
+    @classmethod
+    def from_account(cls, account: PlatformAccount) -> "PlatformAccountResponse":
+        """Build a token-masked response from a ``PlatformAccount`` ORM object.
+
+        Never serializes ``auth_token`` / ``refresh_token`` values; presence is
+        reported as booleans so clients know whether a token is configured
+        without exposing it.
+        """
+        return cls(
+            id=account.id,
+            platform=account.platform,
+            display_name=account.display_name,
+            account_id=account.account_id,
+            has_auth_token=account.auth_token is not None,
+            has_refresh_token=account.refresh_token is not None,
+            token_expires_at=account.token_expires_at,
+            status=account.status,
+            metadata_=account.metadata_,
+            created_at=account.created_at,
+            updated_at=account.updated_at,
+        )
 
 
 class PublishRequest(BaseModel):
@@ -99,26 +121,26 @@ class PublishResultResponse(BaseModel):
 async def create_account(
     payload: PlatformAccountCreate,
     db: AsyncSession = Depends(get_db),
-) -> PlatformAccount:
-    """创建平台账号。"""
+) -> PlatformAccountResponse:
+    """创建平台账号（响应不回传 token 明文）。"""
     account = PlatformAccount(**payload.model_dump())
     db.add(account)
     await db.commit()
     await db.refresh(account)
-    return account
+    return PlatformAccountResponse.from_account(account)
 
 
 @router.get("/accounts", response_model=list[PlatformAccountResponse])
 async def list_accounts(
     platform: Platform | None = None,
     db: AsyncSession = Depends(get_db),
-) -> list[PlatformAccount]:
-    """列出所有平台账号，支持按平台过滤。"""
+) -> list[PlatformAccountResponse]:
+    """列出所有平台账号，支持按平台过滤（凭据脱敏）。"""
     stmt = select(PlatformAccount)
     if platform is not None:
         stmt = stmt.where(PlatformAccount.platform == platform)
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    return [PlatformAccountResponse.from_account(a) for a in result.scalars().all()]
 
 
 @router.delete("/accounts/{account_id}", status_code=204)

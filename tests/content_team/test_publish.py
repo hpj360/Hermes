@@ -62,7 +62,7 @@ async def _create_account(
 
 
 async def test_create_platform_account(client):
-    """POST /api/accounts 创建平台账号。"""
+    """POST /api/accounts 创建平台账号（响应不回传 token 明文）。"""
     resp = await client.post(
         "/api/accounts",
         json={
@@ -77,9 +77,12 @@ async def test_create_platform_account(client):
     assert data["platform"] == "WECHAT_OFFICIAL"
     assert data["display_name"] == "微信公众号A"
     assert data["account_id"] == "gh_123456"
-    assert data["auth_token"] == "token_abc"
+    assert data["has_auth_token"] is True
+    assert data["has_refresh_token"] is False
+    # 明文 token 绝不回传
+    assert "auth_token" not in data
+    assert "refresh_token" not in data
     assert data["status"] == "active"
-    assert data["refresh_token"] is None
     assert data["token_expires_at"] is None
     assert data["metadata_"] is None
     assert "id" in data
@@ -99,8 +102,8 @@ async def test_create_account_defaults(client):
     assert resp.status_code == 201
     data = resp.json()
     assert data["account_id"] is None
-    assert data["auth_token"] is None
-    assert data["refresh_token"] is None
+    assert data["has_auth_token"] is False
+    assert data["has_refresh_token"] is False
     assert data["token_expires_at"] is None
 
 

@@ -1,12 +1,14 @@
 """FastAPI 应用入口。
 
 - 挂载 content_team 路由。
-- 配置 CORS（开发环境允许所有来源）。
+- 配置 CORS（来源白名单，从 ``HERMES_CORS_ORIGINS`` 环境变量读取，逗号分隔；
+  默认仅本地开发来源）。
 - 启动时自动创建数据表。
 - 若存在前端构建产物（apps/web/dist），挂载为静态站点（SPA 回退到 index.html）。
 """
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -37,6 +39,23 @@ from hermes.content_team.models import (  # noqa: F401
 _WEB_DIST = Path(__file__).resolve().parents[3] / "apps" / "web" / "dist"
 
 
+def _cors_origins() -> list[str]:
+    """Resolve the CORS allow-list from ``HERMES_CORS_ORIGINS`` (comma-separated).
+
+    Defaults to local development origins only. An explicit ``*`` remains
+    available for trusted dev environments, but the default never uses it.
+    """
+    raw = os.environ.get("HERMES_CORS_ORIGINS", "").strip()
+    if not raw:
+        return [
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:3000",
+            "http://localhost:5173",
+            "http://localhost:3000",
+        ]
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """应用生命周期：启动时创建数据表并初始化调度器，关闭时停止调度器。"""
@@ -49,10 +68,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Content Team API", lifespan=lifespan)
 
-# 开发环境放开 CORS
+# CORS 白名单：默认仅本地开发来源；生产通过 HERMES_CORS_ORIGINS 收紧。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -13,11 +13,13 @@ from hermes.main import main
 from hermes.skill_market import (
     _is_git_source,
     _is_zip_source,
+    _safe_extract_zip,
     install_skill,
     list_registry,
     load_registry,
     pack_skill,
     registry_file,
+    validate_skill_name,
 )
 
 
@@ -192,6 +194,84 @@ def test_install_git_missing_returns_failure(tmp_path: Path, monkeypatch: pytest
     result = install_skill("foo", source="git@github.com:x/foo.git")
     assert result.success is False
     assert "git" in result.message.lower()
+
+
+# ---------------------------------------------------------------------------
+# install_skill security (P0-1): path traversal + zip-slip
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    [
+        "../evil",
+        "..\\evil",
+        "foo/bar",
+        "foo\\bar",
+        ".hidden",
+        "..",
+        "",
+        "a b",
+        "foo;rm -rf",
+    ],
+)
+def test_validate_skill_name_rejects_unsafe(
+    bad_name: str,
+) -> None:
+    assert validate_skill_name(bad_name) is not None
+
+
+@pytest.mark.parametrize("good_name", ["foo", "foo-bar", "foo.bar_baz", "a1"])
+def test_validate_skill_name_accepts_safe(good_name: str) -> None:
+    assert validate_skill_name(good_name) is None
+
+
+def test_install_skill_rejects_traversal_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    dest = tmp_path / "skills"
+    dest.mkdir()
+    monkeypatch.setattr("hermes.skill_market.skills_dir", lambda: dest)
+
+    result = install_skill("../evil", source=str(tmp_path))
+    assert result.success is False
+    # Nothing may be created outside the skills dir.
+    assert not (tmp_path / "evil").exists()
+
+
+def test_install_skill_target_stays_inside_dest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A validated name with an unexpected *dest* must not escape its parent."""
+    src = _make_skill(tmp_path / "src", "foo")
+    result = install_skill("foo", source=str(src), dest=tmp_path / "does" / "not" / "exist")
+    # dest parent is created fine; success requires the name to stay inside.
+    assert result.success is True
+    assert (tmp_path / "does" / "not" / "exist" / "foo" / "SKILL.md").exists()
+
+
+def test_safe_extract_zip_rejects_traversal(tmp_path: Path) -> None:
+    archive = tmp_path / "evil.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("../outside.txt", "pwned")
+        zf.writestr("ok/inside.txt", "fine")
+    extract_dir = tmp_path / "extract"
+    extract_dir.mkdir()
+
+    with pytest.raises(OSError):
+        _safe_extract_zip(archive, extract_dir)
+    assert not (tmp_path / "outside.txt").exists()
+
+
+def test_safe_extract_zip_skips_symlink(tmp_path: Path) -> None:
+    archive = tmp_path / "sym.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("link", "target")
+        # Mark the entry as a symlink via external_attr (unix mode bits).
+        for info in zf.infolist():
+            if info.filename == "link":
+                info.external_attr = (0o120777 << 16)
+    extract_dir = tmp_path / "extract"
+    extract_dir.mkdir()
+
+    _safe_extract_zip(archive, extract_dir)
+    assert not (extract_dir / "link").exists()
 
 
 # ---------------------------------------------------------------------------
