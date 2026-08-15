@@ -185,6 +185,140 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dump_config(args: argparse.Namespace) -> int:
+    """Print the effective runtime composition (ADR-0019).
+
+    Reuses the same assembly logic as real startup — providers, skills, loop
+    patterns, agent presets, and an aggregate denylist — so the printed view
+    matches what a loop run actually loads. Answers the DSH three-questions
+    #1: "can you print what the runtime finally loaded?".
+    """
+    import json
+
+    from hermes.gepa_redteam import DEFAULT_DENYLIST
+    from hermes.loop import LOOP_PATTERNS
+    from hermes.presets import merged_presets
+
+    settings = get_settings()
+    skills = discover_skills()
+    presets = merged_presets()
+
+    # Aggregate denylist = DEFAULT ∪ LOOP_PATTERNS[*].denylist ∪ presets[*].denylist.
+    # Union semantics preserve the L3 red-line: a pattern-level protection can
+    # never be cleared by a narrower preset (ADR-0018).
+    denyset: set[str] = set(DEFAULT_DENYLIST)
+    for pattern in LOOP_PATTERNS.values():
+        denyset.update(pattern.get("denylist", []))
+    for preset in presets.values():
+        denyset.update(preset.denylist)
+    denylist_aggregate = sorted(denyset)
+
+    loop_patterns_view = [
+        {
+            "key": key,
+            "name": info.get("name", key),
+            "description": info.get("description", ""),
+            "default_stage": getattr(info.get("default_stage"), "value", str(info.get("default_stage", ""))),
+            "max_rounds": info.get("max_rounds", 0),
+            "execution_status": info.get("execution_status", ""),
+            "denylist": list(info.get("denylist", [])),
+        }
+        for key, info in LOOP_PATTERNS.items()
+    ]
+
+    presets_view = [
+        {
+            "name": p.name,
+            "description": p.description,
+            "tools": p.tools,
+            "mcp_tools": p.mcp_tools,
+            "denylist": p.denylist,
+            "token_limit": p.token_limit,
+            "model": p.model,
+        }
+        for p in presets.values()
+    ]
+
+    skills_view = [
+        {
+            "name": s.name,
+            "has_skill_md": s.has_skill_md,
+            "has_meta": s.has_meta,
+            "tested": bool(s.manifest and s.manifest.tested) if s.manifest else False,
+        }
+        for s in skills
+    ]
+
+    payload = {
+        "paths": {
+            "project_root": str(settings.hermes_project_root),
+            "main_repo_path": str(settings.hermes_main_repo_path),
+            "state_dir": str(settings.hermes_state_dir),
+            "cache_dir": str(settings.hermes_cache_dir),
+            "skills_dir": str(skills_dir()),
+            "knowledge_dir": str(knowledge_dir()),
+        },
+        "models": {
+            "primary": settings.openclaw_model_primary,
+            "fallback": settings.openclaw_model_fallback,
+            "providers_ready": list(settings.configured_providers()),
+        },
+        "gateway": {
+            "port": settings.openclaw_gateway_port,
+            "token": "set" if settings.openclaw_gateway_token else "unset",
+        },
+        "loop_patterns": loop_patterns_view,
+        "agent_presets": presets_view,
+        "skills": skills_view,
+        "denylist_aggregate": denylist_aggregate,
+    }
+
+    if getattr(args, "json", False):
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    providers = settings.configured_providers()
+    print("=== Hermes Effective Configuration ===")
+    print("[paths]")
+    print(f"  project_root      = {settings.hermes_project_root}")
+    print(f"  main_repo_path    = {settings.hermes_main_repo_path}")
+    print(f"  state_dir         = {settings.hermes_state_dir}")
+    print(f"  cache_dir         = {settings.hermes_cache_dir}")
+    print(f"  skills_dir        = {skills_dir()}")
+    print(f"  knowledge_dir     = {knowledge_dir()}")
+    print()
+    print("[models]")
+    print(f"  primary           = {settings.openclaw_model_primary}")
+    print(f"  fallback          = {settings.openclaw_model_fallback}")
+    print(f"  providers_ready   = {', '.join(providers) or '(none)'}")
+    print()
+    print("[gateway]")
+    print(f"  port              = {settings.openclaw_gateway_port}")
+    print(f"  token             = {'set' if settings.openclaw_gateway_token else 'unset'}")
+    print()
+    print(f"[loop_patterns] ({len(loop_patterns_view)})")
+    for lp in loop_patterns_view:
+        print(f"  {lp['key']:<20} {lp['name']}")
+        print(f"    {lp['description']}")
+        print(f"    stage={lp['default_stage']} max_rounds={lp['max_rounds']} denylist={lp['denylist']}")
+    print()
+    print(f"[agent_presets] ({len(presets_view)})")
+    for p in presets_view:
+        print(f"  {p['name']:<18} tools={p['tools']} mcp_tools={p['mcp_tools']}")
+        print(f"    denylist={p['denylist']} token_limit={p['token_limit']} model={p['model']}")
+    print()
+    print(f"[skills] ({len(skills_view)})")
+    for s in skills_view:
+        flags = ("md" if s["has_skill_md"] else "  ") + ("|" if s["has_meta"] else " ")
+        tested = "tested" if s["tested"] else "untested"
+        print(f"  [{flags}] {s['name']:<28} {tested}")
+    print()
+    print(f"[denylist_aggregate] ({len(denylist_aggregate)} patterns)")
+    for dl_pattern in denylist_aggregate:
+        print(f"  {dl_pattern}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hermes",
@@ -226,6 +360,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_cfg = sub.add_parser("config", help="Show effective configuration")
     p_cfg_sub = p_cfg.add_subparsers(dest="cfg_cmd", required=True)
     p_cfg_sub.add_parser("show", help="Print current configuration").set_defaults(func=cmd_config_show)
+
+    # dump-config: effective runtime composition view (ADR-0019, DSH borrow).
+    p_dump = sub.add_parser(
+        "dump-config",
+        help="Print effective runtime composition (providers/skills/patterns/presets/denylist)",
+    )
+    p_dump.add_argument("--json", action="store_true", help="Output JSON")
+    p_dump.set_defaults(func=cmd_dump_config)
 
     sub.add_parser("doctor", help="Run environment health checks").set_defaults(func=cmd_doctor)
 

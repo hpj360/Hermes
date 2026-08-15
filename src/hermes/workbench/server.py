@@ -94,6 +94,10 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("GET", r"^/memos/health$", "h_get_memos_health"),
     ("GET", r"^/memos/search$", "h_get_memos_search"),
     ("POST", r"^/memos/feedback$", "h_post_memos_feedback"),
+    # Loop trajectory view (ADR-0017 / ADR-0020)
+    ("GET", r"^/loops$", "h_get_loops"),
+    ("GET", r"^/loops/(?P<name>[^/]+)/trajectory/verify$", "h_get_loop_trajectory_verify"),
+    ("GET", r"^/loops/(?P<name>[^/]+)/trajectory$", "h_get_loop_trajectory"),
 ]
 
 # Routes that skip authentication (always public).
@@ -965,6 +969,40 @@ class DashboardHandler(BaseHTTPRequestHandler):
         )
 
     # dashboard ----------------------------------------------------------
+
+    def h_get_loops(self) -> None:
+        """GET /loops — list loops that have a trajectory.jsonl (ADR-0020)."""
+        from hermes.loop import loops_dir
+
+        root = loops_dir()
+        loops: list[str] = []
+        if root.is_dir():
+            for child in sorted(root.iterdir()):
+                if child.is_dir() and (child / "trajectory.jsonl").exists():
+                    loops.append(child.name)
+        self._send_json(200, {"loops": loops})
+
+    def h_get_loop_trajectory(self, name: str) -> None:
+        """GET /loops/<name>/trajectory — return dispatch trajectory events."""
+        from hermes.loop import loops_dir
+        from hermes.trajectory import TrajectoryLogger
+
+        path = loops_dir() / name / "trajectory.jsonl"
+        if not path.exists():
+            raise NotFoundError(f"loop not found: {name}")
+        events = TrajectoryLogger(path).events()
+        self._send_json(200, {"events": [e.to_dict() for e in events]})
+
+    def h_get_loop_trajectory_verify(self, name: str) -> None:
+        """GET /loops/<name>/trajectory/verify — offline audit result."""
+        from hermes.loop import loops_dir
+        from hermes.trajectory import verify_trajectory
+
+        path = loops_dir() / name / "trajectory.jsonl"
+        if not path.exists():
+            raise NotFoundError(f"loop not found: {name}")
+        result = verify_trajectory(path)
+        self._send_json(200, result)
 
     def h_get_dashboard(self) -> None:
         """Aggregated dashboard snapshot: tasks, memory, traces, skills.

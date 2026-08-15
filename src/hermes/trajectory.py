@@ -42,14 +42,12 @@ class TrajectoryEvent:
     type: str
     data: dict[str, Any]
     time: str = ""
-    cycle: str = "0"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "seq": self.seq,
             "time": self.time,
             "type": self.type,
-            "cycle": self.cycle,
             "data": self.data,
         }
 
@@ -61,9 +59,8 @@ def _normalize(obj: Any) -> str:
 class TrajectoryLogger:
     """Append-only JSONL trajectory writer/reader with an in-process lock."""
 
-    def __init__(self, path: Path, cycle: str = "0") -> None:
+    def __init__(self, path: Path) -> None:
         self.path = path
-        self.cycle = cycle
         self._lock = threading.Lock()
         self._seq = self._load_last_seq()
 
@@ -104,7 +101,6 @@ class TrajectoryLogger:
                 "seq": seq,
                 "time": _now(),
                 "type": type,
-                "cycle": self.cycle,
                 "data": data,
             }
             atomic_append_jsonl(self.path, line)
@@ -131,7 +127,6 @@ class TrajectoryLogger:
                         type=str(obj.get("type", "")),
                         data=obj.get("data") or {},
                         time=str(obj.get("time", "")),
-                        cycle=str(obj.get("cycle", "0")),
                     )
                 )
             except (json.JSONDecodeError, ValueError, TypeError) as exc:
@@ -188,8 +183,8 @@ def verify_trajectory(path: Path) -> dict[str, Any]:
     """Offline audit of a trajectory file.
 
     Checks: JSON line integrity, sequence continuity, request/result pairing
-    completeness, and agent_definition hash consistency against the current
-    on-disk agent file (when one is recorded and still present).
+    completeness, and agent-file hash consistency against the current on-disk
+    agent file (when one is recorded and still present).
 
     Note: free-text fields (task/context) cannot be audited offline against a
     tampered-but-self-consistent log; this checklist is explicit about scope.
@@ -199,32 +194,42 @@ def verify_trajectory(path: Path) -> dict[str, Any]:
 
     requests = {ev.seq: ev for ev in events if ev.type == "dispatch/request"}
     results: dict[int, TrajectoryEvent] = {}
+    orphan_results: list[Any] = []
     for ev in events:
         if ev.type != "dispatch/result":
             continue
         request_seq = ev.data.get("request_seq")
         if isinstance(request_seq, int):
             results[request_seq] = ev
+        else:
+            # 非 int 的 request_seq（如 None）视为异常 result，显式报告而非丢弃
+            orphan_results.append(request_seq)
 
     seq_gaps = _find_seq_gaps(sorted(ev.seq for ev in events))
     unpaired = sorted(set(requests) - set(results))
-    orphan_results = sorted(set(results) - set(requests))
+    unpaired_orphan_results = sorted(set(results) - set(requests))
+    corrupt_lines = _count_corrupt_lines(path)
     hash_mismatches: list[dict[str, Any]] = []
 
     for seq, ev in requests.items():
-        payload = ev.data.get("payload") or {}
         agent_file = ev.data.get("agent_file")
-        agent_def = payload.get("agent_definition")
-        if not agent_file or not isinstance(agent_def, str):
+        recorded_sha = ev.data.get("agent_file_sha256")
+        if not agent_file or not recorded_sha:
             continue
         ap = Path(agent_file)
         if not ap.is_file():
             continue
-        current = ap.read_text(encoding="utf-8")
-        if _sha256(agent_def) != _sha256(current):
+        if recorded_sha != _sha256(ap.read_text(encoding="utf-8")):
             hash_mismatches.append({"request_seq": seq, "agent_file": str(ap)})
 
-    ok = not (seq_gaps or unpaired or orphan_results or hash_mismatches)
+    ok = not (
+        seq_gaps
+        or unpaired
+        or unpaired_orphan_results
+        or orphan_results
+        or corrupt_lines
+        or hash_mismatches
+    )
     return {
         "ok": ok,
         "events": len(events),
@@ -232,9 +237,27 @@ def verify_trajectory(path: Path) -> dict[str, Any]:
         "results": len(results),
         "seq_gaps": seq_gaps,
         "unpaired_requests": unpaired,
-        "orphan_results": orphan_results,
+        "orphan_results": unpaired_orphan_results,
+        "malformed_results": orphan_results,
+        "corrupt_lines": corrupt_lines,
         "hash_mismatches": hash_mismatches,
     }
+
+
+def _count_corrupt_lines(path: Path) -> int:
+    """Count JSON lines that fail to parse (line-integrity check)."""
+    if not path.exists():
+        return 0
+    corrupt = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            corrupt += 1
+    return corrupt
 
 
 def _find_seq_gaps(seqs: list[int]) -> list[int]:

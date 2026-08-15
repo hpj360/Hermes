@@ -196,14 +196,16 @@ payload（task/context/agent_definition/allowed_tools/denylist/model）此前散
 
 1. `src/hermes/trajectory.py`：追加式 JSONL 轨迹 + `assert_reconstructable` 不变量
    （record 后从磁盘重放比对，desync 中止派发）+ `verify_trajectory` 离线审计
-   （行完整性/seq 连续/request-result 配对完备/agent_definition 哈希一致）
+   （corrupt 行计数/seq 连续/request-result 配对完备（含非 int request_seq）/
+   agent 文件哈希一致）
 2. `_build_spawn_payload` 提纯为唯一 payload 构造点；`OpenClawClient` 新增
-   `spawn_payload` 入口（旧 `spawn_agent` 委托，向后兼容）
-3. `_prepare_and_spawn` 派发前写 `dispatch/request` 快照，`fan_in` 补记
-   `dispatch/result`（失败路径同样补记，保证配对完备；`AgentTask.trajectory_request_seq`
-   作关联键）
+   `spawn_payload` 入口（旧 `spawn_agent` 委托，向后兼容公开 API）
+3. `_prepare_and_spawn` 派发前写 `dispatch/request` 快照（含 `round_num` +
+   `agent_file_sha256`），`fan_in` 补记 `dispatch/result`（失败路径同样补记，
+   保证配对完备；`AgentTask.trajectory_request_seq` 作关联键）
 4. `runner._run_builder_checker` / `_run_multi_perspective` 注入
-   `TrajectoryLogger`；`record_round` 回填 `trajectory_seq`
+   `TrajectoryLogger`；`record_round` 回填 `LoopRound.trajectory_seq`（持久化到
+   meta.json，跨会话追溯"第 N 轮 ↔ 轨迹事件"）
 5. `resume_loop` 新周期归档旧轨迹（防跨周期混流）
 6. `hermes loop trajectory <name> [--json] [--verify]` CLI
 
@@ -233,7 +235,9 @@ AgentTask 字段、agent .md 文件），无法一处声明、复用、dump 审�
    （L3 红线：pattern 级保护不可被 preset 清空）；mcp_tools 只可收紧不可放宽
 3. `AgentTask` 新增 `preset`/`tools`/`model`/`isolated` 字段；Gateway payload 新增
    `allowed_builtin_tools` 键（`allowed_tools` 保持 MCP 语义不变）
-4. `_audit_builtin_tool_violations`：preset 内置工具白名单的 fan_in 兜底审计
+4. `_audit_builtin_tool_violations`：preset 内置工具白名单的 fan_in 兜底审计，
+   产出计入 `aggregate_results` 的 `Tool violations` summary 计数（仅记录、不强制
+   失败——强制失败只保留给 denylist/路径违规 L3 红线）
 5. `hermes loop presets [list|show <name>]` CLI（能力面审计视图）
 
 ### 设计约束

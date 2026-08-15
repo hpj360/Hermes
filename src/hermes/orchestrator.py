@@ -13,6 +13,7 @@ Key components:
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import http.client
 import json
 import logging
@@ -149,6 +150,8 @@ class AgentTask:
     isolated: bool = True
     # fan_in 审计后填充：检测到的越权内置工具调用列表。
     tool_violations: list[str] = field(default_factory=list)
+    # ADR-0017：本轮轮次号（轨迹事件关联键，写入 to_dict 与 dispatch 事件）。
+    round_num: int = 0
     # ADR-0017：transient 轨迹关联键（不进 to_dict、不入 Gateway payload）。
     trajectory_request_seq: int | None = field(default=None, repr=False, compare=False)
 
@@ -175,6 +178,7 @@ class AgentTask:
             "model": self.model,
             "isolated": self.isolated,
             "tool_violations": self.tool_violations,
+            "round_num": self.round_num,
         }
 
 
@@ -219,13 +223,16 @@ class RoundResult:
         }
 
 
-def _build_spawn_payload(task: AgentTask) -> dict[str, Any]:
+def _build_spawn_payload(
+    task: AgentTask, preset: Any = None
+) -> dict[str, Any]:
     """Build the Gateway ``/api/subagent/spawn`` payload from a task.
 
     This is the single construction point for the dispatch payload (ADR-0017):
     any field that affects the model's upstream context must be assembled here
     so the trajectory snapshot and the dispatched payload can never diverge.
-    ``preset`` (if any) contributes prompt sections to ``agent_definition``.
+    ``preset`` (the *resolved* preset, if any) contributes prompt sections to
+    ``agent_definition``.
     """
     agent_content = ""
     if task.agent_file:
@@ -233,10 +240,8 @@ def _build_spawn_payload(task: AgentTask) -> dict[str, Any]:
         if agent_path.exists():
             agent_content = agent_path.read_text(encoding="utf-8")
 
-    if task.preset:
-        preset = merged_presets().get(task.preset)
-        if preset and preset.prompt_sections:
-            agent_content = apply_prompt_sections(agent_content, preset)
+    if preset is not None and preset.prompt_sections:
+        agent_content = apply_prompt_sections(agent_content, preset)
 
     payload: dict[str, Any] = {
         "task": task.task_description,
@@ -254,6 +259,21 @@ def _build_spawn_payload(task: AgentTask) -> dict[str, Any]:
     if task.denylist:
         payload["denylist"] = task.denylist
     return payload
+
+
+def _agent_file_sha256(agent_file: str | None) -> str | None:
+    """Return the sha256 of an agent file's raw content (for trajectory verify).
+
+    Used by the dispatch trajectory to let offline verification distinguish the
+    original agent file (unchanged by preset prompt_sections) from the final
+    ``agent_definition`` that is dispatched.
+    """
+    if not agent_file:
+        return None
+    path = Path(agent_file)
+    if not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 class OpenClawClient:
@@ -453,13 +473,13 @@ class Orchestrator:
         """
         # Stage 2: 先解析 preset（显式字段 > preset > 角色默认）
         try:
-            resolve_preset(task, merged_presets())
+            resolved_preset = resolve_preset(task, merged_presets())
         except ValidationError as exc:
             task.started_at = datetime.now(timezone.utc).isoformat()
             task.status = "failed"
             task.result = f"preset resolution failed: {exc}"
             logger.warning("Preset resolution failed for role=%s: %s", task.role, exc)
-            self._record_dispatch_result(task, None, "failed", 0)
+            # 未发生派发，不写 dispatch 轨迹（避免产生无配对 request 的孤儿 result）
             return
 
         # 白名单仍未指定时，按角色填充默认值
@@ -469,7 +489,7 @@ class Orchestrator:
         task.started_at = datetime.now(timezone.utc).isoformat()
         task.status = "running"
 
-        payload = _build_spawn_payload(task)
+        payload = _build_spawn_payload(task, preset=resolved_preset)
 
         # ADR-0017: 记录派发快照 + 可重建校验（fail loud）
         if self.trajectory is not None:
@@ -478,7 +498,9 @@ class Orchestrator:
                     "dispatch/request",
                     {
                         "role": task.role,
+                        "round_num": task.round_num,
                         "agent_file": task.agent_file,
+                        "agent_file_sha256": _agent_file_sha256(task.agent_file),
                         "payload": payload,
                     },
                 )
@@ -520,6 +542,7 @@ class Orchestrator:
                 {
                     "request_seq": task.trajectory_request_seq,
                     "role": task.role,
+                    "round_num": task.round_num,
                     "session_id": session_id,
                     "status": status,
                     "tokens_used": tokens_used,
@@ -884,6 +907,8 @@ class Orchestrator:
         role_violation_count = sum(len(t.mcp_violations) for t in tasks)
         # Stage 6: 统计 denylist 路径违规总数
         path_violation_count = sum(len(t.path_violations) for t in tasks)
+        # Stage 2: 统计内置工具越权调用总数（ADR-0018 兜底审计，计入 summary 可见）
+        tool_violation_count = sum(len(t.tool_violations) for t in tasks)
 
         # P2: 计算协作评估指标
         collaboration_metrics = self._compute_collaboration_metrics(
@@ -907,6 +932,8 @@ class Orchestrator:
             summary_parts.append(f"MCP violations: {role_violation_count}")
         if path_violation_count:
             summary_parts.append(f"Path violations: {path_violation_count}")
+        if tool_violation_count:
+            summary_parts.append(f"Tool violations: {tool_violation_count}")
         attribution = collaboration_metrics.get("failure_attribution", "none")
         if attribution != "none":
             summary_parts.append(f"Attribution: {attribution}")
@@ -1014,6 +1041,7 @@ class Orchestrator:
             context=checker_context,  # Previous checker report (raw, unfiltered)
             parallel=False,
             denylist=denylist or [],
+            round_num=round_num,
         )
 
         tasks = [builder]
@@ -1033,6 +1061,7 @@ class Orchestrator:
                     context=f"Check type: lint\nProject: {loop_dir}",
                     parallel=True,
                     check_type="lint",
+                    round_num=round_num,
                 ),
                 AgentTask(
                     role="checker_type",
@@ -1041,6 +1070,7 @@ class Orchestrator:
                     context=f"Check type: typecheck\nProject: {loop_dir}",
                     parallel=True,
                     check_type="typecheck",
+                    round_num=round_num,
                 ),
                 AgentTask(
                     role="checker_test",
@@ -1049,6 +1079,7 @@ class Orchestrator:
                     context=f"Check type: test\nProject: {loop_dir}",
                     parallel=True,
                     check_type="test",
+                    round_num=round_num,
                 ),
             ]
         else:
@@ -1059,6 +1090,7 @@ class Orchestrator:
                     task_description="Run ALL checks (lint, typecheck, test). Report ALL GREEN or FAILED with details.",
                     context=f"Project: {loop_dir}",
                     parallel=False,
+                    round_num=round_num,
                 ),
             ]
 
@@ -1106,6 +1138,7 @@ class Orchestrator:
                     "包含 Bull/Bear 各 3-5 条，以及至少 2 条 <!-- claim: --> 断言。"
                 ),
                 parallel=True,
+                round_num=round_num,
             ))
 
         self.fan_out(perspective_tasks)
@@ -1133,6 +1166,7 @@ class Orchestrator:
             ),
             context=synthesizer_context,
             parallel=False,
+            round_num=round_num,
         )
 
         self.fan_out([synthesizer])

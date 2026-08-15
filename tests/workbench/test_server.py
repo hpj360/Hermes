@@ -842,6 +842,94 @@ def test_projects_add_validates(patched_services, client):
     assert resp.status == 400
 
 
+# ---------------------------------------------------------------------------
+# loop trajectory API (ADR-0017 / ADR-0020: trajectory view backend)
+# ---------------------------------------------------------------------------
+
+
+_TRAJECTORY_FIXTURE = [
+    {
+        "seq": 1,
+        "time": "2026-08-15T10:00:00",
+        "type": "dispatch/request",
+        "data": {
+            "role": "builder",
+            "agent_file": "skills/builder.md",
+            "round_num": 1,
+            "payload": {"task": "fix bug"},
+        },
+    },
+    {
+        "seq": 2,
+        "time": "2026-08-15T10:00:05",
+        "type": "dispatch/result",
+        "data": {
+            "request_seq": 1,
+            "role": "builder",
+            "status": "completed",
+            "tokens_used": 1500,
+        },
+    },
+]
+
+
+@pytest.fixture
+def trajectory_loop(patched_services, monkeypatch, tmp_path):
+    """Create a tmp .loops/<name>/trajectory.jsonl and point loops_dir at it."""
+    loops_root = tmp_path / ".loops"
+    loop_dir = loops_root / "demo-loop"
+    loop_dir.mkdir(parents=True)
+    import json as _json
+
+    lines = [_json.dumps(ev, ensure_ascii=False) for ev in _TRAJECTORY_FIXTURE]
+    (loop_dir / "trajectory.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    monkeypatch.setattr("hermes.loop.loops_dir", lambda: loops_root)
+    return loop_dir
+
+
+def test_loops_list_empty(patched_services, client, monkeypatch, tmp_path):
+    """GET /loops returns empty list when no loops exist."""
+    monkeypatch.setattr("hermes.loop.loops_dir", lambda: tmp_path / ".loops")
+    resp = client("GET", "/loops")
+    assert resp.status == 200
+    assert _json(resp) == {"loops": []}
+
+
+def test_loops_list_with_trajectory(trajectory_loop, client):
+    """GET /loops returns loops that have a trajectory.jsonl."""
+    resp = client("GET", "/loops")
+    assert resp.status == 200
+    data = _json(resp)
+    assert "demo-loop" in data["loops"]
+
+
+def test_loop_trajectory_returns_events(trajectory_loop, client):
+    """GET /loops/<name>/trajectory returns the event list."""
+    resp = client("GET", "/loops/demo-loop/trajectory")
+    assert resp.status == 200
+    events = _json(resp)["events"]
+    assert len(events) == 2
+    assert events[0]["type"] == "dispatch/request"
+    assert events[1]["type"] == "dispatch/result"
+
+
+def test_loop_trajectory_missing_loop_404(trajectory_loop, client):
+    """GET /loops/<unknown>/trajectory returns 404."""
+    resp = client("GET", "/loops/no-such-loop/trajectory")
+    assert resp.status == 404
+
+
+def test_loop_trajectory_verify(trajectory_loop, client):
+    """GET /loops/<name>/trajectory/verify returns audit result."""
+    resp = client("GET", "/loops/demo-loop/trajectory/verify")
+    assert resp.status == 200
+    result = _json(resp)
+    assert result["ok"] is True
+    assert result["events"] == 2
+    assert result["requests"] == 1
+    assert result["results"] == 1
+
+
 def test_projects_ping_local(patched_services, client, tmp_path):
     """AC-22: POST /projects/{id}/ping reports reachable for a local project."""
     proj_dir = tmp_path / "ping-state"

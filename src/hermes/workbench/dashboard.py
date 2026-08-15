@@ -227,6 +227,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="panel-header"><h2>Skills</h2><span class="count" id="skill-count">0</span></div>
       <div class="panel-body" id="skills-body"></div>
     </div>
+
+    <div class="panel full">
+      <div class="panel-header">
+        <h2>Loop Trajectory</h2>
+        <span class="count" id="loop-count">0</span>
+        <select id="loop-select" style="margin-left:auto;margin-right:8px;background:var(--panel-2);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;">
+          <option value="">Select a loop...</option>
+        </select>
+        <button id="btn-verify" style="font-size:11px;padding:2px 8px;">Verify</button>
+      </div>
+      <div class="panel-body" id="trajectory-body">
+        <div class="empty">Select a loop to view its dispatch trajectory</div>
+      </div>
+    </div>
   </main>
 
   <div class="modal-bg" id="modal-bg"></div>
@@ -457,6 +471,97 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     document.getElementById("modal").classList.remove("active");
   }
 
+  // ── Loop Trajectory (ADR-0017 / ADR-0020) ──
+
+  async function loadLoops() {
+    try {
+      const data = await fetchJson("/loops");
+      const loops = data.loops || [];
+      document.getElementById("loop-count").textContent = loops.length;
+      const sel = document.getElementById("loop-select");
+      sel.innerHTML = '<option value="">Select a loop...</option>' +
+        loops.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join("");
+    } catch (e) {
+      document.getElementById("trajectory-body").innerHTML =
+        `<div class="empty">Error loading loops: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function loadTrajectory(name) {
+    const body = document.getElementById("trajectory-body");
+    body.innerHTML = '<div class="empty">Loading...</div>';
+    try {
+      const data = await fetchJson("/loops/" + encodeURIComponent(name) + "/trajectory");
+      const events = data.events || [];
+      if (events.length === 0) {
+        body.innerHTML = '<div class="empty">No trajectory events</div>';
+        return;
+      }
+      const rows = events.map(ev => {
+        const d = ev.data || {};
+        let detail = "";
+        let typeCls = "";
+        if (ev.type === "dispatch/request") {
+          detail = `role=${escapeHtml(d.role||"-")} file=${escapeHtml(d.agent_file||"-")} round=${d.round_num||"-"}`;
+          typeCls = "ok";
+        } else if (ev.type === "dispatch/result") {
+          detail = `req_seq=${d.request_seq||"-"} role=${escapeHtml(d.role||"-")} status=${escapeHtml(d.status||"-")} tokens=${d.tokens_used||0}`;
+          typeCls = "kind-completed";
+        } else {
+          detail = escapeHtml(JSON.stringify(d));
+        }
+        return `<tr>
+          <td class="mono">${ev.seq}</td>
+          <td><span class="badge ${typeCls}">${escapeHtml(ev.type)}</span></td>
+          <td>${escapeHtml(ev.time||"-")}</td>
+          <td>${detail}</td>
+        </tr>`;
+      }).join("");
+      body.innerHTML = `
+        <table>
+          <thead><tr><th>Seq</th><th>Type</th><th>Time</th><th>Detail</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    } catch (e) {
+      body.innerHTML = `<div class="empty">Error: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function verifyTrajectory() {
+    const name = document.getElementById("loop-select").value;
+    if (!name) return;
+    const body = document.getElementById("trajectory-body");
+    body.innerHTML = '<div class="empty">Verifying...</div>';
+    try {
+      const r = await fetchJson("/loops/" + encodeURIComponent(name) + "/trajectory/verify");
+      const ok = r.ok;
+      const cls = ok ? "ok" : "fail";
+      let html = `<div style="margin-bottom:8px;">
+        <span class="badge ${cls}">${ok ? "PASS" : "FAIL"}</span>
+        ${r.events||0} events (requests=${r.requests||0}, results=${r.results||0})
+      </div>`;
+      if (r.seq_gaps && r.seq_gaps.length)
+        html += `<div class="empty" style="color:var(--red);">Seq gaps: ${r.seq_gaps.join(", ")}</div>`;
+      if (r.unpaired_requests && r.unpaired_requests.length)
+        html += `<div class="empty" style="color:var(--red);">Unpaired requests: ${r.unpaired_requests.join(", ")}</div>`;
+      if (r.hash_mismatches && r.hash_mismatches.length)
+        html += `<div class="empty" style="color:var(--red);">Hash mismatches: ${r.hash_mismatches.length} item(s)</div>`;
+      if (ok && !(r.seq_gaps||[]).length && !(r.unpaired_requests||[]).length && !(r.hash_mismatches||[]).length)
+        html += `<div class="empty">All checks passed — trajectory is reconstructable.</div>`;
+      body.innerHTML = html;
+    } catch (e) {
+      body.innerHTML = `<div class="empty">Error: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  document.getElementById("loop-select").addEventListener("change", (e) => {
+    if (e.target.value) loadTrajectory(e.target.value);
+    else document.getElementById("trajectory-body").innerHTML =
+      '<div class="empty">Select a loop to view its dispatch trajectory</div>';
+  });
+  document.getElementById("btn-verify").addEventListener("click", verifyTrajectory);
+
   document.getElementById("btn-refresh").addEventListener("click", loadDashboard);
   document.getElementById("btn-autorenew").addEventListener("click", () => {
     const btn = document.getElementById("btn-autorenew");
@@ -478,6 +583,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   document.getElementById("modal-bg").addEventListener("click", closeModal);
 
   loadDashboard();
+  loadLoops();
 </script>
 </body>
 </html>

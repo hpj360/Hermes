@@ -44,15 +44,16 @@ sub_agents 仍保持文档性声明。
    - `token_limit: int` — 单 agent token 上限（沿用 P1 熔断语义）
    - `model: str | None` — 模型覆盖
    - `prompt_sections: list[str]` — prompt 片段（.md 文件路径或内联文本），
-     按序拼接到 agent_definition 之后（**先于 payload 构造**，保证 ADR-0017
+     按序拼接到 agent_definition 之后（由 `_build_spawn_payload` 基于 **resolve
+     后的 preset 对象**应用，**先于 payload 构造与轨迹记录**，保证 ADR-0017
      轨迹快照与实际派发一致）
    - `schema_version: int`
 
 2. **内置 Preset**（模块级 `BUILTIN_PRESETS`，行为零漂移）：
    - `builder-default`：mcp_tools = `ROLE_MCP_WHITELIST["builder"]`（以白名单 dict
      为 mcp_tools 字段的数据源，避免双份事实源），token_limit=50000
-   - `checker-lint` / `checker-type` / `checker-test` / `checker`：mcp_tools=[]，
-     token_limit=50000
+   - `checker`：mcp_tools=[]，token_limit=50000（checker_lint/type/test 等
+     checker 系角色经 `_ROLE_PRESET_MAP` 统一映射到这一个 preset）
    - `synthesizer`：mcp_tools=[]，token_limit=50000
    - `perspective`：mcp_tools=**None**（与现状一致——`_get_role_whitelist` 对
      perspective 前缀匹配落空返回 None=不限制；收窄留待单独立项，不在本 ADR 引入
@@ -105,11 +106,13 @@ sub_agents 仍保持文档性声明。
 - **负面 / tradeoff**：
   - 新增一层抽象；`ROLE_MCP_WHITELIST` 与 preset 并存期需维护"角色→preset"映射，
     该映射的 mcp_tools 数据源仍是白名单 dict（单一事实源成立）；
-  - Gateway 对内置工具白名单键（`allowed_builtin_tools`，新键；`allowed_tools`
-    保持 MCP 白名单语义不变）的支持未知，沿用前向兼容策略：Gateway 支持则强制
-    执行，不支持则由 Hermes 事后审计兜底——兜底审计 `_audit_builtin_tool_violations`
-    在本 ADR 范围内实现（复用 `_audit_mcp_violations` 的模式，对非 mcp_ 前缀的
-    tool_calls 名比对 tools 白名单）；
+   - Gateway 对内置工具白名单键（`allowed_builtin_tools`，新键；`allowed_tools`
+     保持 MCP 白名单语义不变）的支持未知，沿用前向兼容策略：Gateway 支持则强制
+     执行，不支持则由 Hermes 事后审计兜底——兜底审计 `_audit_builtin_tool_violations`
+     在本 ADR 范围内实现（复用 `_audit_mcp_violations` 的模式，对非 mcp_ 前缀的
+     tool_calls 名比对 tools 白名单）；其产出计入 `aggregate_results` 的
+     `Tool violations` summary 计数（**仅记录、不强制失败**——强制失败只保留给
+     denylist/路径违规这一 L3 红线）；
   - preset 的 prompt_sections 进入 agent_definition 后同样受轨迹日志约束
     （ADR-0017），拼接必须发生在 `_build_spawn_payload` 之前。
 - **后续约束**：新增 loop pattern 的 sub_agents 必须声明 preset（未声明的

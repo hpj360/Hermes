@@ -186,10 +186,14 @@ def load_user_presets(presets_dir: Path | None = None) -> dict[str, AgentPreset]
 _merged_cache: dict[str, AgentPreset] | None = None
 
 
-def merged_presets() -> dict[str, AgentPreset]:
-    """Built-in presets overlaid with user presets (cached)."""
+def merged_presets(force_reload: bool = False) -> dict[str, AgentPreset]:
+    """Built-in presets overlaid with user presets (cached).
+
+    ``force_reload=True`` rebuilds the cache (used by tests and long-running
+    processes after editing ``HERMES_PRESETS_DIR``).
+    """
     global _merged_cache
-    if _merged_cache is None:
+    if force_reload or _merged_cache is None:
         merged = builtin_presets()
         merged.update(load_user_presets())
         _merged_cache = merged

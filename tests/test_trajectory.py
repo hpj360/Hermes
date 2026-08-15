@@ -363,6 +363,8 @@ def test_llm_chat_records_trajectory(tmp_path):
 
 
 def _write_agent_and_trajectory(tmp_path, agent_text="do the thing"):
+    import hashlib
+
     agent_file = tmp_path / "builder.md"
     agent_file.write_text(agent_text, encoding="utf-8")
     logger = TrajectoryLogger(tmp_path / "trajectory.jsonl")
@@ -371,6 +373,7 @@ def _write_agent_and_trajectory(tmp_path, agent_text="do the thing"):
         {
             "role": "builder",
             "agent_file": str(agent_file),
+            "agent_file_sha256": hashlib.sha256(agent_text.encode("utf-8")).hexdigest(),
             "payload": {"agent_definition": agent_text},
         },
     )
@@ -432,3 +435,70 @@ def test_archive_trajectory_renames(tmp_path):
 
 def test_archive_trajectory_nonexistent(tmp_path):
     assert archive_trajectory(tmp_path / "nope.jsonl") is None
+
+
+def test_archive_trajectory_increments_cycle(tmp_path):
+    path = tmp_path / "trajectory.jsonl"
+    path.write_text("old1", encoding="utf-8")
+    assert archive_trajectory(path) is not None
+    # second archive increments to .2
+    path.write_text("old2", encoding="utf-8")
+    dest = archive_trajectory(path)
+    assert dest is not None
+    assert dest.name == "trajectory.2.jsonl"
+    assert dest.read_text() == "old2"
+
+
+def test_record_write_failure_raises(tmp_path, monkeypatch):
+    from hermes.trajectory import TrajectoryLogger
+
+    logger = TrajectoryLogger(tmp_path / "trajectory.jsonl")
+
+    def _boom(path, obj):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("hermes.trajectory.atomic_append_jsonl", _boom)
+    with pytest.raises(OSError):
+        logger.record("dispatch/request", {})
+
+
+def test_verify_trajectory_detects_corrupt_line(tmp_path):
+    from hermes.trajectory import TrajectoryLogger, verify_trajectory
+
+    path = tmp_path / "trajectory.jsonl"
+    logger = TrajectoryLogger(path)
+    logger.record("dispatch/request", {"role": "b", "payload": {}})
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("{corrupt\n")
+    result = verify_trajectory(path)
+    assert result["ok"] is False
+    assert result["corrupt_lines"] == 1
+
+
+def test_assert_reconstructable_empty_data_boundary():
+    from hermes.trajectory import TrajectoryEvent
+
+    payload = {"task": "x"}
+    events = [TrajectoryEvent(seq=1, type="dispatch/request", data={})]
+    with pytest.raises(TrajectoryDesyncError):
+        assert_reconstructable(events, 1, payload)
+
+
+def test_orchestrator_records_round_num(tmp_path):
+    from hermes.orchestrator import AgentTask
+
+    client = _RecordingClient()
+    trajectory = TrajectoryLogger(tmp_path / "trajectory.jsonl")
+    orch = _make_orch(client, trajectory)
+
+    task = AgentTask(
+        role="builder", task_description="build", parallel=False, round_num=7
+    )
+    orch.fan_out([task])
+    orch.fan_in([task])
+
+    events = trajectory.events()
+    request = next(e for e in events if e.type == "dispatch/request")
+    result = next(e for e in events if e.type == "dispatch/result")
+    assert request.data["round_num"] == 7
+    assert result.data["round_num"] == 7

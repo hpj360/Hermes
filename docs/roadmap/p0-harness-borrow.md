@@ -43,15 +43,13 @@ def verify_trajectory(path: Path) -> dict  # 离线审计：行完整性/seq 连
 | 文件 | 改动 |
 |------|------|
 | `src/hermes/trajectory.py` | 新模块（1.1 接口） |
-| `src/hermes/orchestrator.py` | ① 新增模块级纯函数 `_build_spawn_payload(task) -> dict`；② `OpenClawClient` 保持 `spawn_agent` 旧签名不变（向后兼容既有 mock），新增 `spawn_payload(payload: dict)` 入口，`spawn_agent` 内部委托 `_build_spawn_payload` + `spawn_payload`（行为等价，存量测试零改动）；③ `Orchestrator.__init__` 增加 `trajectory: TrajectoryLogger | None = None`；④ `_prepare_and_spawn`：构造 payload → `trajectory.record("dispatch/request", ...)` 并暂存 seq → `assert_reconstructable(...)` → `client.spawn_payload(payload)`；desync/写失败时 task.status="failed"、result 记录错误、不发 HTTP、补记 result 事件；⑤ `fan_in` 完成后补记 `dispatch/result`（含 request_seq） |
-| `src/hermes/runner.py` | 在 `_run_builder_checker`（runner.py:269）与 `_run_multi_perspective`（runner.py:376）两处 Orchestrator 构造点注入 TrajectoryLogger（路径 `.loops/<name>/trajectory.jsonl`）；generic 路径（runner.py:204）不派发、不注入；guidance/local 模式无派发不启用 |
-| `src/hermes/loop.py` | `record_round` 增加关键字参数 `trajectory_seq: int | None = None`（默认 None 向后兼容），返回值附 `trajectory_seq` 键；`resume_loop` 新周期开始时归档旧 trajectory（`trajectory.<cycle>.jsonl`），cycle 从 1 递增 |
+| `src/hermes/orchestrator.py` | ① 新增模块级纯函数 `_build_spawn_payload(task, preset=None) -> dict`；② `OpenClawClient` 保持 `spawn_agent` 旧签名不变（向后兼容公开 API），新增 `spawn_payload(payload: dict)` 入口，`spawn_agent` 内部委托 `_build_spawn_payload` + `spawn_payload`；③ `Orchestrator.__init__` 增加 `trajectory: TrajectoryLogger | None = None`；④ `_prepare_and_spawn`：resolve preset → 构造 payload → `trajectory.record("dispatch/request", ...)` 并暂存 seq → `assert_reconstructable(...)` → `client.spawn_payload(payload)`；desync/写失败时 task.status="failed"、result 记录错误、不发 HTTP、补记 result 事件；⑤ `fan_in` 完成后补记 `dispatch/result`（含 request_seq/round_num）；⑥ `AgentTask` 新增 `round_num` 字段（轨迹轮次关联键），runner/orchestrator 构造 task 时注入 |
+| `src/hermes/runner.py` | 在 `_run_builder_checker` 与 `_run_multi_perspective` 两处 Orchestrator 构造点注入 TrajectoryLogger（路径 `.loops/<name>/trajectory.jsonl`）；generic 路径（guidance）不派发、不注入 |
+| `src/hermes/loop.py` | `record_round` 增加关键字参数 `trajectory_seq: int | None = None`，回填到 `LoopRound.trajectory_seq`（持久化到 meta.json）；`resume_loop` 新周期开始时归档旧 trajectory（`trajectory.<n>.jsonl`，文件名递增） |
 | `src/hermes/cli_loop.py` | 新子命令 `loop trajectory <name> [--json] [--verify]`（verify 调用 `verify_trajectory`） |
-| `src/hermes/workbench/llm.py` | 增加可选 `trajectory: TrajectoryLogger | None` 参数：发送前 record `request/header`（model/temperature/max_tokens）与 `request/context`（messages），并执行同一校验；默认 None 行为不变 |
-| `src/hermes/config.py` | 新字段 `HERMES_LLM_TRAJECTORY_ENABLED: bool = False`（仅门控 llm.py 直连路径；Orchestrator 派发路径默认始终开启） |
-| `src/hermes/gepa.py` | `auto_generate_variants` 在 `HERMES_LLM_TRAJECTORY_ENABLED=true` 且调用方提供 trajectory 时启用（opt-in；当前无生产调用方，为未来 GEPA 周期接入预置） |
+| `src/hermes/workbench/llm.py` | 增加可选 `trajectory: TrajectoryLogger | None` 参数：发送前 record `request/header`（model/temperature/max_tokens）与 `request/context`（messages），**仅记录、best-effort、不校验**（与派发路径的 fail-loud 语义不同）；默认 None 行为不变 |
 
-### 1.3 测试计划（新文件 `tests/test_trajectory.py`，目标 25+ 用例）
+### 1.3 测试计划（新文件 `tests/test_trajectory.py`，实际 29 用例）
 
 1. `TrajectoryLogger.record`（7 用例：基本追加/seq 递增/损坏行跳过/目录自动创建/
    线程并发 10×50 无丢失 **且 seq 集合唯一 + 行内 seq 单调**/写失败抛异常/last_seq）
@@ -59,25 +57,27 @@ def verify_trajectory(path: Path) -> dict  # 离线审计：行完整性/seq 连
    构造结果等价——保证重构行为不变）
 3. `assert_reconstructable`（5 用例：一致通过/字段篡改抛 Desync/事件缺失抛 Desync/
    request_seq 不存在抛 Desync/空 data 边界）
-4. Orchestrator 集成（mock client，6 用例：正常派发记录配对事件/desync 时
+4. Orchestrator 集成（mock client：正常派发记录配对事件/desync 时
    `spawn_payload` 调用次数==0 + task failed + result 事件补记/Gateway 不可用
    （session None）也补记 result/无 trajectory 注入行为不变=向后兼容/
    `spawn_agent` 旧签名调用等价于 `spawn_payload`/result 事件携带 request_seq
-   可配对 4-task 轮）
-5. `workbench.llm` trajectory 注入（2 用例：记录后发送/desync 中止）
-6. `verify_trajectory` 离线审计（3 用例：完好通过/删 result 报配对不完备/改
-   agent_definition 全文报哈希不一致）
-7. CLI `loop trajectory`（2 用例：--json 输出/--verify 非零退出）
-8. resume 归档（2 用例：新周期归档旧文件/cycle 递增）
+   可配对 4-task 轮/round_num 写入事件）
+5. `workbench.llm` trajectory 注入（记录后发送——仅记录、best-effort）
+6. `verify_trajectory` 离线审计（完好通过/删 result 报配对不完备/改 agent 文件
+   报哈希不一致/corrupt 行检测/非 int request_seq 报异常）
+7. CLI `loop trajectory`（--verify 非零退出）
+8. resume 归档（新周期归档旧文件/文件名递增 .2）
 
 ### 1.4 验收标准
 
 - `pytest tests/` 全绿（含新增）；`ruff check src/ tests/` 与 `mypy src/` 零错误；
   覆盖率不低于现状（83%/88.5% 基线不降）
-- 存量 3 处 FakeClient（tests/test_loop.py:2379、2410、2786 附近）零改动通过
-  （`spawn_agent` 签名不变的直接证据）
+- 向后兼容范围：`OpenClawClient.spawn_agent` 公开方法签名不变（旧调用方零改动）；
+  但内部派发路径改走 `spawn_payload`，故 tests/test_loop.py 中 3 处 mock
+  `spawn_agent` 的 FakeClient 相应改为 mock `spawn_payload`（非零改动，属测试
+  适配而非行为回归）
 - 自动化验收代替手工：pytest CLI 用例覆盖 trajectory 命令；手工仅做一次端到端
-  观察（`hermes loop run test-bc` 后 `--verify` 通过、改 agent_definition 后
+  观察（`hermes loop run test-bc` 后 `--verify` 通过、改 agent 文件后
   verify 非零退出）
 
 ---
@@ -107,12 +107,12 @@ def apply_prompt_sections(agent_definition: str, preset: AgentPreset) -> str  # 
 | 文件 | 改动 |
 |------|------|
 | `src/hermes/presets.py` | 新模块（2.1 接口） |
-| `src/hermes/orchestrator.py` | ① `AgentTask` 增加 `preset: str | None = None`、`tools: list[str] | None = None`（内置工具白名单）、`model: str | None = None`，`to_dict` 补齐新字段（加性，存量断言安全）；② `_prepare_and_spawn`：先 `resolve_preset(task)` → `apply_prompt_sections` → 再 `_build_spawn_payload`（顺序锁定：拼接必须先于快照）；③ payload 新增键 `allowed_builtin_tools`（内置工具白名单；`allowed_tools` 保持 MCP 白名单语义不变，兼容现有测试断言 test_loop.py:2396）；④ 新增 `_audit_builtin_tool_violations(task, messages)`：对非 mcp_ 前缀的 tool_calls 名比对 tools 白名单，fan_in 时执行并记 `tool_violations`（"Gateway 不支持则 Hermes 事后审计兜底"的实现） |
+| `src/hermes/orchestrator.py` | ① `AgentTask` 增加 `preset: str | None = None`、`tools: list[str] | None = None`（内置工具白名单）、`model: str | None = None`，`to_dict` 补齐新字段（加性，存量断言安全）；② `_prepare_and_spawn`：先 `resolve_preset(task)`（持有返回值）→ `_build_spawn_payload(task, preset=resolved)`（prompt_sections 基于 resolved preset 拼接，先于轨迹快照）；③ payload 新增键 `allowed_builtin_tools`（内置工具白名单；`allowed_tools` 保持 MCP 白名单语义不变）；④ 新增 `_audit_builtin_tool_violations(task, messages)`：对非 mcp_ 前缀的 tool_calls 名比对 tools 白名单，fan_in 时执行并记 `tool_violations`，`aggregate_results` 计入 `Tool violations` summary 计数（仅记录不强制失败） |
 | `src/hermes/runner.py` | `_run_builder_checker` / `run_parallel_perspectives` 构造 AgentTask 时按 ROLE_PRESET_MAP 挂内置 preset（或经 `_prepare_and_spawn` 的角色约定自动解析，实现时二选一，推荐后者：runner 零改动）；**不激活 LOOP_PATTERNS.sub_agents 运行时读取**（尊重 DECISIONS.md D018） |
 | `src/hermes/cli_loop.py` | 新子命令 `loop presets [list|show <name>]`，list 输出内置 + 用户 preset 的最终工具面（等效于局部 dump-config） |
 | `src/hermes/config.py` | 新字段 `HERMES_PRESETS_DIR: str | None = None` |
 
-### 2.3 测试计划（新文件 `tests/test_presets.py`，目标 30+ 用例）
+### 2.3 测试计划（新文件 `tests/test_presets.py`，实际 30 用例）
 
 1. 序列化往返（3 用例）
 2. `resolve_preset` 优先级矩阵（10 用例：显式 allowed_mcp_tools 覆盖（含显式 []）/

@@ -335,6 +335,9 @@ class LoopRound:
     # P2 协作指标：本轮 RoundResult.collaboration_metrics 的快照。
     # record_round 据此更新 LoopState 的累计指标（total_role_violations 等）。
     collaboration_metrics: dict[str, Any] = field(default_factory=dict)
+    # ADR-0017：本轮派发轨迹的最后 seq（由 runner 传入 record_round 回填），
+    # 持久化后可在跨会话追溯"第 N 轮对应哪些轨迹事件"。
+    trajectory_seq: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -353,6 +356,7 @@ class LoopRound:
             "escalation_info": self.escalation_info,
             "agent_status": self.agent_status,
             "collaboration_metrics": self.collaboration_metrics,
+            "trajectory_seq": self.trajectory_seq,
         }
 
     @classmethod
@@ -372,6 +376,8 @@ class LoopRound:
         collaboration_metrics = data.get("collaboration_metrics") or {}
         if not isinstance(collaboration_metrics, dict):
             collaboration_metrics = {}
+        # ADR-0017: trajectory_seq 可为 int 或 None
+        trajectory_seq = data.get("trajectory_seq")
         return cls(
             round_num=data.get("round_num", 0),
             timestamp=data.get("timestamp", ""),
@@ -388,6 +394,7 @@ class LoopRound:
             escalation_info=escalation_info if isinstance(escalation_info, dict) else {},
             agent_status=agent_status,
             collaboration_metrics=collaboration_metrics,
+            trajectory_seq=trajectory_seq if isinstance(trajectory_seq, int) else None,
         )
 
 
@@ -1951,6 +1958,9 @@ def record_round(
     # 经验A：记录该轮的基线失败项快照（便于跨轮次追溯当时的基线）
     if not round_data.baseline_failures:
         round_data.baseline_failures = list(loop.baseline_failures)
+    # ADR-0017：回填本轮轨迹 seq（若调用方传入），随 meta 持久化。
+    if trajectory_seq is not None:
+        round_data.trajectory_seq = trajectory_seq
     loop.rounds.append(round_data)
     loop.current_round = round_data.round_num
     loop.last_run = datetime.now(timezone.utc).isoformat()

@@ -81,3 +81,100 @@ def test_log_level_choices_exist() -> None:
     # Invalid choice causes SystemExit (argparse error)
     with pytest.raises(SystemExit):
         parser.parse_args(["--log-level", "BOGUS", "start"])
+
+
+# ── dump-config (ADR-0019: effective runtime composition view) ──
+
+
+def test_main_dump_config_returns_zero() -> None:
+    assert main(["dump-config"]) == 0
+
+
+def test_main_dump_config_json_returns_zero() -> None:
+    assert main(["dump-config", "--json"]) == 0
+
+
+def test_build_parser_has_dump_config_subcommand() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["dump-config"])
+    assert args.command == "dump-config"
+
+
+def test_dump_config_contains_all_sections(capsys) -> None:
+    main(["dump-config"])
+    out = capsys.readouterr().out
+    # 每个 section header 必须出现（回答 DSH 三问之①：运行时最终加载了什么）
+    for section in [
+        "[paths]",
+        "[models]",
+        "[gateway]",
+        "[loop_patterns]",
+        "[agent_presets]",
+        "[skills]",
+        "[denylist_aggregate]",
+    ]:
+        assert section in out, f"missing section: {section}"
+
+
+def test_dump_config_json_is_parseable(capsys) -> None:
+    import json
+
+    main(["dump-config", "--json"])
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    # 顶层键覆盖全部组装维度
+    expected_keys = {
+        "paths",
+        "models",
+        "gateway",
+        "loop_patterns",
+        "agent_presets",
+        "skills",
+        "denylist_aggregate",
+    }
+    assert expected_keys.issubset(payload.keys())
+
+
+def test_dump_config_denylist_includes_default(capsys) -> None:
+    """denylist 聚合必须含 DEFAULT_DENYLIST（L3 红线不可丢失）。"""
+    from hermes.gepa_redteam import DEFAULT_DENYLIST
+
+    main(["dump-config", "--json"])
+    import json
+
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    aggregated = set(payload["denylist_aggregate"])
+    for pattern in DEFAULT_DENYLIST:
+        assert pattern in aggregated, f"DEFAULT_DENYLIST pattern lost: {pattern}"
+
+
+def test_dump_config_denylist_is_union(capsys) -> None:
+    """聚合 denylist = DEFAULT ∪ LOOP_PATTERNS[*].denylist ∪ presets[*].denylist。"""
+    from hermes.gepa_redteam import DEFAULT_DENYLIST
+    from hermes.loop import LOOP_PATTERNS
+    from hermes.presets import merged_presets
+
+    expected: set[str] = set(DEFAULT_DENYLIST)
+    for p in LOOP_PATTERNS.values():
+        expected.update(p.get("denylist", []))
+    for preset in merged_presets().values():
+        expected.update(preset.denylist)
+
+    main(["dump-config", "--json"])
+    import json
+
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert set(payload["denylist_aggregate"]) == expected
+
+
+def test_dump_config_loop_patterns_count_matches_source(capsys) -> None:
+    from hermes.loop import LOOP_PATTERNS
+
+    main(["dump-config", "--json"])
+    import json
+
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert len(payload["loop_patterns"]) == len(LOOP_PATTERNS)
