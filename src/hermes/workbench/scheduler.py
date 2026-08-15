@@ -39,6 +39,45 @@ from hermes.workbench.persistence import safe_read_json
 _JOBSTORE_SCHEMA_LOCK = threading.Lock()
 
 
+class RunningJobsRegistry:
+    """进程内 "运行中 job" 登记表（P1-2/P1-3 修复）。
+
+    Worker 在执行 job 前注册 ``job_id → cancel_event``，执行完注销。DAG 的
+    cascade cancel 与其它取消路径通过它拿到**正在运行**的 job 的
+    ``cancel_event`` 并置位，从而真正中断（而不是只改 store 里的状态、
+    被运行中的 worker 事后覆盖）。线程安全。
+    """
+
+    def __init__(self) -> None:
+        self._running: dict[str, threading.Event] = {}
+        self._lock = threading.Lock()
+
+    def register(self, job_id: str, cancel_event: threading.Event) -> None:
+        with self._lock:
+            self._running[job_id] = cancel_event
+
+    def unregister(self, job_id: str) -> None:
+        with self._lock:
+            self._running.pop(job_id, None)
+
+    def cancel(self, job_id: str) -> bool:
+        """置位运行中 job 的 cancel_event。返回是否找到该 job。"""
+        with self._lock:
+            ev = self._running.get(job_id)
+        if ev is None:
+            return False
+        ev.set()
+        return True
+
+    def is_running(self, job_id: str) -> bool:
+        with self._lock:
+            return job_id in self._running
+
+
+# Default process-wide registry shared by WorkerPool instances.
+_default_running_jobs = RunningJobsRegistry()
+
+
 __all__ = [
     "EmptyError",
     "JobExecution",
@@ -47,6 +86,7 @@ __all__ = [
     "JobStatus",
     "JobStore",
     "RetryPolicy",
+    "RunningJobsRegistry",
     "ScheduledJob",
     "StatusBus",
     "WorkerPool",
@@ -178,7 +218,7 @@ def _task_from_dict(data: dict[str, Any]) -> Any:
     """Deserialize a Task (lazy import to avoid circular dependency)."""
     from hermes.workbench.cli import Task
 
-    return Task(
+    task = Task(
         task_id=data.get("task_id", ""),
         plan=data.get("plan", []),
         mode=data.get("mode", "oneshot"),
@@ -187,6 +227,12 @@ def _task_from_dict(data: dict[str, Any]) -> Any:
         interval=float(data.get("interval", 0.0)),
         goal=data.get("goal"),
     )
+    # P2-6：回填运行期状态，避免重启后丢失任务历史/状态。
+    task.status = str(data.get("status", "PENDING"))
+    task.rounds = list(data.get("rounds", []) or [])
+    if data.get("created_at") is not None:
+        task.created_at = data["created_at"]
+    return task
 
 
 @dataclass
@@ -578,6 +624,7 @@ class WorkerPool:
         bus: StatusBus | None = None,
         requeue_sleep: float = 1.0,
         on_job_done: Callable[[str, JobStatus], None] | None = None,
+        running_jobs: RunningJobsRegistry | None = None,
     ) -> None:
         self.size = size
         self._router = router
@@ -586,6 +633,8 @@ class WorkerPool:
         self._bus = bus or StatusBus()
         self._requeue_sleep = requeue_sleep
         self._on_job_done = on_job_done
+        # 运行中 job 登记表：供 DAG cascade cancel / 外部取消真正中断执行。
+        self._running_jobs = running_jobs if running_jobs is not None else _default_running_jobs
         self._stop = threading.Event()
         self._workers: list[threading.Thread] = []
 
@@ -657,9 +706,12 @@ class WorkerPool:
             timer.daemon = True
             timer.start()
 
+        # 注册到运行中登记表，使 DAG cascade cancel 能真正中断 RUNNING job。
+        self._running_jobs.register(job.job_id, job.cancel_event)
         try:
             self._run_with_retries(job, runtime)
         finally:
+            self._running_jobs.unregister(job.job_id)
             if timer is not None:
                 timer.cancel()
             self._router.release(job.target_project)
@@ -685,7 +737,17 @@ class WorkerPool:
 
             try:
                 scheduler = runtime.scheduler()
-                scheduler.run(job.task.task_id)
+                # 修复 P1-1/P2-6：worker 之前只把 task_id 传给 scheduler.run，
+                # 但 task 对象从未注册进 runtime 的 TaskRegistry，导致
+                # ``registry.get(task_id)`` 恒为 None（任务静默空转）。执行前
+                # 先把 job 携带的 task 注册进 registry，使 task_id 真正可解析。
+                registry = getattr(scheduler, "registry", None)
+                if registry is not None and hasattr(registry, "register"):
+                    try:
+                        registry.register(job.task)
+                    except Exception:  # noqa: BLE001 — 注册失败不阻断
+                        pass
+                self._run_once_with_timeout(job, scheduler)
                 # Check cancel after run
                 if job.cancel_event.is_set():
                     exec_record.status = (
@@ -740,6 +802,50 @@ class WorkerPool:
                 self._on_job_done(job.job_id, job.status)
             except Exception:  # noqa: BLE001
                 pass  # DAG callback must not break worker
+
+    def _run_once_with_timeout(self, job: ScheduledJob, scheduler: Any) -> None:
+        """Run ``scheduler.run(task_id)`` with a bounded, interruptible wait.
+
+        P1-3 修复：此前 ``scheduler.run`` 是同步阻塞调用，job.timeout 只置位
+        ``cancel_event`` 却无法让一个挂死的调用返回，导致 job 永远 RUNNING、
+        worker 线程永久占用。现在：
+
+        - ``job.timeout`` 未设置时：内联执行（保持旧行为与测试兼容）。
+        - ``job.timeout`` 已设置时：在独立 daemon 线程执行，主线程 join 最多
+          ``timeout`` 秒；超时则置位 ``cancel_event`` 并返回（daemon 线程继续
+          后台跑但不再阻塞队列消费）。随后 ``_run_with_retries`` 检测到
+          ``cancel_event`` 将 job 记为 TIMEOUT。
+
+        局限（诚实声明）：Python 线程无法强杀；超时后挂死的代码仍在后台线程
+        里，但不再阻断 worker 消费队列、不会永久卡住调度中心。真正强杀需
+        进程级隔离（见 ROADMAP P2 执行 seam）。
+        """
+        timeout = job.timeout
+        if timeout is None or timeout <= 0:
+            scheduler.run(job.task.task_id)
+            return
+
+        result: dict[str, Any] = {}
+
+        def _target() -> None:
+            try:
+                result["ok"] = True
+                scheduler.run(job.task.task_id)
+                result["ok"] = True
+            except Exception as exc:  # noqa: BLE001 — 异常传回主线程重新抛出
+                result["ok"] = False
+                result["error"] = exc
+
+        t = threading.Thread(target=_target, daemon=True, name=f"job-{job.job_id[:8]}")
+        t.start()
+        t.join(timeout=timeout)
+        if t.is_alive():
+            # 超时：置位 cancel_event，让后续记账记为 TIMEOUT；daemon 线程
+            # 不再被等待，但也不阻塞 worker。
+            job.cancel_event.set()
+            return
+        if result.get("ok") is False:
+            raise result.get("error")  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

@@ -325,7 +325,8 @@ class LlmClient:
         deltas (e.g. role-only or a trailing ``[DONE]``) are skipped.
 
         Retries transient failures per :attr:`retry_policy` (only before any
-        bytes are streamed — once streaming begins the caller owns the stream).
+        chunk has been yielded — once streaming begins, a mid-stream error is
+        raised to the caller instead of re-streaming and duplicating chunks).
         """
         url = f"{self.base_url}/chat/completions"
         body: dict[str, Any] = {
@@ -339,14 +340,22 @@ class LlmClient:
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
         last_exc: _RetryableError | None = None
+        streamed = False
         for attempt in range(self.retry_policy.max_retries + 1):
             if attempt > 0:
                 time.sleep(self.retry_policy.delay_for(attempt - 1))
             try:
-                yield from self._stream_once(url, payload, timeout=timeout)
+                for chunk in self._stream_once(url, payload, timeout=timeout):
+                    streamed = True
+                    yield chunk
                 return
             except _RetryableError as exc:
                 last_exc = exc
+                # P1-6 修复：一旦已有任何 token 产出（流式已开始），断流后
+                # 重试会从第 0 个 token 重新流，导致调用方收到重复前缀。
+                # 此时不再重试，把错误抛给调用方（其已持有部分 chunk）。
+                if streamed:
+                    raise exc.api_error from exc
                 if attempt >= self.retry_policy.max_retries:
                     raise exc.api_error from exc
         assert last_exc is not None
@@ -439,8 +448,15 @@ class LlmClient:
 
         try:
             with resp:
-                for chunk in _parse_sse_stream(resp):
-                    yield chunk
+                try:
+                    for chunk in _parse_sse_stream(resp):
+                        yield chunk
+                except (urllib.error.URLError, TimeoutError, OSError) as e:
+                    # 流式进行中也可能断流（如连接重置）——同样按可重试错误
+                    # 抛出，由 stream() 决定是否重试（已产出 chunk 则不重试）。
+                    reason = getattr(e, "reason", None) or str(e)
+                    exc = LlmApiError(f"LLM network error during stream: {reason}")
+                    raise _RetryableError.from_api_error(exc) from e
         finally:
             resp.close()
 
@@ -622,6 +638,36 @@ def _extract_json(text: str) -> dict[str, Any]:
                     try:
                         v = json.loads(fragment)
                         return v if isinstance(v, dict) else {"value": v}
+                    except json.JSONDecodeError:
+                        break
+    # Case 4 (P2-9)：文档声称支持 `[...]` 数组但未实现。解析首个平衡的数组
+    # 字面量，与对象一致地归一为 {"value": [...]}。
+    start = text.find("[")
+    if start != -1:
+        depth = 0
+        in_str = False
+        escaped = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_str:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    fragment = text[start : i + 1]
+                    try:
+                        v = json.loads(fragment)
+                        return {"value": v}
                     except json.JSONDecodeError:
                         break
     raise LlmApiError(f"could not extract JSON from LLM response: {text[:200]!r}")

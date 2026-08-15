@@ -104,6 +104,39 @@ class TestRegisterPublishTrigger:
         assert trigger.job_template["payload"]["platform"] == "medium"
 
 
+class TestTriggerTaskShape:
+    """P1-1：触发器 template 必须能被 worker 反序列化为可执行的 task。"""
+
+    def test_template_round_trips_to_executable_task(self, isolated_store: TriggerStore) -> None:
+        from hermes.workbench.scheduler import ScheduledJob
+
+        tid = register_publish_trigger("0 10 * * *", content_id=42, platform="WECHAT_OFFICIAL")
+        trigger = get_trigger_store().get(tid)
+        assert trigger is not None
+
+        job = ScheduledJob.from_template(trigger.job_template)
+        # task 必须携带 goal（type=publish + payload），供 ContentTeamTaskScheduler 分发。
+        assert job.task.task_id == "content_team_publish"
+        assert job.task.goal == {
+            "type": "publish",
+            "payload": {"content_id": "42", "platform": "WECHAT_OFFICIAL"},
+        }
+        # 序列化 round-trip 不丢失 goal（worker 重启后仍可执行）。
+        job2 = ScheduledJob.from_dict(job.to_dict())
+        assert job2.task.goal == job.task.goal
+
+    def test_collect_template_task_shape(self, isolated_store: TriggerStore) -> None:
+        from hermes.workbench.scheduler import ScheduledJob
+
+        tid = register_daily_collection_trigger()
+        trigger = get_trigger_store().get(tid)
+        assert trigger is not None
+
+        job = ScheduledJob.from_template(trigger.job_template)
+        assert job.task.task_id == "content_team_collect"
+        assert job.task.goal["type"] == "collect"
+
+
 # ---------------------------------------------------------------------------
 # list_triggers
 # ---------------------------------------------------------------------------

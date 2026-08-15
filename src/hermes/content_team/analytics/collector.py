@@ -182,6 +182,7 @@ class MetricsCollector:
             publish_task_id=task.id,
             platform=platform_value,
             date=snapshot_date,
+            source=source,
             **metrics_data,
         )
         self.db_session.add(metric)

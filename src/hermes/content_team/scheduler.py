@@ -14,6 +14,7 @@ from typing import Any
 
 from hermes.content_team.memory import get_memory_service
 from hermes.content_team.observability import log_event
+from hermes.content_team.runtime import ContentTeamRouter
 from hermes.workbench.recovery import RecoveryManager
 from hermes.workbench.scheduler import JobQueue, JobStore, WorkerPool
 
@@ -37,13 +38,11 @@ _RECOVERY_ENV_VAR = "CONTENT_TEAM_SCHEDULER_RECOVERY"
 
 
 class _NoopRouter:
-    """占位 Router。
+    """占位 Router（已废弃，保留仅作兼容引用）。
 
-    content_team 尚未接入真实的 ProjectRuntime，而 WorkerPool 构造时需要
-    一个提供 ``resolve`` / ``try_acquire`` / ``release`` 接口的对象。在
-    content_team 真正接入任务执行前使用该占位实现：``resolve`` 抛出明确
-    错误，使被消费的作业快速失败而非静默成功。后续接入真实执行链路时，
-    将其替换为 ``hermes.workbench.projects.Router`` 即可。
+    content_team 已接入 ``ContentTeamRouter``（见 ``hermes.content_team.runtime``），
+    能真正执行发布/采集任务。本类不再被调度器使用，仅保留以避免破坏可能
+    存在的旧 import。
     """
 
     def resolve(self, project_id: str) -> Any:
@@ -74,7 +73,7 @@ def _build_scheduler(state_dir: Path | str | None = None) -> dict[str, Any]:
     resolved_dir = Path(state_dir) if state_dir is not None else _DEFAULT_STATE_DIR
     store = JobStore(state_dir=resolved_dir)
     queue = JobQueue()
-    router = _NoopRouter()
+    router = ContentTeamRouter()
     # 2 个守护线程 worker；WorkerPool.start() 内部以 daemon=True 创建线程
     pool = WorkerPool(size=2, router=router, queue=queue, store=store)
 

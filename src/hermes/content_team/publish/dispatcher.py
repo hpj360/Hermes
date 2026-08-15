@@ -24,7 +24,8 @@ from hermes.content_team.publish.adapters.douyin import DouyinAdapter
 from hermes.content_team.publish.adapters.wechat import WeChatOfficialAdapter
 from hermes.content_team.publish.adapters.wechat_video import WeChatVideoAdapter
 from hermes.content_team.publish.adapters.xiaohongshu import XiaohongshuAdapter
-from hermes.content_team.triggers import register_publish_trigger
+from hermes.content_team.triggers import delete_trigger, register_publish_trigger
+from hermes.workbench.triggers import CronScheduler
 
 
 def _datetime_to_cron(dt: datetime) -> str:
@@ -91,9 +92,26 @@ class PublishDispatcher:
 
         tasks: list[PublishTask] = []
 
+        # P1-8：定时发布任务写入数据库、Cron 触发器写入独立 JSON 存储，二者
+        # 非同一事务。预先校验 cron 表达式合法，并记录已注册的 trigger_id，
+        # 以便后续账号失败时可回滚已注册的触发器，避免产生孤儿触发器。
+        registered_trigger_ids: list[str] = []
+        if scheduled_at is not None:
+            cron_expr = _datetime_to_cron(scheduled_at)
+            try:
+                CronScheduler._matches_cron(cron_expr, datetime.now(timezone.utc))
+            except Exception as exc:  # noqa: BLE001 — 非法 cron 应在登记前拒绝
+                raise ValueError(f"非法定时时间，无法生成 cron 表达式: {exc}") from exc
+
         for account_id in platform_accounts:
             account = await self.db.get(PlatformAccount, account_id)
             if account is None:
+                # 回滚已注册的触发器（补偿语义：不留下孤儿 trigger）。
+                for tid in registered_trigger_ids:
+                    try:
+                        delete_trigger(tid)
+                    except Exception:  # noqa: BLE001
+                        pass
                 raise ValueError(f"平台账号不存在: {account_id}")
 
             task = PublishTask(
@@ -108,11 +126,23 @@ class PublishDispatcher:
                 task.scheduled_at = scheduled_at
                 task.status = PublishStatus.SCHEDULED
                 cron_expr = _datetime_to_cron(scheduled_at)
-                register_publish_trigger(
-                    cron_expr,
-                    str(content_id),
-                    account.platform.value,
-                )
+                try:
+                    trigger_id = register_publish_trigger(
+                        cron_expr,
+                        str(content_id),
+                        account.platform.value,
+                    )
+                    registered_trigger_ids.append(trigger_id)
+                except Exception as exc:  # noqa: BLE001
+                    # 注册失败：回滚已注册的触发器，避免部分成功的孤儿 trigger。
+                    for tid in registered_trigger_ids:
+                        try:
+                            delete_trigger(tid)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    raise ValueError(
+                        f"注册定时发布触发器失败: {exc}"
+                    ) from exc
                 log_event(
                     "publish_task_scheduled",
                     "发布任务已调度",
@@ -120,6 +150,7 @@ class PublishDispatcher:
                     content_id=str(content_id),
                     platform=account.platform.value,
                     scheduled_at=scheduled_at.isoformat(),
+                    trigger_id=trigger_id,
                 )
             else:
                 # 立即发布：调用适配器执行

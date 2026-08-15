@@ -397,6 +397,9 @@ async def test_manual_collect_single(client):
     # 微信公众号浏览量范围 100-10000
     assert 100 <= data["views"] <= 10_000
     assert data["engagement_rate"] > 0
+    # P1-7：指标必须标注来源（无真实适配器时回退为 simulation）。
+    assert "source" in data
+    assert data["source"] in ("adapter", "simulation")
 
 
 async def test_manual_collect_single_not_found(client):

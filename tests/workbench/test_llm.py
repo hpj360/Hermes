@@ -496,6 +496,49 @@ def test_stream_retries_transient_before_streaming() -> None:
     assert [c.content for c in chunks] == ["Hello", " world", ""]
 
 
+def test_stream_no_retry_after_partial_output() -> None:
+    """P1-6：一次 yield 出 chunk 后断流，不得重试并重复输出前缀。
+
+    模拟：第一次连接先吐出部分 chunk 再抛 URLError；若重试会返回完整 SSE
+    流，导致调用方收到重复前缀（Hello world Hello world）。修复后应在断流
+    处抛 LlmApiError，不再 yield 第二次结果。
+    """
+    import urllib.error
+
+    client = LlmClient(
+        base_url="https://api.example.com/v1",
+        api_key="k",
+        model="m",
+        retry_policy=LlmRetryPolicy(max_retries=2, base_delay=0.0, max_delay=0.0),
+    )
+
+    # 第一次连接 yield "Hello world" 后，下一次迭代再抛 URLError。
+    class _BoomStreamResp(_FakeStreamResp):
+        def __init__(self) -> None:
+            super().__init__(
+                [
+                    b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n",
+                    b"data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n",
+                ]
+            )
+
+        def __iter__(self):
+            yield self._lines[0]
+            yield self._lines[1]
+            raise urllib.error.URLError("connection reset")
+
+    seen: list[str] = []
+    with patch("urllib.request.urlopen", return_value=_BoomStreamResp()):
+        try:
+            for chunk in client.stream([LlmMessage(role="user", content="hi")]):
+                seen.append(chunk.content)
+        except LlmApiError:
+            pass
+    # 只收到第一段的部分内容，绝无第二段重复（重试被抑制）。
+    assert seen == ["Hello", " world"]
+
+
+
 # ---------------------------------------------------------------------------
 # token counting
 # ---------------------------------------------------------------------------

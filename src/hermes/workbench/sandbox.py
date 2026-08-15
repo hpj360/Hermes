@@ -42,6 +42,7 @@ DANGEROUS_IMPORTS = frozenset(
         "ftplib",
         "http.client",
         "http.server",
+        "http",
         "smtplib",
         "smtpd",
         "telnetlib",
@@ -49,6 +50,7 @@ DANGEROUS_IMPORTS = frozenset(
         "popen2",
         "urllib.request",
         "urllib2",
+        "urllib",
         "requests",
         "httpx",
         "aiohttp",
@@ -130,6 +132,8 @@ DANGEROUS_DUNDERS = frozenset(
         "__reduce__",
         "__reduce_ex__",
         "__getattribute__",
+        "__dict__",
+        "__getitem__",
     }
 )
 
@@ -164,16 +168,29 @@ class SandboxReport:
 
 
 def _open_writes(node: ast.Call) -> bool:
-    """Return True if an ``open``/``*.open`` call uses a write-ish mode."""
+    """Return True if an ``open``/``*.open`` call uses a write-ish mode.
+
+    A mode that is *not* a literal string (e.g. ``mode = "w"; open(f, mode)``)
+    is treated conservatively as a write: the sandbox must refuse what it
+    cannot prove is read-only (P1-5).
+    """
     mode = ""
+    literal_mode = True
     if len(node.args) >= 2:
         arg = node.args[1]
         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
             mode = arg.value
+        else:
+            literal_mode = False
     for kw in node.keywords:
-        if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
-            if isinstance(kw.value.value, str):
+        if kw.arg == "mode":
+            if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
                 mode = kw.value.value
+            else:
+                literal_mode = False
+    if not literal_mode:
+        # 非字面量 mode 无法静态判定只读 → 保守按写拒绝。
+        return True
     return any(c in _WRITE_MODE_CHARS for c in mode)
 
 
@@ -197,6 +214,22 @@ def _check_call(node: ast.Call) -> SandboxViolation | None:
             return SandboxViolation(node.lineno, "open() with a write/append mode")
         return None
 
+    # P1-5：``getattr(obj, "dangerous_attr")`` 双常量形式。能静态识别的绕过
+    # （如 ``getattr(os, "system")("cmd")``）必须被拦；识别不了的非字面量
+    # 形式在 SKILL.md 信任模型文档中声明为已知局限。
+    if isinstance(func, ast.Call) and isinstance(func.func, ast.Name):
+        if func.func.id == "getattr" and len(func.args) == 2:
+            obj, attr = func.args
+            if (
+                isinstance(obj, ast.Name)
+                and isinstance(attr, ast.Constant)
+                and isinstance(attr.value, str)
+                and (obj.id, attr.value) in DANGEROUS_ATTRIBUTE_CALLS
+            ):
+                return SandboxViolation(
+                    node.lineno,
+                    f"call to forbidden '{obj.id}.{attr.value}' via getattr",
+                )
     return None
 
 
@@ -247,12 +280,25 @@ def analyze_python_source(source: str) -> list[SandboxViolation]:
 def check_python_file(path: Path) -> SandboxReport:
     """Analyse the Python source at *path* and return a :class:`SandboxReport`.
 
-    A missing/unreadable file degrades to ``clean=True`` so the caller lets the
-    subprocess surface the real I/O error (the sandbox must not mask it).
+    A missing/unreadable file degrades to ``clean=False`` with a single
+    violation (P1-5)：Python 源文件带 PEP 263 编码声明（如 latin-1）时，
+    ``read_text(encoding="utf-8")`` 会抛 ``UnicodeDecodeError``，但解释器仍能
+    执行该文件。此前此处返回 ``clean=True`` 会**放行**这类文件；现在改为
+    拒绝，宁可误拒也不放过门。
     """
     try:
         source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return SandboxReport(clean=True, violations=[])
+    except OSError:
+        return SandboxReport(
+            clean=False,
+            violations=[SandboxViolation(0, "cannot read file to analyse")],
+        )
+    except UnicodeDecodeError:
+        return SandboxReport(
+            clean=False,
+            violations=[
+                SandboxViolation(0, "file is not UTF-8 (refusing to analyse)")
+            ],
+        )
     violations = analyze_python_source(source)
     return SandboxReport(clean=not violations, violations=violations)

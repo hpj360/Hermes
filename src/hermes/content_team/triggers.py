@@ -65,6 +65,16 @@ def register_daily_collection_trigger(cron_expr: str = "0 9 * * *") -> str:
         job_template={
             "type": "data_collection",
             "payload": {"action": "collect_metrics"},
+            # task 形状：worker 执行时经 ``_task_from_dict`` 恢复为
+            # ``task.goal`` 承载业务上下文（type=collect），并由
+            # ContentTeamTaskScheduler 分发到 MetricsCollector。
+            "task": {
+                "task_id": "content_team_collect",
+                "mode": "oneshot",
+                "max_rounds": 1,
+                "max_runs": 1,
+                "goal": {"type": "collect", "payload": {"action": "collect_metrics"}},
+            },
         },
         trigger_type="cron",
         config={"cron": cron_expr},
@@ -89,12 +99,22 @@ def register_publish_trigger(cron_expr: str, content_id: Any, platform: str) -> 
     :returns: 新建触发器的 trigger_id
     """
     store = get_trigger_store()
+    payload = {
+        "content_id": str(content_id),
+        "platform": platform,
+    }
     trigger = Trigger(
         job_template={
             "type": "publish",
-            "payload": {
-                "content_id": str(content_id),
-                "platform": platform,
+            "payload": payload,
+            # task 形状：goal 承载发布上下文，由 ContentTeamTaskScheduler
+            # 分发到 PublishDispatcher.dispatch 真正执行发布。
+            "task": {
+                "task_id": "content_team_publish",
+                "mode": "oneshot",
+                "max_rounds": 1,
+                "max_runs": 1,
+                "goal": {"type": "publish", "payload": payload},
             },
         },
         trigger_type="cron",
@@ -153,10 +173,11 @@ def delete_trigger(trigger_id: str) -> bool:
 
 
 def _get_submit_callback() -> Callable[[ScheduledJob], None]:
-    """获取提交回调：优先使用 content_team.scheduler 的 JobQueue.put。
+    """获取提交回调：把触发的 job 持久化后入 content_team.scheduler 的队列。
 
-    ``hermes.content_team.scheduler`` 可能尚未实现，此时回退为 no-op 回调，
-    保证 CronScheduler 守护线程仍可启动并扫描触发器（仅不实际入队）。
+    与 workbench 调度中心的 ``_submit_fired_job`` 保持一致：fired job 必须先
+    ``JobStore.save``（否则 /jobs 不可见、崩溃后无法恢复），再入队。
+    ``content_team.scheduler`` 不可用时回退为 no-op 回调（仅不实际入队）。
     """
     try:
         from hermes.content_team.scheduler import get_scheduler
@@ -166,12 +187,25 @@ def _get_submit_callback() -> Callable[[ScheduledJob], None]:
     if get_scheduler is not None:
         try:
             components = get_scheduler()
-            # 兼容对象（.queue）与字典（["queue"]）两种返回形式
             queue = getattr(components, "queue", None)
             if queue is None and isinstance(components, dict):
                 queue = components.get("queue")
+            store = None
+            if isinstance(components, dict):
+                store = components.get("store")
+            elif hasattr(components, "store"):
+                store = components.store
             if queue is not None and hasattr(queue, "put"):
-                return queue.put  # type: ignore[no-any-return]
+
+                def _submit(job: ScheduledJob) -> None:
+                    from hermes.workbench.scheduler import JobStatus
+
+                    job.status = JobStatus.QUEUED
+                    if store is not None and hasattr(store, "save"):
+                        store.save(job)
+                    queue.put(job)
+
+                return _submit
         except Exception:
             pass  # 回退到 no-op
 

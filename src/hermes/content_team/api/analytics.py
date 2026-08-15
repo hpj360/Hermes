@@ -49,6 +49,7 @@ class MetricResponse(BaseModel):
     followers_gained: int
     followers_lost: int
     engagement_rate: float
+    source: str = "simulation"
     created_at: datetime
 
 

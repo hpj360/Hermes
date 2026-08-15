@@ -25,6 +25,8 @@ from hermes.workbench.scheduler import (
     JobQueue,
     JobStatus,
     JobStore,
+    RunningJobsRegistry,
+    _default_running_jobs,
     _now_iso,
 )
 
@@ -41,6 +43,11 @@ class DependencyGraph:
       state. The worker is responsible for persisting the job's final status
       to ``JobStore`` *before* invoking this callback (so ``ready_to_queue``
       sees the updated upstream status).
+
+    持久化：依赖边以 ``JobStore`` 中每个 job 的 ``depends_on`` 字段为唯一
+    真相源（P1-2 修复）。``_deps`` / ``_dependents`` 仅作为内存索引缓存，
+    但 ``on_job_done`` / ``_cascade_cancel`` 会从 store 反查下游，因此进程
+    重启后依赖关系不会丢失。
     """
 
     def __init__(
@@ -48,13 +55,15 @@ class DependencyGraph:
         store: JobStore,
         queue: JobQueue,
         bus: Any = None,  # StatusBus, optional
+        running_jobs: RunningJobsRegistry | None = None,
     ) -> None:
-        self._deps: dict[str, list[str]] = {}        # job_id -> depends_on
-        self._dependents: dict[str, list[str]] = {}   # job_id -> who depends on it
+        self._deps: dict[str, list[str]] = {}        # job_id -> depends_on (cache)
+        self._dependents: dict[str, list[str]] = {}   # job_id -> who depends on it (cache)
         self._lock = threading.Lock()
         self._store = store
         self._queue = queue
         self._bus = bus
+        self._running_jobs = running_jobs if running_jobs is not None else _default_running_jobs
         self._max_depth = 10
 
     # ------------------------------------------------------------------
@@ -80,8 +89,32 @@ class DependencyGraph:
                     f"would create a cycle"
                 )
             self._deps[job_id] = list(depends_on)
+            # 去重：重复注册同一依赖不会在 dependents 列表里产生重复项（P2-4）。
             for dep in depends_on:
-                self._dependents.setdefault(dep, []).append(job_id)
+                dependents = self._dependents.setdefault(dep, [])
+                if job_id not in dependents:
+                    dependents.append(job_id)
+
+    def _downstreams_from_store(self, job_id: str) -> list[str]:
+        """扫描 JobStore，返回所有 ``depends_on`` 包含 *job_id* 的下游 job_id。
+
+        以 store 为真相源，进程重启后依赖关系不丢失（P1-2）。同时用内存
+        ``_dependents`` 缓存补齐（可能含尚未落库的新 job）。
+        """
+        with self._lock:
+            cached = list(self._dependents.get(job_id, []))
+        downstreams: list[str] = []
+        seen: set[str] = set()
+        for j in self._store.list():
+            for dep in j.depends_on:
+                if dep == job_id and j.job_id not in seen:
+                    downstreams.append(j.job_id)
+                    seen.add(j.job_id)
+        for jid in cached:
+            if jid not in seen:
+                downstreams.append(jid)
+                seen.add(jid)
+        return downstreams
 
     def ready_to_queue(self, job_id: str) -> bool:
         """Return True iff every dep of ``job_id`` is SUCCEEDED.
@@ -90,6 +123,10 @@ class DependencyGraph:
         """
         with self._lock:
             deps = list(self._deps.get(job_id, []))
+        if not deps:
+            # 回退到 store 中持久化的 depends_on（P1-2）。
+            stored = self._store.get(job_id)
+            deps = list(stored.depends_on) if stored is not None else []
         if not deps:
             return True
         for dep_id in deps:
@@ -105,8 +142,7 @@ class DependencyGraph:
         - FAILED/CANCELLED/TIMEOUT/ABANDONED: cascade-cancel all downstreams.
         - Other statuses (PENDING/QUEUED/RUNNING): no-op.
         """
-        with self._lock:
-            downstreams = list(self._dependents.get(job_id, []))
+        downstreams = self._downstreams_from_store(job_id)
         if not downstreams:
             return
         if status == JobStatus.SUCCEEDED:
@@ -204,11 +240,12 @@ class DependencyGraph:
         Raises ``ValidationError`` if depth exceeds ``_max_depth``.
         """
         if depth > self._max_depth:
+            # P2-4：超深时记录而非静默吞掉——但这里没有 memory 句柄，抛出
+            # 由 worker 兜底（不阻断其它下游的取消）。
             raise ValidationError(
                 f"cascade cancel depth {depth} exceeds limit {self._max_depth}"
             )
-        with self._lock:
-            downstreams = list(self._dependents.get(job_id, []))
+        downstreams = self._downstreams_from_store(job_id)
         job = self._store.get(job_id)
         if job is not None and not job.status.is_terminal():
             exec_record = JobExecution(
@@ -223,5 +260,8 @@ class DependencyGraph:
             self._store.save(job)
             if self._bus is not None:
                 self._bus.emit(job)
+        # P1-2：真正中断 RUNNING 中的任务——置位其 cancel_event，令运行中的
+        # worker 在 run() 返回时把状态记为 CANCELLED 而非 SUCCEEDED 覆盖。
+        self._running_jobs.cancel(job_id)
         for dep_id in downstreams:
             self._cascade_cancel(dep_id, reason, depth=depth + 1)

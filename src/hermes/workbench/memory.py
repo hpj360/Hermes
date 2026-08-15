@@ -30,6 +30,7 @@ from typing import Any
 from hermes.workbench.persistence import (
     atomic_append_jsonl,
     atomic_write_json,
+    atomic_write_text,
     safe_read_json,
 )
 
@@ -129,6 +130,9 @@ class MemoryService:
         self._embeddings_path = state_dir / "embeddings.json"
         self._profile_loader = profile_loader
         self._profile_saver = profile_saver
+        # P1-4：facts/ttls/embeddings 的读改写与 episodes 的重写都是非原子的
+        # read-modify-write，HTTP 线程池并发时存在丢失更新。统一用一把锁保护。
+        self._lock = threading.Lock()
 
         # Enhanced features
         self._fts = FTS5Index(state_dir)
@@ -149,15 +153,16 @@ class MemoryService:
         If *ttl* is given, the fact expires after *ttl* seconds and
         ``get_fact`` / ``list_facts`` will automatically purge it.
         """
-        facts = self._read_facts()
-        facts[key] = value
-        atomic_write_json(self._facts_path, facts)
-        ttls = self._read_fact_ttls()
-        if ttl is not None:
-            ttls[key] = time.time() + ttl
-        else:
-            ttls.pop(key, None)
-        atomic_write_json(self._fact_ttls_path, ttls)
+        with self._lock:
+            facts = self._read_facts()
+            facts[key] = value
+            atomic_write_json(self._facts_path, facts)
+            ttls = self._read_fact_ttls()
+            if ttl is not None:
+                ttls[key] = time.time() + ttl
+            else:
+                ttls.pop(key, None)
+            atomic_write_json(self._fact_ttls_path, ttls)
 
     def get_fact(self, key: str) -> dict[str, Any] | None:
         """Return ``{"key": key, "value": value}`` for *key*, or None if absent."""
@@ -175,16 +180,17 @@ class MemoryService:
 
     def forget_fact(self, key: str) -> bool:
         """Delete fact *key*. Returns True if it existed."""
-        facts = self._read_facts()
-        if key not in facts:
-            return False
-        del facts[key]
-        atomic_write_json(self._facts_path, facts)
-        ttls = self._read_fact_ttls()
-        if key in ttls:
-            del ttls[key]
-            atomic_write_json(self._fact_ttls_path, ttls)
-        return True
+        with self._lock:
+            facts = self._read_facts()
+            if key not in facts:
+                return False
+            del facts[key]
+            atomic_write_json(self._facts_path, facts)
+            ttls = self._read_fact_ttls()
+            if key in ttls:
+                del ttls[key]
+                atomic_write_json(self._fact_ttls_path, ttls)
+            return True
 
     def _read_facts(self) -> dict[str, Any]:
         data = safe_read_json(self._facts_path, default={})
@@ -200,23 +206,24 @@ class MemoryService:
 
     def _purge_expired_facts(self, only_key: str | None = None) -> None:
         """Remove facts whose TTL has elapsed. If *only_key* is given, only check that key."""
-        ttls = self._read_fact_ttls()
-        if not ttls:
-            return
-        now = time.time()
-        keys_to_check = [only_key] if only_key is not None else list(ttls.keys())
-        expired = [k for k in keys_to_check if k in ttls and now > ttls[k]]
-        if not expired:
-            return
-        facts = self._read_facts()
-        changed = False
-        for k in expired:
-            facts.pop(k, None)
-            ttls.pop(k, None)
-            changed = True
-        if changed:
-            atomic_write_json(self._facts_path, facts)
-            atomic_write_json(self._fact_ttls_path, ttls)
+        with self._lock:
+            ttls = self._read_fact_ttls()
+            if not ttls:
+                return
+            now = time.time()
+            keys_to_check = [only_key] if only_key is not None else list(ttls.keys())
+            expired = [k for k in keys_to_check if k in ttls and now > ttls[k]]
+            if not expired:
+                return
+            facts = self._read_facts()
+            changed = False
+            for k in expired:
+                facts.pop(k, None)
+                ttls.pop(k, None)
+                changed = True
+            if changed:
+                atomic_write_json(self._facts_path, facts)
+                atomic_write_json(self._fact_ttls_path, ttls)
 
     # ------------------------------------------------------------------
     # L2 — Episodes
@@ -337,20 +344,21 @@ class MemoryService:
         always scans every TTL entry and returns a count, making it suitable
         for periodic background maintenance.
         """
-        ttls = self._read_fact_ttls()
-        if not ttls:
-            return 0
-        now = time.time()
-        expired = [k for k, exp in ttls.items() if now > exp]
-        if not expired:
-            return 0
-        facts = self._read_facts()
-        for k in expired:
-            facts.pop(k, None)
-            ttls.pop(k, None)
-        atomic_write_json(self._facts_path, facts)
-        atomic_write_json(self._fact_ttls_path, ttls)
-        return len(expired)
+        with self._lock:
+            ttls = self._read_fact_ttls()
+            if not ttls:
+                return 0
+            now = time.time()
+            expired = [k for k, exp in ttls.items() if now > exp]
+            if not expired:
+                return 0
+            facts = self._read_facts()
+            for k in expired:
+                facts.pop(k, None)
+                ttls.pop(k, None)
+            atomic_write_json(self._facts_path, facts)
+            atomic_write_json(self._fact_ttls_path, ttls)
+            return len(expired)
 
     # ------------------------------------------------------------------
     # Enhanced search: FTS5
@@ -409,8 +417,9 @@ class MemoryService:
         result = self._embed.embed(text)
         if result is None:
             return None
-        self._embedding_cache[episode.id] = result.vector
-        self._save_embeddings()
+        with self._lock:
+            self._embedding_cache[episode.id] = result.vector
+            self._save_embeddings()
         return result.vector
 
     def _load_embeddings(self) -> dict[str, list[float]]:
@@ -655,7 +664,7 @@ class MemoryService:
             else:
                 remaining_l2.extend(summaries)
 
-        # --- Rewrite episodes file ---
+        # --- Rewrite episodes file (P1-4：原子重写，避免崩溃留下半写 JSONL) ---
         # Order: L3 abstracts (oldest) → L2 summaries → recent (newest).
         # Other-kind episodes are appended verbatim (reversed to oldest-first,
         # matching list_episodes' newest-first return order).
@@ -679,9 +688,11 @@ class MemoryService:
                     ensure_ascii=False,
                 )
             )
-        self._episodes_path.write_text(
-            "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8"
-        )
+        with self._lock:
+            atomic_write_text(
+                self._episodes_path,
+                "\n".join(lines) + ("\n" if lines else ""),
+            )
 
         # Rebuild FTS5 index from the compacted episodes
         self._fts.rebuild(to_write)
@@ -734,7 +745,7 @@ class MemoryService:
                 },
             )
 
-        # Rewrite the hot file with only the active episodes.
+        # Rewrite the hot file with only the active episodes (P1-4：原子重写).
         lines = [
             json.dumps(
                 {
@@ -748,9 +759,11 @@ class MemoryService:
             )
             for ep in active
         ]
-        self._episodes_path.write_text(
-            "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8"
-        )
+        with self._lock:
+            atomic_write_text(
+                self._episodes_path,
+                "\n".join(lines) + ("\n" if lines else ""),
+            )
 
         # FTS index must reflect only the active set.
         self._fts.rebuild(active)
@@ -1060,7 +1073,10 @@ class MemosClient:
         return result is not None
 
     def search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
-        result = self._request("GET", f"/api/search?q={query}&limit={limit}")
+        from urllib.parse import urlencode
+
+        qs = urlencode({"q": query, "limit": limit})
+        result = self._request("GET", f"/api/search?{qs}")
         if result and isinstance(result, dict):
             results = result.get("results", [])
             return results if isinstance(results, list) else []

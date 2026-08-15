@@ -69,6 +69,11 @@ class ContentMetric(Base):
     engagement_rate: Mapped[float] = mapped_column(
         sa.Float, nullable=False, default=0.0
     )
+    # P1-7：指标来源标注。"adapter"=真实平台回采，"simulation"=固定种子模拟。
+    # 落库而非仅写日志，使用户/API/仪表盘能区分真实数据与模拟数据。
+    source: Mapped[str] = mapped_column(
+        sa.String(20), nullable=False, default="simulation"
+    )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, default=_utcnow
     )

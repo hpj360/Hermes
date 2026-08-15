@@ -124,12 +124,47 @@ def test_check_python_file_flagged(tmp_path: Path) -> None:
     assert report.violations
 
 
-def test_check_python_file_missing_degrades_clean(tmp_path: Path) -> None:
+def test_check_python_file_missing_refuses(tmp_path: Path) -> None:
+    # P1-5：缺失文件不再静默 clean=True，改为拒绝（防编码头/path 绕过）。
     report = check_python_file(tmp_path / "nope.py")
-    assert report.clean is True
-    assert report.violations == []
+    assert report.clean is False
+    assert report.violations
 
 
-def test_check_python_file_unreadable_degrades_clean(tmp_path: Path) -> None:
+def test_check_python_file_unreadable_refuses(tmp_path: Path) -> None:
     report = check_python_file(tmp_path)  # a directory, not a file
-    assert report.clean is True
+    assert report.clean is False
+
+
+def test_check_python_file_non_utf8_refuses(tmp_path: Path) -> None:
+    # P1-5：带非 UTF-8 编码（如 latin-1）的源文件解释器可执行，但 read_text
+    # 会抛 UnicodeDecodeError；门必须拒绝而非放行。
+    f = tmp_path / "run.py"
+    f.write_bytes("# coding: latin-1\nprint('caf\xe9')\n".encode("latin-1"))
+    report = check_python_file(f)
+    assert report.clean is False
+
+
+# ---------------------------------------------------------------------------
+# P1-5: new bypass cases must be flagged
+# ---------------------------------------------------------------------------
+
+
+def test_import_urllib_root_flagged() -> None:
+    msgs = _violations("import urllib\nurllib.request.urlopen('http://x')\n")
+    assert any("urllib" in m for m in msgs)
+
+
+def test_os_dict_system_flagged() -> None:
+    msgs = _violations("import os\nos.__dict__['system']('id')\n")
+    assert any("__dict__" in m for m in msgs)
+
+
+def test_getattr_os_system_flagged() -> None:
+    msgs = _violations("import os\ngetattr(os, 'system')('id')\n")
+    assert any("os.system" in m for m in msgs)
+
+
+def test_open_variable_mode_flagged() -> None:
+    msgs = _violations("mode = 'w'\nopen('/tmp/x', mode)\n")
+    assert any("open" in m for m in msgs)
