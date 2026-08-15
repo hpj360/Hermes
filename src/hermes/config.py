@@ -23,6 +23,20 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _project_root() -> Path:
+    """Resolve the project/data root for default paths.
+
+    P2-1：``Path(__file__).resolve().parents[2]`` 在 pip 安装后指向
+    ``site-packages`` 的上两级（即 Python 安装目录旁），写入 ``.state`` /
+    ``.cache`` 会污染系统目录。优先读 ``HERMES_DATA_DIR`` 环境变量；未设置时
+    回退到源码树（``parents[2]``）保持开发态兼容。
+    """
+    env = os.environ.get("HERMES_DATA_DIR", "").strip()
+    if env:
+        return Path(env)
+    return Path(__file__).resolve().parents[2]
+
+
 class Settings(BaseSettings):
     """Application settings inherited from the main project environments."""
 
@@ -30,6 +44,20 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    def __repr__(self) -> str:
+        """脱敏 repr：不打印任何 API key / token / 凭据值（P2-11）。
+
+        用字段名后缀启发式识别敏感字段并掩码为 ``<redacted>``，避免
+        ``print(settings)`` 或日志把明文密钥写进终端/日志。
+        """
+        sensitive = ("key", "token", "secret", "password", "credential", "apikey")
+        parts: list[str] = []
+        for name, value in self.__dict__.items():
+            n = name.lower()
+            shown = "<redacted>" if any(s in n for s in sensitive) else repr(value)
+            parts.append(f"{name}={shown}")
+        return f"Settings({', '.join(parts)})"
 
     # -------------------------------------------------------------------------
     # OpenClaw gateway
@@ -176,19 +204,19 @@ class Settings(BaseSettings):
         alias="HERMES_MAIN_REPO_PATH",
     )
     hermes_project_root: Path = Field(
-        default=Path(__file__).resolve().parents[2],
+        default=_project_root(),
         alias="HERMES_PROJECT_ROOT",
     )
     hermes_state_dir: Path = Field(
-        default=Path(__file__).resolve().parents[2] / ".state",
+        default=_project_root() / ".state",
         alias="HERMES_STATE_DIR",
     )
     hermes_cache_dir: Path = Field(
-        default=Path(__file__).resolve().parents[2] / ".cache",
+        default=_project_root() / ".cache",
         alias="HERMES_CACHE_DIR",
     )
     hermes_profile_path: Path = Field(
-        default=Path(__file__).resolve().parents[2] / "data" / "profile.json",
+        default=_project_root() / "data" / "profile.json",
         alias="HERMES_PROFILE_PATH",
     )
     # MemOS local plugin integration
@@ -204,15 +232,12 @@ class Settings(BaseSettings):
     # provider is one of: zai/glm, ollama, openai, openrouter, moonshot, etc.
     # (any name returned by Settings.configured_providers()).
     hermes_llm_provider: str = Field(default="ollama", alias="HERMES_LLM_PROVIDER")
-    hermes_llm_model: str = Field(default="gpt-3.5-turbo", alias="HERMES_LLM_MODEL")
+    # P2-13：默认 provider=ollama（本地）时，默认 model 必须匹配本地 ollama
+    # 通用模型，避免 gpt-3.5-turbo 在本地 ollama 下必然 model-not-found。
+    hermes_llm_model: str = Field(default="llama3.2", alias="HERMES_LLM_MODEL")
     hermes_llm_timeout: float = Field(default=60.0, alias="HERMES_LLM_TIMEOUT")
     hermes_llm_temperature: float = Field(default=0.2, alias="HERMES_LLM_TEMPERATURE")
 
-    # ADR-0017: 直连 LLM 路径（workbench.llm）的轨迹记录开关（opt-in）。
-    # Orchestrator 派发路径的轨迹默认始终开启，不受此开关门控。
-    hermes_llm_trajectory_enabled: bool = Field(
-        default=False, alias="HERMES_LLM_TRAJECTORY_ENABLED"
-    )
     # ADR-0018: 用户自定义 Agent Preset 目录。None = 使用 hermes_state_dir/presets。
     hermes_presets_dir: str | None = Field(default=None, alias="HERMES_PRESETS_DIR")
 
@@ -282,8 +307,7 @@ def load_hermes_env() -> None:
     Existing non-empty environment variables are never overwritten so that
     explicit exports always win.
     """
-    project_root = Path(__file__).resolve().parents[2]
-    env_file = project_root / ".env"
+    env_file = _project_root() / ".env"
     if env_file.exists():
         load_dotenv(env_file, override=False, verbose=False)
 

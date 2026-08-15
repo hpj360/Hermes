@@ -308,7 +308,10 @@ class CronScheduler:
             try:
                 self._scan()
             except Exception:  # noqa: BLE001 - scan must not kill the loop
-                pass
+                import logging
+
+                # P2-10：扫描异常不得静默吞掉——记录日志便于排障。
+                logging.getLogger(__name__).exception("cron scan failed")
             if self._stop.wait(self._scan_interval):
                 break
 
