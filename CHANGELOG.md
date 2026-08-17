@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- P2-3 `JobStore.save` 增加"终态保护"——不再用陈旧内存对象的不同终态覆盖数据库里
+  由另一 actor 写入的终态（如 DAG cascade-cancel 的 CANCELLED 被 worker SUCCEEDED
+  覆盖）；worker 兜底 FAILED 路径补记 `JobExecution`（此前只翻状态无审计）。
+- P2-8 Cron 触发器的分秒去重键从内存 `_last_fired` 迁移到 `Trigger.last_fired_at`
+  （持久化，重启同分钟内不再 double-fire）；`_scan` 改用 UTC 时间（与 job 时间戳
+  统一，cron 表达式按 UTC 解释）。
+- P2-12 新增 `docs/adr/README.md`，说明编号缺口 0011/0012 的跳号原因。
+
 ### Security
 
 - `server.py` `/ima/files` 校验 `file_path` 必须位于项目根内，堵住任意本地文件

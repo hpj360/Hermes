@@ -79,6 +79,14 @@ def _wait_for_calls(mock: MagicMock, count: int, timeout: float = 3.0) -> bool:
     return mock.call_count >= count
 
 
+def _clear_dedup(store: TriggerStore, trigger_id: str) -> None:
+    """Reset the persisted per-minute dedup key so a fresh scan would re-fire."""
+    t = store.get(trigger_id)
+    assert t is not None
+    t.last_fired_at = ""
+    store.save(t)
+
+
 # ---------------------------------------------------------------------------
 # Trigger dataclass
 # ---------------------------------------------------------------------------
@@ -396,14 +404,14 @@ class TestCronScheduler:
 
             # 2. Disable + clear dedup so a fresh scan would fire if not disabled.
             store.update_enabled(cron_trigger.trigger_id, False)
-            sched._last_fired.clear()
+            _clear_dedup(store, cron_trigger.trigger_id)
             fired_after_disable = callback.call_count
             time.sleep(0.3)
             assert callback.call_count == fired_after_disable  # no new fires
 
             # 3. Re-enable + clear dedup; should fire again.
             store.update_enabled(cron_trigger.trigger_id, True)
-            sched._last_fired.clear()
+            _clear_dedup(store, cron_trigger.trigger_id)
             assert _wait_for_calls(callback, fired_after_disable + 1, timeout=3.0)
         finally:
             sched.stop()

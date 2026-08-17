@@ -406,6 +406,25 @@ class JobStore:
     def save(self, job: ScheduledJob) -> None:
         conn = self._conn
         payload = job.to_dict()
+        # Lost-update guard (P2-3): never overwrite a *terminal* status already
+        # persisted by another actor (e.g. a DAG cascade-cancel setting CANCELLED
+        # while the worker finishes with SUCCEEDED) with a different terminal
+        # status from a stale in-memory object. Terminal → non-terminal (retry)
+        # and non-terminal → anything still pass through.
+        row = conn.execute(
+            "SELECT status FROM jobs WHERE job_id = ?", (job.job_id,)
+        ).fetchone()
+        if row is not None:
+            try:
+                existing = JobStatus(row[0])
+                if (
+                    existing.is_terminal()
+                    and job.status.is_terminal()
+                    and existing != job.status
+                ):
+                    return
+            except ValueError:
+                pass  # unknown legacy status → proceed with the write
         conn.execute(
             "INSERT OR REPLACE INTO jobs(job_id, status, target_project, payload) "
             "VALUES (?, ?, ?, ?)",
@@ -664,9 +683,20 @@ class WorkerPool:
             try:
                 self._execute(job)
             except Exception:  # noqa: BLE001 - boundary
-                # Worker must not die; mark job FAILED as last resort
+                # Worker must not die; mark job FAILED as last resort.
+                # P2-3: record a JobExecution so the failure is auditable,
+                # not just a bare status flip.
                 try:
                     job.status = JobStatus.FAILED
+                    job.attempts.append(
+                        JobExecution(
+                            attempt_num=len(job.attempts),
+                            started_at=_now_iso(),
+                            ended_at=_now_iso(),
+                            status=JobStatus.FAILED,
+                            error="worker exception (unhandled)",
+                        )
+                    )
                     self._store.save(job)
                     self._bus.emit(job)
                 except Exception:  # noqa: BLE001

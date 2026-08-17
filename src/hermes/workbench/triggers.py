@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, List
 
@@ -111,6 +111,9 @@ class Trigger:
     config: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
     created_at: str = ""
+    # P2-8: per-minute dedup key (UTC "YYYY-MM-DD HH:MM"), persisted so a
+    # process restart within the same minute cannot double-fire.
+    last_fired_at: str = ""
 
     def __post_init__(self) -> None:
         if not self.trigger_id:
@@ -126,6 +129,7 @@ class Trigger:
             "config": self.config,
             "enabled": self.enabled,
             "created_at": self.created_at,
+            "last_fired_at": self.last_fired_at,
         }
 
     @classmethod
@@ -137,6 +141,7 @@ class Trigger:
             config=dict(data.get("config", {})),
             enabled=bool(data.get("enabled", True)),
             created_at=data.get("created_at", ""),
+            last_fired_at=data.get("last_fired_at", ""),
         )
 
 
@@ -230,7 +235,6 @@ class CronScheduler:
         self._submit = submit_callback
         self._scan_interval = scan_interval
         self._stop = threading.Event()
-        self._last_fired: dict[str, str] = {}  # trigger_id -> "YYYY-MM-DD HH:MM"
         self._thread: threading.Thread | None = None
 
     # -- cron matching ------------------------------------------------------
@@ -316,11 +320,14 @@ class CronScheduler:
                 break
 
     def _scan(self) -> None:
-        now = datetime.now()
+        # UTC time keeps cron matching consistent with job timestamps (which
+        # use UTC via _now_iso / scheduler._now_iso). Cron expressions are
+        # therefore interpreted in UTC.
+        now = datetime.now(timezone.utc)
         minute_key = now.strftime("%Y-%m-%d %H:%M")
         for trigger in self._store.list_enabled_cron():
-            tid = trigger.trigger_id
-            if self._last_fired.get(tid) == minute_key:
+            # P2-8: dedup key persisted on the trigger (survives restart).
+            if trigger.last_fired_at == minute_key:
                 continue  # already fired this minute
             expr = trigger.config.get("cron", "")
             if not expr:
@@ -330,7 +337,11 @@ class CronScheduler:
             except Exception:  # noqa: BLE001 - skip bad expressions
                 continue
             if matched:
-                self._last_fired[tid] = minute_key
+                trigger.last_fired_at = minute_key
+                try:
+                    self._store.save(trigger)
+                except Exception:  # noqa: BLE001 - dedup persistence best-effort
+                    pass
                 self._instantiate_and_submit(trigger)
 
     def _instantiate_and_submit(self, trigger: Trigger) -> bool:
