@@ -1,0 +1,16 @@
+{
+  "_comment": "MCP servers config for `hermes mcp` (copy to mcp.json / set HERMES_MCP_CONFIG).",
+  "servers": {
+    "open-design": {
+      "_note": "Open Design 接入：先安装 od（https://open-design.ai），运行 `od mcp install hermes --print` 获取真实接入命令（其会输出该 agent 的 MCP server 启动方式与工具集），再用输出替换下方 command/args。上方 --print 为 dry-run，不会改动任何配置。",
+      "command": "od",
+      "args": ["mcp", "server"]
+    },
+    "example-remote": {
+      "url": "https://your-mcp-server.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer REPLACE_ME"
+      }
+    }
+  }
+}
