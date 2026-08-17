@@ -25,14 +25,18 @@ from collections import Counter, deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from hermes.workbench.memory_backend import LocalRRFBackend, MemoryBackend
 from hermes.workbench.persistence import (
     atomic_append_jsonl,
     atomic_write_json,
     atomic_write_text,
     safe_read_json,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - type-check only
+    from hermes.workbench.memory_sync import MemorySyncService
 
 logger = logging.getLogger("hermes.workbench.memory")
 
@@ -41,14 +45,41 @@ logger = logging.getLogger("hermes.workbench.memory")
 # ---------------------------------------------------------------------------
 
 _TOKEN_RE = re.compile(r"\w+")
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+# M4: polarity markers used by the rule-based (human-gated) conflict detector.
+# These signal "state changed" language in episode summaries; a shared subject
+# token between two same-kind episodes where the newer one carries a marker is
+# surfaced as a conflict *candidate* for human resolution.
+_POLARITY_MARKERS = (
+    "不要",
+    "不再",
+    "改为",
+    "撤销",
+    "取消",
+    "changed",
+    "reverted",
+    "no longer",
+    "instead",
+)
 
 # Guards concurrent first-touch schema creation on the FTS5 index.
 _FTS_SCHEMA_LOCK = threading.Lock()
 
 
 def _tokenize(text: str) -> list[str]:
-    """Simple tokenizer: lowercase, split on non-alphanumeric characters."""
-    return _TOKEN_RE.findall(text.lower())
+    """Simple tokenizer: lowercase, split on non-alphanumeric characters.
+
+    For unsegmented CJK (no spaces between words), additionally emit character
+    bigrams so Chinese phrases become searchable sub-tokens — Hermes deals with
+    Chinese content (WeChat/Douyin/Xiaohongshu) where ``\\w+`` would otherwise
+    collapse an entire phrase into one token.
+    """
+    lowered = text.lower()
+    tokens = _TOKEN_RE.findall(lowered)
+    cjk = "".join(_CJK_RE.findall(lowered))
+    tokens.extend(cjk[i : i + 2] for i in range(len(cjk) - 1))
+    return tokens
 
 
 def _compute_tfidf(documents: list[list[str]]) -> list[dict[str, float]]:
@@ -121,6 +152,8 @@ class MemoryService:
         *,
         embed_client: EmbeddingClient | None = None,
         memos_config: MemosConfig | None = None,
+        backend: MemoryBackend | None = None,
+        sync: MemorySyncService | None = None,
     ) -> None:
         self.state_dir = state_dir
         self.state_dir.mkdir(parents=True, exist_ok=True)
@@ -130,6 +163,9 @@ class MemoryService:
         self._embeddings_path = state_dir / "embeddings.json"
         self._profile_loader = profile_loader
         self._profile_saver = profile_saver
+        # M4：可替换检索后端（默认本地 RRF 基线）与异步抽取管道。
+        self._backend: MemoryBackend = backend or LocalRRFBackend(self)
+        self._sync: MemorySyncService | None = sync
         # P1-4：facts/ttls/embeddings 的读改写与 episodes 的重写都是非原子的
         # read-modify-write，HTTP 线程池并发时存在丢失更新。统一用一把锁保护。
         self._lock = threading.Lock()
@@ -252,6 +288,12 @@ class MemoryService:
                 self._memos.ingest(episode)
             except Exception:  # noqa: BLE001
                 pass
+        # M4: enqueue for async backend indexing (best-effort, non-blocking).
+        if self._sync is not None:
+            try:
+                self._sync.enqueue(episode)
+            except Exception:  # noqa: BLE001
+                logger.exception("memory sync enqueue failed for episode %s", episode.id)
 
     def list_episodes(self, kind: str | None = None, limit: int = 1000) -> list[Episode]:
         """Return recorded episodes, optionally filtered by *kind*.
@@ -449,17 +491,19 @@ class MemoryService:
         limit: int = 10,
         kind: str | None = None,
         k: int = 60,
+        backend_weight: float = 2.0,
     ) -> list[tuple[Episode, float]]:
-        """Hybrid episode search using Reciprocal Rank Fusion (4 signals).
+        """Hybrid episode search using Reciprocal Rank Fusion (up to 5 signals).
 
-        Fuses four retrieval signals:
+        Fuses five retrieval signals:
           1. Exact substring match (case-insensitive) on summary + details
           2. TF-IDF cosine similarity (semantic-ish keyword overlap)
           3. FTS5 BM25 full-text search (sqlite3)
           4. Vector embedding cosine similarity (Ollama, optional)
+          5. External memory backend (Mem0, etc., optional; weighted higher)
 
-        RRF score = sum(1 / (k + rank)) across ranked lists. Signals 4 is
-        only included when Ollama is available.
+        RRF score = sum(weight / (k + rank)) across ranked lists. Signals 4
+        and 5 are only included when their backends are available.
         """
         if not query or not query.strip():
             return []
@@ -502,12 +546,21 @@ class MemoryService:
                 ep.id: rank for rank, (ep, _score) in enumerate(semantic_results)
             }
 
-        # Fuse via RRF
-        all_signals = [sub_ranks, tfidf_ranks, fts_ranks]
+        # Signal 5: external memory backend (Mem0, etc.), optional.
+        backend_ranks = self._external_backend_ranks(query, kind, len(episodes))
+
+        # Fuse via RRF. The backend signal carries a higher weight (ADR-0021).
+        all_signals: list[tuple[dict[str, int], float]] = [
+            (sub_ranks, 1.0),
+            (tfidf_ranks, 1.0),
+            (fts_ranks, 1.0),
+        ]
         if semantic_ranks:
-            all_signals.append(semantic_ranks)
-        all_ids = set(sub_ranks)
-        for ranks in all_signals[1:]:
+            all_signals.append((semantic_ranks, 1.0))
+        if backend_ranks:
+            all_signals.append((backend_ranks, backend_weight))
+        all_ids: set[str] = set(sub_ranks)
+        for ranks, _weight in all_signals[1:]:
             all_ids |= set(ranks)
         if not all_ids:
             return []
@@ -515,14 +568,67 @@ class MemoryService:
         fused: list[tuple[Episode, float]] = []
         for ep_id in all_ids:
             score = 0.0
-            for ranks in all_signals:
+            for ranks, weight in all_signals:
                 if ep_id in ranks:
-                    score += 1.0 / (k + ranks[ep_id])
+                    score += weight / (k + ranks[ep_id])
             found_ep = id_to_ep.get(ep_id)
             if found_ep is not None:
                 fused.append((found_ep, score))
         fused.sort(key=lambda x: x[1], reverse=True)
         return fused[:limit]
+
+    def _external_backend_ranks(
+        self, query: str, kind: str | None, limit: int
+    ) -> dict[str, int]:
+        """Return rank map from the external backend (signal 5).
+
+        Returns ``{}`` when the backend is the local RRF baseline (would double
+        count) or is unhealthy (graceful degradation). Any backend error is
+        swallowed so a failing external backend never breaks local search.
+        """
+        if isinstance(self._backend, LocalRRFBackend):
+            return {}
+        if not self._backend.health():
+            return {}
+        try:
+            results = self._backend.search(query, limit=limit, kind=kind)
+        except Exception:  # noqa: BLE001 — external backend boundary
+            return {}
+        return {ep.id: rank for rank, (ep, _score) in enumerate(results)}
+
+    def get_backend(self) -> MemoryBackend:
+        """Return the configured retrieval backend (local RRF by default)."""
+        return self._backend
+
+    def set_backend(self, backend: MemoryBackend) -> None:
+        """Replace the retrieval backend (used by the service factory)."""
+        self._backend = backend
+
+    def set_sync(self, sync: MemorySyncService) -> None:
+        """Attach an async extraction pipeline (used by the service factory)."""
+        self._sync = sync
+
+    def sync_stats(self) -> dict[str, Any]:
+        """Return async-extraction pipeline stats, or ``{}`` when none attached."""
+        if self._sync is None:
+            return {}
+        return self._sync.stats()
+
+    def stop_sync(self) -> None:
+        """Stop the async-extraction worker and detach it (idempotent)."""
+        if self._sync is not None:
+            self._sync.stop()
+            self._sync = None
+
+    def rebuild_backend(self) -> int:
+        """Rebuild the backend index from the current episodes (one-way projection).
+
+        Returns the number of episodes projected. For the local baseline this is
+        a no-op that still returns the episode count.
+        """
+        episodes = self.list_episodes(limit=10**9)
+        self._backend.rebuild(episodes)
+        return len(episodes)
 
     def learn_profile_from_episodes(
         self, recent_count: int = 200, top_n: int = 5
@@ -697,6 +803,14 @@ class MemoryService:
         # Rebuild FTS5 index from the compacted episodes
         self._fts.rebuild(to_write)
 
+        # M4: keep the external backend consistent (one-way projection).
+        # Removed originals must not linger; new summaries get re-indexed.
+        for ep in old:
+            self._backend.delete_episode(ep.id)
+        if self._sync is not None:
+            for ep in list(l3_summaries) + list(remaining_l2):
+                self._sync.enqueue(ep)
+
         return {
             "compacted_kinds": list(by_kind_day.keys()),
             "removed": len(old),
@@ -768,6 +882,10 @@ class MemoryService:
         # FTS index must reflect only the active set.
         self._fts.rebuild(active)
 
+        # M4: archived episodes leave the external backend too.
+        for ep in archived:
+            self._backend.delete_episode(ep.id)
+
         return len(archived)
 
     # ------------------------------------------------------------------
@@ -784,6 +902,70 @@ class MemoryService:
     def memos_feedback(self, memory_id: str, correction: str) -> bool:
         """Submit a feedback correction to the MemOS plugin."""
         return self._memos.feedback(memory_id, correction)
+
+    # ------------------------------------------------------------------
+    # M4: audit / conflict detection (human-gated consolidation)
+    # ------------------------------------------------------------------
+    def detect_conflicts(self, recent_count: int = 500) -> list[dict[str, Any]]:
+        """Heuristically surface "state changed" conflict candidates.
+
+        Purely rule-based and meant to be resolved by a human (ADR-0021,
+        半自动原则). It flags pairs of same-kind episodes where the newer
+        summary shares a subject token with an earlier one and carries a
+        polarity marker (e.g. "改为" / "reverted"). No merge is ever applied
+        automatically.
+        """
+        episodes = list(reversed(self.list_episodes(limit=recent_count)))
+        conflicts: list[dict[str, Any]] = []
+        seen: dict[str, Episode] = {}
+        for ep in episodes:
+            text = (ep.summary or "").lower()
+            marker = next((m for m in _POLARITY_MARKERS if m in text), None)
+            tokens = {t for t in _tokenize(ep.summary) if len(t) >= 2}
+            prior = seen.get(ep.kind)
+            if (
+                marker is not None
+                and prior is not None
+                and tokens & set(_tokenize(prior.summary))
+            ):
+                conflicts.append(
+                    {
+                        "kind": ep.kind,
+                        "episode_a": prior.id,
+                        "episode_b": ep.id,
+                        "subject": sorted(tokens)[:5],
+                        "marker": marker,
+                    }
+                )
+            seen[ep.kind] = ep
+        return conflicts
+
+    def memory_audit(self, recent_count: int = 500) -> dict[str, Any]:
+        """Return a memory-health report for the ``memory audit`` command.
+
+        Covers the three consistency signals from ADR-0021 (one-way projection):
+
+        - ``sync_failures``: episodes whose async extraction failed (if a sync
+          service is configured).
+        - ``orphans``: episodes not yet indexed by the backend.
+        - ``stale_index``: backend entries for episodes no longer in the log.
+        - ``conflicts``: rule-based conflict candidates for human resolution.
+        """
+        episode_ids = {ep.id for ep in self.list_episodes(limit=10**9)}
+        indexed = self._backend.indexed_ids()
+        sync_failures: list[dict[str, Any]] = []
+        if self._sync is not None:
+            sync_failures = self._sync.failure_log()
+        return {
+            "backend": type(self._backend).__name__,
+            "backend_healthy": self._backend.health(),
+            "episode_count": len(episode_ids),
+            "indexed_count": len(indexed),
+            "sync_failures": sync_failures,
+            "orphans": sorted(episode_ids - indexed),
+            "stale_index": sorted(indexed - episode_ids),
+            "conflicts": self.detect_conflicts(recent_count=recent_count),
+        }
 
 
 def _parse_episode_line(line: str) -> Episode:

@@ -1,0 +1,27 @@
+{
+  "description": "M4 记忆层 A/B 基准种子语料。episodes 覆盖偏好/事实/时间三类；queries 的 answer_keywords 用于判定某 episode 是否相关（recall 判定）。生产使用时替换为从 .state/episodes 抽取的真实语料。",
+  "episodes": [
+    {"kind": "preference", "summary": "用户偏好使用 python 进行后端服务开发"},
+    {"kind": "preference", "summary": "用户偏好简洁的函数式编程风格"},
+    {"kind": "preference", "summary": "用户希望代码注释使用中文"},
+    {"kind": "fact", "summary": "项目使用 pytest 作为 Python 测试框架"},
+    {"kind": "fact", "summary": "项目已切换到 faster-whisper 替代 openai-whisper"},
+    {"kind": "fact", "summary": "微信文章抓取需要伪装 User-Agent"},
+    {"kind": "temporal", "summary": "2026-06 决定用 faster-whisper 处理抖音语音转写"},
+    {"kind": "temporal", "summary": "2026-08 计划接入 Mem0 作为记忆后端"},
+    {"kind": "preference", "summary": "改为偏好使用 rust 进行高性能组件开发"},
+    {"kind": "temporal", "summary": "撤销 2026-06 的 faster-whisper 决定，改用本地模型"}
+  ],
+  "queries": [
+    {"query": "用户偏好用什么语言开发后端", "category": "preference", "answer_keywords": ["python"]},
+    {"query": "用户喜欢什么编程风格", "category": "preference", "answer_keywords": ["函数式", "functional"]},
+    {"query": "代码注释应该用什么语言", "category": "preference", "answer_keywords": ["中文"]},
+    {"query": "项目用什么测试框架", "category": "fact", "answer_keywords": ["pytest"]},
+    {"query": "语音转写现在用什么方案", "category": "fact", "answer_keywords": ["faster-whisper"]},
+    {"query": "微信文章怎么抓取", "category": "fact", "answer_keywords": ["User-Agent", "ua", "伪装"]},
+    {"query": "六月份做了哪些技术决策", "category": "temporal", "answer_keywords": ["faster-whisper", "2026-06"]},
+    {"query": "现在偏好用什么语言做高性能组件", "category": "preference", "answer_keywords": ["rust"]},
+    {"query": "最近的记忆后端计划是什么", "category": "temporal", "answer_keywords": ["Mem0", "2026-08"]},
+    {"query": "语音转写的最新决定", "category": "temporal", "answer_keywords": ["本地模型", "撤销"]}
+  ]
+}

@@ -266,3 +266,20 @@ agents:
 | 多模态 | 支持 | 支持（Gemini Embedding） |
 
 **结论**：OpenClaw 的记忆架构在 L2 层更成熟（混合搜索 + MMR + 时间衰减），只需补充 L3 的 USER.md 即可实现完整的三层模型。
+
+---
+
+## 七、M4 外部记忆后端术语映射
+
+> 见 ADR-0021。Mem0（`mem0ai`）为可选外部后端；术语映射固化，避免 L0/L1/L2 撞车。
+
+| Hermes | Mem0 | 说明 |
+|--------|------|------|
+| L1 工作记忆（会话内） | （不启用 session 级） | 由 loop 上下文承担 |
+| L2 episodes（ground truth） | agent 级记忆（蒸馏结果） | 单向投影，episodes.jsonl 永远权威 |
+| L3 profile（用户偏好/事实） | user 级记忆（回写目标） | `--gated` 人工确认后回写 |
+| RRF 检索 | 多信号检索（语义+实体+时间） | 作为第 5 路信号融合，权重 2.0 |
+
+检索融合与降级矩阵：Mem0 健康 → 5 路 RRF；Mem0 不可用 → 4 路 RRF（与旧行为一致）；
+单条 episode 未抽取完成 → 本地 4 路信号覆盖该条。episodes.jsonl 永远是 ground truth，
+后端任何状态可由 `hermes workbench memory rebuild` 全量重建。

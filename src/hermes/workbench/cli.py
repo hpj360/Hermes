@@ -309,24 +309,87 @@ def _make_runner() -> SkillRunner:
     return SkillRunner(base_dir=_hermes_skills_dir())
 
 
+_memory_lock: threading.Lock = threading.Lock()
+_memory_cache: dict[tuple[str, str, bool], MemoryService] = {}
+
+
+def _reset_memory_cache() -> None:
+    """Drop the cached memory services (used by tests for state isolation)."""
+    global _memory_cache
+    with _memory_lock:
+        for svc in _memory_cache.values():
+            svc.stop_sync()
+        _memory_cache = {}
+
+
 def _make_memory() -> MemoryService:
     from hermes.config import get_settings
     from hermes.workbench.memory import EmbeddingClient, MemosConfig
 
     settings = get_settings()
-    embed = EmbeddingClient(
-        base_url=settings.ollama_embed_url,
-        model=settings.ollama_embed_model,
+    # M4: cache the memory service per (state_dir, backend, sync) so long-running
+    # `serve` mode reuses one instance and one sync worker instead of leaking a
+    # daemon thread per request. Tests isolate via unique tmp state dirs; reset
+    # with :func:`_reset_memory_cache` when a forced rebuild is required.
+    key = (
+        str(_state_dir()),
+        settings.hermes_memory_backend.lower(),
+        settings.hermes_memory_sync_enabled,
     )
-    memos_cfg = MemosConfig(
-        enabled=settings.memos_enabled,
-        base_url=settings.memos_base_url,
-    )
-    return MemoryService(
-        state_dir=_state_dir(),
-        embed_client=embed,
-        memos_config=memos_cfg,
-    )
+    with _memory_lock:
+        cached = _memory_cache.get(key)
+        if cached is not None:
+            return cached
+
+        embed = EmbeddingClient(
+            base_url=settings.ollama_embed_url,
+            model=settings.ollama_embed_model,
+        )
+        memos_cfg = MemosConfig(
+            enabled=settings.memos_enabled,
+            base_url=settings.memos_base_url,
+        )
+        svc = MemoryService(
+            state_dir=_state_dir(),
+            embed_client=embed,
+            memos_config=memos_cfg,
+        )
+        _attach_memory_backend(svc, settings)
+        _memory_cache[key] = svc
+        return svc
+
+
+def _attach_memory_backend(svc: MemoryService, settings: Any) -> None:
+    """Wire an external memory backend + async sync pipeline onto *svc* (M4).
+
+    Default backend is the local RRF baseline built inside ``MemoryService``;
+    only ``mem0`` requires an explicit attachment here. The sync pipeline is
+    only started for non-local backends when explicitly enabled.
+    """
+    name = settings.hermes_memory_backend.lower()
+    if name == "mem0":
+        from hermes.workbench.mem0_adapter import Mem0Backend, Mem0BackendConfig
+
+        cfg = Mem0BackendConfig(
+            llm_model=settings.hermes_mem0_llm_model or settings.hermes_llm_model,
+            embed_model=settings.hermes_mem0_embed_model or settings.ollama_embed_model,
+            llm_base_url=settings.ollama_base_url,
+            embed_base_url=settings.ollama_embed_url,
+        )
+        svc.set_backend(Mem0Backend(memory=svc, state_dir=_state_dir(), config=cfg))
+
+    if settings.hermes_memory_sync_enabled and name != "local_rrf":
+        from hermes.workbench.memory_sync import MemorySyncConfig, MemorySyncService
+
+        sync_cfg = MemorySyncConfig(
+            enabled=True,
+            batch_size=settings.hermes_memory_sync_batch_size,
+        )
+        sync = MemorySyncService(
+            backend=svc.get_backend(), state_dir=_state_dir(), config=sync_cfg
+        )
+        svc.set_sync(sync)
+        sync.start()
 
 
 def _make_loop() -> AgentLoop:
@@ -590,6 +653,24 @@ def cmd_workbench_memory_profile_show(args: argparse.Namespace) -> int:
     mem = _make_memory()
     profile = mem.get_user_profile()
     print(json.dumps(profile, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_workbench_memory_rebuild(args: argparse.Namespace) -> int:
+    mem = _make_memory()
+    try:
+        n = mem.rebuild_backend()
+    except Exception as e:  # noqa: BLE001 — unhealthy backend degrades to a message
+        print(f"rebuild failed: {e}", file=sys.stderr)
+        return 1
+    print(f"rebuilt backend index from {n} episodes")
+    return 0
+
+
+def cmd_workbench_memory_audit(args: argparse.Namespace) -> int:
+    mem = _make_memory()
+    report = mem.memory_audit(recent_count=args.recent)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -1139,6 +1220,13 @@ def _register_memory(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     prof_sub = p_prof.add_subparsers(dest="workbench_memory_profile_cmd", required=True)
     p_ps = prof_sub.add_parser("show", help="Show profile JSON")
     p_ps.set_defaults(func=cmd_workbench_memory_profile_show)
+
+    p_rebuild = mem_sub.add_parser("rebuild", help="Rebuild the memory backend index (M4)")
+    p_rebuild.set_defaults(func=cmd_workbench_memory_rebuild)
+
+    p_audit = mem_sub.add_parser("audit", help="Memory health / consistency report (M4)")
+    p_audit.add_argument("--recent", type=int, default=500, help="Episodes to scan for conflicts")
+    p_audit.set_defaults(func=cmd_workbench_memory_audit)
 
 
 def _register_memos(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:

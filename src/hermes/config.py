@@ -222,6 +222,15 @@ class Settings(BaseSettings):
     # MemOS local plugin integration
     memos_enabled: bool = Field(default=False, alias="MEMOS_ENABLED")
     memos_base_url: str = Field(default="http://127.0.0.1:18800", alias="MEMOS_BASE_URL")
+    # M4: pluggable memory backend. local_rrf (default) | mem0 | memos.
+    hermes_memory_backend: str = Field(default="local_rrf", alias="HERMES_MEMORY_BACKEND")
+    hermes_memory_sync_enabled: bool = Field(default=False, alias="HERMES_MEMORY_SYNC_ENABLED")
+    hermes_memory_sync_batch_size: int = Field(
+        default=10, alias="HERMES_MEMORY_SYNC_BATCH_SIZE"
+    )
+    # Mem0 backend overrides. Empty = reuse hermes_llm_model / ollama_embed_model.
+    hermes_mem0_llm_model: str = Field(default="", alias="HERMES_MEM0_LLM_MODEL")
+    hermes_mem0_embed_model: str = Field(default="", alias="HERMES_MEM0_EMBED_MODEL")
     # hermes-kb service integration (P2-1). Empty = not configured → /kb/search
     # degrades gracefully instead of proxying.
     hermes_kb_base_url: str = Field(default="", alias="HERMES_KB_BASE_URL")

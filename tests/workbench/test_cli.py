@@ -539,6 +539,24 @@ def test_make_memory_uses_state_dir(
     assert mem.state_dir == tmp_path
 
 
+def test_make_memory_is_cached_per_state_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M4: _make_memory returns a shared instance per state dir (no thread leak)."""
+    wb_cli._reset_memory_cache()
+    try:
+        monkeypatch.setattr(wb_cli, "_state_dir", lambda: tmp_path)
+        mem1 = wb_cli._make_memory()
+        mem2 = wb_cli._make_memory()
+        assert mem1 is mem2
+
+        other = tmp_path / "other"
+        monkeypatch.setattr(wb_cli, "_state_dir", lambda: other)
+        assert wb_cli._make_memory() is not mem1
+    finally:
+        wb_cli._reset_memory_cache()
+
+
 def test_make_store_uses_state_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

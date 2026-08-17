@@ -307,6 +307,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
         for status in sorted(status_counts):
             lines.append(f'hermes_jobs_by_status{{status="{status}"}} {status_counts[status]}')
 
+        # Memory backend metrics (M4). Degrades to zeroes if unavailable.
+        try:
+            from hermes.workbench.cli import _make_memory
+
+            mem = _make_memory()
+            backend = mem.get_backend()
+            sync_stats = mem.sync_stats()
+            lines.append("# HELP hermes_memory_backend_healthy Whether the memory backend is usable.")
+            lines.append("# TYPE hermes_memory_backend_healthy gauge")
+            lines.append(f'hermes_memory_backend_healthy{{backend="{type(backend).__name__}"}} {1 if backend.health() else 0}')
+            lines.append("# HELP hermes_memory_sync_pending Episodes awaiting async extraction.")
+            lines.append("# TYPE hermes_memory_sync_pending gauge")
+            lines.append(f"hermes_memory_sync_pending {sync_stats.get('pending', 0)}")
+            lines.append("# HELP hermes_memory_sync_failures Cumulative async-extraction failures.")
+            lines.append("# TYPE hermes_memory_sync_failures gauge")
+            lines.append(f"hermes_memory_sync_failures {sync_stats.get('failure_count', 0)}")
+        except Exception:  # noqa: BLE001 — metrics must never break the scrape
+            pass
+
         self._send_text(
             200,
             "\n".join(lines) + "\n",

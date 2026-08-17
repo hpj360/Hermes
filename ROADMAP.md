@@ -10,6 +10,7 @@
 | M1 闭环 | v0.7.0 | content-team 业务真实化 + GEPA 自进化 + 前端 UI | ⚠️ 部分完成（P1 工程完成，**真实平台 API 未接**） |
 | M2 扩张 | v0.8.0 | hermes-kb 集成 + broker 抽象 + async bridge + OTLP | ✅ 完成（P2） |
 | M3 自治 | v1.0.0 | GEPA 红队 + memory 向量化 + 一键发布 | ✅ 完成（P3） |
+| M4 记忆升级 | v0.7.x | memory 后端协议化 + Mem0 融合 + 异步抽取 + 矛盾治理 | 🚧 进行中（见 `docs/roadmap/iter-memory-upgrade.md`） |
 
 > **路线图诚信说明**：M1 的"content-team 业务真实化"当前为**适配器架构就位**，
 > 发布/数据仍是 `random` 模拟，真实平台 API 接入是产品规划的**阶段 2（生死线）**，

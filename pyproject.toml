@@ -40,6 +40,10 @@ content_team = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
 ]
+# M4: optional external memory backend (lazy-imported; not a core dependency).
+mem0 = [
+    "mem0ai>=0.1",
+]
 
 [project.scripts]
 hermes = "hermes.main:main"

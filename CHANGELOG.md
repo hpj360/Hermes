@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- M4 记忆升级：新增 `MemoryBackend` 协议（`memory_backend.py`）+ `Mem0Backend`
+  （`mem0_adapter.py`，懒加载，`hermes[mem0]` optional extra）+ `MemorySyncService`
+  （`memory_sync.py`，异步入队抽取，pending 落盘重启可恢复）。
+- `search_episodes_rrf` 增第 5 路后端信号（权重 2.0），后端不可用自动退回 4 路。
+- `MemoryService` 新增 `get_backend`/`set_backend`/`set_sync`/`sync_stats`/
+  `rebuild_backend`/`memory_audit`/`detect_conflicts`；compaction/archive 同步
+  失效后端条目（单向投影）。
+- CLI 新增 `hermes workbench memory rebuild` 与 `memory audit`。
+- `_tokenize` 增加 CJK 字符 bigram 分词，无空格中文语料可检索。
+- `/metrics` 新增 `hermes_memory_backend_healthy` / `hermes_memory_sync_pending` /
+  `hermes_memory_sync_failures`。
+- 新增 ADR-0021、`scripts/benchmark/memory_bench.py`、`memory_queries.json`。
+
 ### Fixed
 
 - P2-3 `JobStore.save` 增加"终态保护"——不再用陈旧内存对象的不同终态覆盖数据库里

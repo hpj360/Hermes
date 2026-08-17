@@ -30,3 +30,4 @@
 | 0018 | agent preset | Accepted |
 | 0019 | dump-config | Accepted |
 | 0020 | trajectory view | Accepted |
+| 0021 | memory backend protocol | Accepted |
