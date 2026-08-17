@@ -29,6 +29,31 @@ __all__ = [
 ]
 
 
+_SENSITIVE_KEY_MARKERS = (
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "api_key",
+    "apikey",
+    "credential",
+    "auth",
+)
+
+
+def redact_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Mask credential-like values in a project ``config`` dict (recursive)."""
+    redacted: dict[str, Any] = {}
+    for key, value in config.items():
+        if any(marker in str(key).lower() for marker in _SENSITIVE_KEY_MARKERS):
+            redacted[key] = "<redacted>" if value else value
+        elif isinstance(value, dict):
+            redacted[key] = redact_config(value)
+        else:
+            redacted[key] = value
+    return redacted
+
+
 # ---------------------------------------------------------------------------
 # ProjectConnection
 # ---------------------------------------------------------------------------
@@ -58,6 +83,17 @@ class ProjectConnection:
             "max_concurrent": self.max_concurrent,
             "health": self.health,
         }
+
+    def to_public_dict(self) -> dict[str, Any]:
+        """Serialized form safe to return via API — redacts credentials.
+
+        ``to_dict()`` is the persistence form (plaintext config, so the token
+        is usable); this form masks credential-like keys so a GitHub token in
+        ``config`` is never echoed over the HTTP API.
+        """
+        d = self.to_dict()
+        d["config"] = redact_config(self.config)
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ProjectConnection":

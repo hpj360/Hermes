@@ -168,8 +168,12 @@ class GitHubMCPClient:
                         "skipped": True,
                         "message": "Idempotent skip: identical comment already exists",
                     }
-        except Exception:
-            pass  # Soft degradation on idempotency check failure
+        except Exception as e:
+            # Fail closed: if idempotency cannot be verified, do not POST — a
+            # duplicate comment would violate the idempotency contract.
+            self._record("post_pr_comment", {"pr_number": pr_number}, False, str(e))
+            logger.warning("GitHub MCP post_pr_comment idempotency check failed: %s", e)
+            return {"success": False, "error": f"idempotency check failed: {e}"}
 
         # Post new comment
         url = f"https://api.github.com/repos/{self.repo}/issues/{pr_number}/comments"
@@ -211,8 +215,11 @@ class GitHubMCPClient:
                     "skipped": True,
                     "message": "Idempotent skip: PR already exists for this head:base",
                 }
-        except Exception:
-            pass  # Soft degradation
+        except Exception as e:
+            # Fail closed: cannot verify no duplicate PR exists → do not create.
+            self._record("create_pr", {"head": head, "base": base}, False, str(e))
+            logger.warning("GitHub MCP create_pr idempotency check failed: %s", e)
+            return {"success": False, "error": f"idempotency check failed: {e}"}
 
         url = f"https://api.github.com/repos/{self.repo}/pulls"
         payload = json.dumps(

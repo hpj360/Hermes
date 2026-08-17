@@ -100,10 +100,31 @@ def load_sync_state() -> dict[str, Any]:
 
 
 def save_sync_state(state: dict[str, Any]) -> None:
-    """保存状态到 .state/skill_sync.json。"""
+    """保存状态到 .state/skill_sync.json（原子写，防中断损坏）。"""
+    from hermes.workbench.persistence import atomic_write_json
+
     f = state_file()
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_json(f, state)
+
+
+def _is_within_agent_dirs(path: Path, state: dict[str, Any]) -> bool:
+    """Return True if *path* resolves inside a known agent directory.
+
+    Guards against a corrupted/edited ``skill_sync.json`` pointing a managed
+    skill at an arbitrary directory (which ``shutil.rmtree`` would then delete).
+    """
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    for ad in discover_agent_dirs(state.get("custom_agents")):
+        try:
+            if resolved == ad.path.resolve() or ad.path.resolve() in resolved.parents:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 # ── 发现与哈希 ──────────────────────────────────────────────────────
@@ -388,6 +409,9 @@ def remove_skill(skill_name: str) -> SyncResult:
 
     for agent_name, arec in agents.items():
         dest = Path(arec.get("path", "")) if isinstance(arec, dict) else Path("")
+        if not _is_within_agent_dirs(dest, state):
+            errors.append(f"{agent_name}: path outside known agent dirs (skipped)")
+            continue
         try:
             if mode == "symlink":
                 if dest.is_symlink():

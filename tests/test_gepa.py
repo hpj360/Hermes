@@ -572,23 +572,44 @@ def test_auto_generate_variants_rejects_overlong_prompt(tmp_path, monkeypatch):
 
 
 def test_run_gepa_split_run_promotes_significant_challenger():
-    """A challenger with consistently higher scores should be promoted."""
+    """A challenger with consistently higher scores (non-zero variance) is promoted."""
     baseline = Variant(variant_id="base", agent_file="/base.md")
     challenger = Variant(variant_id="chal", agent_file="/chal.md")
 
+    # Non-deterministic evaluator: vary the score slightly per call so the
+    # samples have non-zero variance (a zero-variance deterministic difference
+    # is *not* "statistically significant" — see test below).
+    counter = {"i": 0}
+
     def evaluate(variant, task, context):
+        counter["i"] += 1
+        jitter = counter["i"] % 3
         if variant.variant_id == "chal":
             return VariantResult(
-                variant_id="chal", success=True, tokens_used=500, rounds_to_converge=1
+                variant_id="chal", success=True,
+                tokens_used=500 + jitter, rounds_to_converge=1,
             )
         return VariantResult(
-            variant_id="base", success=True, tokens_used=1000, rounds_to_converge=3
+            variant_id="base", success=True,
+            tokens_used=1000 + jitter, rounds_to_converge=3,
         )
 
     exp = run_gepa_split_run(
         "benchmark", baseline, [challenger], evaluate, min_repeats=5
     )
     assert exp.winner_id == "chal"
+
+
+def test_run_gepa_split_run_zero_variance_is_not_significant():
+    """A deterministic (zero-variance) score gap must NOT be promoted.
+
+    Zero variance means there is no noise to justify a statistical test; the
+    p-value must not be treated as zero/infinitely-significant.
+    """
+    from hermes.gepa_stats import welch_ttest
+
+    t, p = welch_ttest([19945.0] * 5, [19840.0] * 5)
+    assert p == 1.0  # deterministic gap → not statistically significant
 
 
 def test_run_gepa_split_run_no_promotion_when_not_significant():

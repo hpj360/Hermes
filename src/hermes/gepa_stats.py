@@ -156,11 +156,11 @@ def welch_ttest(
     denom_b = var_b / n_b
     se = math.sqrt(denom_a + denom_b)
     if se == 0.0:
-        # Identical samples (zero variance difference).
-        if mean_a == mean_b:
-            return 0.0, 1.0
-        # Deterministic difference with zero noise → infinitely significant.
-        return float("inf"), 0.0
+        # Zero variance: there is no within-sample noise to justify a
+        # statistical test. A deterministic difference in means is not
+        # "significant" in the statistical sense — return not-significant to
+        # avoid promoting on arbitrarily small deterministic gaps.
+        return 0.0, 1.0
     t = (mean_a - mean_b) / se
     # Welch–Satterthwaite degrees of freedom.
     df_num = (denom_a + denom_b) ** 2

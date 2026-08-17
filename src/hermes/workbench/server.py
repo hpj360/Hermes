@@ -227,6 +227,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
         parsed = parse_qs(urlsplit(self.path).query)
         return {k: v[0] for k, v in parsed.items() if v}
 
+    def _parse_int(self, value: Any, default: int) -> int:
+        """Parse *value* as int, raising ValidationError (400) on bad input.
+
+        Replaces raw ``int(...)`` on user input so non-numeric values surface
+        as 400 instead of an uncaught ``ValueError`` → 500 with internal text.
+        """
+        if value is None or value == "":
+            return default
+        try:
+            return int(value)
+        except (TypeError, ValueError) as e:
+            raise ValidationError(f"invalid integer: {value!r}") from e
+
+    @staticmethod
+    def _validate_loop_name(name: str) -> None:
+        """Reject loop names that would escape ``loops_dir`` via ``..``/path chars."""
+        if not name or name in (".", "..") or "/" in name or "\\" in name:
+            raise ValidationError(f"invalid loop name: {name!r}")
+
     def _method_not_allowed(self) -> None:
         self._send_json(405, {"error": "method not allowed"})
 
@@ -838,6 +857,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         from hermes.workbench.ima_sync import ImaSyncService
 
         body = self._read_json_body()
+        if not isinstance(body, dict):
+            raise ValidationError("body must be a JSON object")
         kb_id = body.get("kb_id", "")
         file_path = body.get("file_path", "")
         content_type = body.get("content_type")
@@ -846,6 +867,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             raise ValidationError("kb_id is required")
         if not file_path:
             raise ValidationError("file_path is required")
+        # Security: reject paths that escape the project root so this endpoint
+        # cannot be used to exfiltrate arbitrary local files (e.g. /.env).
+        from pathlib import Path
+
+        from hermes.config import get_settings
+
+        root = Path(get_settings().hermes_project_root).resolve()
+        target = Path(file_path).resolve()
+        if root not in target.parents and target != root:
+            raise ValidationError("file_path must be within the project root")
         svc = ImaSyncService()
         result = svc.push_file(
             kb_id, file_path, content_type=content_type, folder_id=folder_id
@@ -859,7 +890,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         from hermes.workbench.ima_sync import ImaClient
 
         params = self._query_params()
-        limit = int(params.get("limit", "20"))
+        limit = self._parse_int(params.get("limit"), 20)
         client = ImaClient()
         notes, is_end, cursor = client.list_note(limit=limit)
         self._send_json(
@@ -987,6 +1018,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         from hermes.loop import loops_dir
         from hermes.trajectory import TrajectoryLogger
 
+        self._validate_loop_name(name)
         path = loops_dir() / name / "trajectory.jsonl"
         if not path.exists():
             raise NotFoundError(f"loop not found: {name}")
@@ -998,6 +1030,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         from hermes.loop import loops_dir
         from hermes.trajectory import verify_trajectory
 
+        self._validate_loop_name(name)
         path = loops_dir() / name / "trajectory.jsonl"
         if not path.exists():
             raise NotFoundError(f"loop not found: {name}")
@@ -1019,9 +1052,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         )
 
         params = self._query_params()
-        task_limit = int(params.get("task_limit", "20"))
-        episode_limit = int(params.get("episode_limit", "50"))
-        fact_limit = int(params.get("fact_limit", "100"))
+        task_limit = self._parse_int(params.get("task_limit"), 20)
+        episode_limit = self._parse_int(params.get("episode_limit"), 50)
+        fact_limit = self._parse_int(params.get("fact_limit"), 100)
 
         mem = _make_memory()
         store = _make_store()
@@ -1237,7 +1270,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         projects = center.project_registry.list()
         self._send_json(
             200,
-            {"projects": [p.to_dict() for p in projects], **center.project_registry.summary()},
+            {"projects": [p.to_public_dict() for p in projects], **center.project_registry.summary()},
         )
 
     def h_post_projects(self) -> None:
@@ -1258,9 +1291,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             state_dir=state_dir,
             skills_dir=body.get("skills_dir"),
             config=body.get("config"),
-            max_concurrent=int(body.get("max_concurrent", 1)),
+            max_concurrent=self._parse_int(body.get("max_concurrent"), 1),
         )
-        self._send_json(201, conn.to_dict())
+        self._send_json(201, conn.to_public_dict())
 
     def h_get_project(self, project_id: str) -> None:
         from hermes.workbench.cli import _make_scheduler_center
@@ -1269,7 +1302,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         conn = center.project_registry.get(project_id)
         if conn is None:
             raise NotFoundError(f"project not found: {project_id}")
-        self._send_json(200, conn.to_dict())
+        self._send_json(200, conn.to_public_dict())
 
     def h_delete_project(self, project_id: str) -> None:
         from hermes.workbench.cli import _make_scheduler_center

@@ -199,8 +199,10 @@ def score_variant(result: VariantResult) -> float:
         score += SCORE_WEIGHT_SUCCESS
     # Clamp tokens/rounds so an unbounded (malicious or buggy) evaluation cannot
     # break the "success always wins" invariant via the penalty term.
+    # Rounds clamp (100) matches the worst-case envelope in the SCORE_WEIGHT_*
+    # comment: 0.01*1_000_000 + 50*100 = 15_000 < 20_000 (success weight).
     tokens = max(0, min(result.tokens_used, 1_000_000))
-    rounds = max(0, min(result.rounds_to_converge, 400))
+    rounds = max(0, min(result.rounds_to_converge, 100))
     score += SCORE_WEIGHT_TOKENS * tokens
     score += SCORE_WEIGHT_ROUNDS * rounds
     return score
@@ -512,12 +514,17 @@ def run_gepa_split_run(
 
     winner: Variant | None = None
     winner_scores: list[float] = []
+    # Bonferroni correction: with N challengers each tested at alpha, the
+    # family-wise false-positive rate is ~1-(1-alpha)^N. Divide alpha by N so
+    # the experiment-wide error rate stays at the caller's alpha (P: multiple
+    # comparison).
+    alpha_adj = alpha / max(1, len(challengers))
     for challenger in challengers:
         c_scores, c_results = _evaluate_repeated(
             challenger, evaluate_fn, benchmark_task, benchmark_context, min_repeats
         )
         experiment.results.extend(c_results)
-        if should_promote(baseline_scores, c_scores, alpha=alpha, min_repeats=min_repeats):
+        if should_promote(baseline_scores, c_scores, alpha=alpha_adj, min_repeats=min_repeats):
             if winner is None or mean(c_scores) > mean(winner_scores):
                 winner = challenger
                 winner_scores = c_scores
@@ -525,7 +532,8 @@ def run_gepa_split_run(
     if winner is not None:
         experiment.winner_id = winner.variant_id
         experiment.promotion_reason = (
-            f"split-run significant (min_repeats={min_repeats}, alpha={alpha}); "
+            f"split-run significant (min_repeats={min_repeats}, alpha={alpha}, "
+            f"bonferroni={alpha_adj:.4g}); "
             f"baseline_mean={mean(baseline_scores):.2f}, "
             f"challenger_mean={mean(winner_scores):.2f}"
         )
@@ -533,7 +541,7 @@ def run_gepa_split_run(
         experiment.winner_id = None
         experiment.promotion_reason = (
             f"no challenger significantly beat baseline out of {len(challengers)} "
-            f"(min_repeats={min_repeats}, alpha={alpha})"
+            f"(min_repeats={min_repeats}, alpha={alpha}, bonferroni={alpha_adj:.4g})"
         )
 
     experiment.completed_at = datetime.now(timezone.utc).isoformat()

@@ -4,6 +4,32 @@
 
 ## [Unreleased]
 
+### Security
+
+- `server.py` `/ima/files` 校验 `file_path` 必须位于项目根内，堵住任意本地文件
+  外传（默认 dev 模式无鉴权下的高危面）。
+- `projects.py` 新增 `to_public_dict()` + `redact_config()`，API 返回项目时脱敏
+  `token/secret/password/api_key/...` 等凭据键；`h_get_projects`/`h_get_project`/
+  `h_post_projects` 改用脱敏视图（持久化 `to_dict()` 保持明文以可用）。
+- `server.py` `/loops/<name>/trajectory*` 校验 `name`（拒绝 `..`/路径分隔符），
+  堵住路径穿越（只读）。
+- `skill_sync.py` `remove_skill` 校验 managed path 必须落在已知 agent 目录内，
+  堵住经 `skill_sync.json` 注入任意目录后 `shutil.rmtree` 删除；`save_sync_state`
+  改用 `atomic_write_json`（防中断损坏）。
+- `mcp.py` `post_pr_comment`/`create_pr` 幂等探测失败改为 fail-closed（返回错误），
+  不再静默继续写造成重复评论/PR。
+
+### Fixed
+
+- `gepa.py` 评分 `rounds` 截断由 400 修正为 100，与 SCORE_WEIGHT_* 注释的
+  worst-case 包络一致（修复"success 恒胜"不变式被 30k>20k 惩罚打破）。
+- `gepa.py` `run_gepa_split_run` 对多 challenger 施加 Bonferroni 校正
+  （alpha/N），抑制族错误率膨胀。
+- `gepa_stats.welch_ttest` 零方差（确定性）样本不再返回 `(inf, 0.0)` 无限显著，
+  改为 `(0.0, 1.0)` 不显著。
+- `server.py` 新增 `_parse_int` 帮助器，非整数入参返回 400 而非 500（dashboard
+  limits / ima notes limit / projects max_concurrent 已接）。
+
 ### Added
 
 - 派发轨迹日志 + 可重建不变量（见 ADR-0017）：
