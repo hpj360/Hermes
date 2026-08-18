@@ -115,7 +115,12 @@ def _is_within_agent_dirs(path: Path, state: dict[str, Any]) -> bool:
     skill at an arbitrary directory (which ``shutil.rmtree`` would then delete).
     """
     try:
-        resolved = path.resolve()
+        # symlink 模式下 path 是指向中心仓库的链接：``path.resolve()`` 会跟随
+        # 链接到 central 路径，被误判为"agent 目录外"，导致 remove 永远跳过删除。
+        # 因此只 resolve parent（agent skills 目录），不跟随 path 自身的链接；
+        # 对真实目录（copy 模式 / 状态文件注入的任意路径），parent.resolve()/name
+        # 与 path.resolve() 的逃逸判定等价（parent 链中的逃逸仍会被跟随并拦截）。
+        resolved = path.parent.resolve() / path.name
     except OSError:
         return False
     for ad in discover_agent_dirs(state.get("custom_agents")):
