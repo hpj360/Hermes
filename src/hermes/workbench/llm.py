@@ -267,6 +267,7 @@ class LlmClient:
         timeout: float | None = None,
         tools: list[dict[str, Any]] | None = None,
         trajectory: Any = None,
+        stable_prefix: str | None = None,
     ) -> LlmResponse:
         """Call ``POST {base_url}/chat/completions`` and return the response.
 
@@ -280,12 +281,17 @@ class LlmClient:
         when provided, a ``request/header`` and ``request/context`` event are
         recorded before the request is sent.
 
+        *stable_prefix* (A1, opt-in) is prepended as a leading system message so
+        the cacheable prefix stays byte-stable across calls (see
+        :mod:`hermes.context`).
+
         Raises :class:`LlmApiError` on HTTP failure or malformed payload.
         """
         url = f"{self.base_url}/chat/completions"
+        msgs = [LlmMessage(role="system", content=stable_prefix), *messages] if stable_prefix else messages
         body: dict[str, Any] = {
             "model": model or self.model,
-            "messages": [m.to_dict() for m in messages],
+            "messages": [m.to_dict() for m in msgs],
             "temperature": self.temperature if temperature is None else temperature,
         }
         if max_tokens is not None:

@@ -30,6 +30,8 @@ from hermes.loop import (
     list_loops,
     loop_metrics,
     advance_stage,
+    list_checkpoints,
+    rewind_loop,
 )
 from hermes.runner import resume_loop, run_loop, run_loop_continuous
 
@@ -548,6 +550,34 @@ def cmd_loop_presets(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_loop_rewind(args: argparse.Namespace) -> int:
+    """Roll a loop back to a checkpoint round (A2)."""
+    result = rewind_loop(args.name, args.to)
+    if args.json:
+        _print_json(result)
+        return _exit_code(result)
+    if not result.get("success"):
+        print(f"Error: {result.get('error', 'unknown error')}")
+        return 1
+    print(f"Loop '{args.name}' rewound to round {result.get('target_round')}.")
+    print(f"  Status: {result.get('status')}")
+    print(f"  Rounds kept: {result.get('rounds_kept')}")
+    print(f"  Trajectory truncated to seq: {result.get('trajectory_seq')}")
+    return 0
+
+
+def cmd_loop_checkpoints(args: argparse.Namespace) -> int:
+    """List available checkpoints for a loop (A2)."""
+    rounds = list_checkpoints(args.name)
+    if args.json:
+        _print_json({"loop": args.name, "checkpoints": rounds})
+        return 0
+    print(f"Checkpoints for loop '{args.name}' ({len(rounds)}):")
+    for r in rounds:
+        print(f"  round {r}")
+    return 0
+
+
 # ── Subparser registration ──────────────────────────────────────────
 
 
@@ -657,3 +687,16 @@ def add_loop_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser])
     p_presets.add_argument("name", nargs="?", default=None, help="Preset name (omit to list all)")
     p_presets.add_argument("--json", action="store_true", help="Output JSON")
     p_presets.set_defaults(func=cmd_loop_presets)
+
+    # rewind (A2: checkpoint rollback)
+    p_rewind = loop_sub.add_parser("rewind", help="Roll back to a checkpoint round")
+    p_rewind.add_argument("name", help="Loop name")
+    p_rewind.add_argument("--to", type=int, required=True, help="Target round number")
+    p_rewind.add_argument("--json", action="store_true", help="Output JSON")
+    p_rewind.set_defaults(func=cmd_loop_rewind)
+
+    # checkpoints (A2: list available checkpoints)
+    p_cps = loop_sub.add_parser("checkpoints", help="List checkpoints for a loop")
+    p_cps.add_argument("name", help="Loop name")
+    p_cps.add_argument("--json", action="store_true", help="Output JSON")
+    p_cps.set_defaults(func=cmd_loop_checkpoints)

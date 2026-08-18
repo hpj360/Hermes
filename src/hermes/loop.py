@@ -642,6 +642,92 @@ def _save_loop_meta(state: LoopState) -> None:
     )
 
 
+# ── A2: checkpoint / rewind ─────────────────────────────────────────
+
+
+def _checkpoint_dir(name: str) -> Path:
+    return loops_dir() / name / "checkpoints"
+
+
+def checkpoint_loop(name: str) -> Path | None:
+    """Snapshot the current loop state to ``checkpoints/<round>.json``.
+
+    Called at the end of ``record_round``. Idempotent for a given round (a
+    repeated call overwrites the same file). Returns the checkpoint path, or
+    None if the loop does not exist.
+    """
+    meta_path = _loop_meta_path(name)
+    if not meta_path.exists():
+        return None
+    from hermes.workbench.persistence import safe_read_json, atomic_write_json
+
+    meta = safe_read_json(meta_path, default=None)
+    if not isinstance(meta, dict):
+        return None
+    round_num = int(meta.get("current_round", 0) or 0)
+    d = _checkpoint_dir(name)
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"{round_num}.json"
+    atomic_write_json(path, meta)
+    return path
+
+
+def list_checkpoints(name: str) -> list[int]:
+    """Return the sorted list of available checkpoint round numbers."""
+    d = _checkpoint_dir(name)
+    if not d.is_dir():
+        return []
+    rounds: list[int] = []
+    for f in d.glob("*.json"):
+        try:
+            rounds.append(int(f.stem))
+        except ValueError:
+            continue
+    return sorted(rounds)
+
+
+def rewind_loop(name: str, target_round: int) -> dict[str, Any]:
+    """Roll the loop back to a checkpoint, truncating rounds and trajectory.
+
+    Restores ``LoopState`` from ``checkpoints/<target_round>.json``, truncates
+    ``rounds`` to ``round_num <= target_round``, sets status to NEEDS_HUMAN
+    (post-rewind requires human confirmation), and truncates ``trajectory.jsonl``
+    to the target round's ``trajectory_seq`` (ADR-0017).
+    """
+    from hermes.workbench.persistence import safe_read_json
+
+    cp = _checkpoint_dir(name) / f"{target_round}.json"
+    if not cp.exists():
+        return {"success": False, "error": f"checkpoint for round {target_round} not found"}
+    meta = safe_read_json(cp, default=None)
+    if not isinstance(meta, dict):
+        return {"success": False, "error": f"checkpoint {target_round} is corrupt"}
+    loop = _load_loop_meta(meta, name)
+    if loop is None:
+        return {"success": False, "error": f"checkpoint {target_round} unreadable"}
+    loop.rounds = [r for r in loop.rounds if r.round_num <= target_round]
+    loop.current_round = target_round
+    loop.status = LoopStatus.NEEDS_HUMAN
+    _save_loop_meta(loop)
+
+    # Truncate trajectory to the target round's last recorded seq.
+    traj_seq = loop.rounds[-1].trajectory_seq if loop.rounds else None
+    traj_path = loops_dir() / name / "trajectory.jsonl"
+    if traj_seq is not None and traj_path.exists():
+        from hermes.trajectory import truncate
+
+        truncate(traj_path, traj_seq)
+
+    return {
+        "success": True,
+        "loop": name,
+        "target_round": target_round,
+        "status": loop.status.value,
+        "rounds_kept": len(loop.rounds),
+        "trajectory_seq": traj_seq,
+    }
+
+
 def init_loop(name: str, pattern: str = "custom") -> dict[str, Any]:
     _ensure_loops_dir()
     loop_dir = loops_dir() / name
@@ -2010,6 +2096,12 @@ def record_round(
 
     # Stage 5: 终态时按需触发 GEPA 自进化周期（opt-in，失败不影响 record_round）
     gepa_result = _maybe_run_gepa(loop, round_data)
+
+    # A2: 每轮结束落 checkpoint（快照 meta.json，供 rewind 回滚）。
+    try:
+        checkpoint_loop(name)
+    except Exception as exc:  # noqa: BLE001 — checkpoint 失败不阻断记录
+        logger.warning("checkpoint_loop failed for %s: %s", name, exc)
 
     return {
         "success": True,

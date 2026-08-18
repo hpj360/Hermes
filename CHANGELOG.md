@@ -6,6 +6,18 @@
 
 ### Added
 
+- 上下文维护三能力（Reasonix 借鉴，见 `docs/roadmap/reasonix-opendesign-integration.md` Part A）：
+  - `hermes/context.py`：`env_summary`（稳定可版本缓存的环境摘要）、
+    `build_stable_prefix`（固定顺序、无易变内容的前缀组装）、
+    `prune_stale_tool_outputs`（compaction 前裁剪陈旧工具输出）、
+    `assert_stable_prefix`（跨轮前缀稳定性契约）；
+  - `hermes context-summary` CLI（打印稳定环境摘要 + 前缀）；
+  - `hermes.workbench.llm.chat` 可选 `stable_prefix` 参数（直连路径前缀稳定化）。
+- Loop checkpoint / rewind（Reasonix 借鉴 A2）：
+  - `checkpoint_loop`（每轮落 `checkpoints/<round>.json`）+ `rewind_loop`（回滚
+    rounds + 截断 trajectory + 置 NEEDS_HUMAN）+ `hermes loop rewind/checkpoints`；
+  - `trajectory.truncate`（按 seq 原子截断轨迹）。
+- 知识文档 `knowledge/context-engineering.md`（稳定前缀/会话分离/checkpoint）。
 - M4 记忆升级：新增 `MemoryBackend` 协议（`memory_backend.py`）+ `Mem0Backend`
   （`mem0_adapter.py`，懒加载，`hermes[mem0]` optional extra）+ `MemorySyncService`
   （`memory_sync.py`，异步入队抽取，pending 落盘重启可恢复）。

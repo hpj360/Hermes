@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     openclaw_config_path: Path | None = Field(default=None, alias="OPENCLAW_CONFIG_PATH")
 
     # -------------------------------------------------------------------------
+    # Workbench API token (U2 auth hardening)
+    # -------------------------------------------------------------------------
+    # Single Bearer token protecting /wb/* and /api/* endpoints. When unset,
+    # the workbench server refuses to bind non-loopback addresses (unless
+    # --insecure is passed) instead of silently running open (dev-mode leak).
+    hermes_api_token: str | None = Field(default=None, alias="HERMES_API_TOKEN")
+
+    # -------------------------------------------------------------------------
     # Major model providers (OpenAI-compatible or native)
     # -------------------------------------------------------------------------
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
@@ -249,6 +257,10 @@ class Settings(BaseSettings):
 
     # ADR-0018: 用户自定义 Agent Preset 目录。None = 使用 hermes_state_dir/presets。
     hermes_presets_dir: str | None = Field(default=None, alias="HERMES_PRESETS_DIR")
+    # A1 (Reasonix borrow): 上下文摘要缓存目录。None = hermes_cache_dir。
+    hermes_context_summary_dir: str | None = Field(
+        default=None, alias="HERMES_CONTEXT_SUMMARY_DIR"
+    )
 
     # Search paths that are consulted for inherited .env files.
     inherit_env_paths: ClassVar[list[Path]] = [

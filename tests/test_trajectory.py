@@ -449,6 +449,27 @@ def test_archive_trajectory_increments_cycle(tmp_path):
     assert dest.read_text() == "old2"
 
 
+def test_truncate_keeps_upto_seq(tmp_path):
+    from hermes.trajectory import truncate
+
+    path = tmp_path / "trajectory.jsonl"
+    logger = TrajectoryLogger(path)
+    logger.record("dispatch/request", {"payload": {}})
+    logger.record("dispatch/request", {"payload": {}})
+    logger.record("dispatch/request", {"payload": {}})
+
+    truncate(path, 2)
+
+    events = TrajectoryLogger(path).events()
+    assert [e.seq for e in events] == [1, 2]
+
+
+def test_truncate_missing_file(tmp_path):
+    from hermes.trajectory import truncate
+
+    truncate(tmp_path / "nope.jsonl", 5)  # no-op, must not raise
+
+
 def test_record_write_failure_raises(tmp_path, monkeypatch):
     from hermes.trajectory import TrajectoryLogger
 

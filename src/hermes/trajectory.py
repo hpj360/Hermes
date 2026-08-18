@@ -160,6 +160,31 @@ def assert_reconstructable(
     )
 
 
+def truncate(path: Path, upto_seq: int) -> None:
+    """Atomically rewrite *path* keeping only events with ``seq <= upto_seq``.
+
+    Used by ``rewind_loop`` (A2) to roll the trajectory back to a checkpoint's
+    last sequence number. Corrupt lines are preserved as-is (they are not
+    re-parsed here); only well-formed lines with a numeric ``seq`` are filtered.
+    """
+    if not path.exists():
+        return
+    lines = path.read_text(encoding="utf-8").splitlines()
+    kept: list[str] = []
+    for line in lines:
+        line = line.rstrip("\n")
+        if not line.strip():
+            kept.append(line)
+            continue
+        try:
+            obj = json.loads(line)
+            if int(obj.get("seq", 0)) <= upto_seq:
+                kept.append(line)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            kept.append(line)  # preserve unparseable lines verbatim
+    path.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+
+
 def archive_trajectory(path: Path) -> Path | None:
     """Rename an existing trajectory file to ``trajectory.<cycle>.jsonl``.
 

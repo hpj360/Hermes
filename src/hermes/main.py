@@ -320,6 +320,26 @@ def cmd_dump_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_context_summary(args: argparse.Namespace) -> int:
+    """Print the stable environment summary + prompt prefix (A1)."""
+    import json
+
+    from hermes.context import build_stable_prefix, env_summary, _project_root
+
+    env = env_summary(_project_root())
+    prefix = build_stable_prefix("", env=env)
+    if getattr(args, "json", False):
+        print(json.dumps({"version": env["version"], "structure": env["structure"],
+                          "prefix_length": len(prefix)}, ensure_ascii=False, indent=2))
+        return 0
+    print("=== Stable Environment Summary ===")
+    print(f"version:   {env['version'][:16]}")
+    print(f"structure: {', '.join(env['structure'])}")
+    print(f"conventions length: {len(env.get('conventions', ''))} chars")
+    print(f"stable prefix length: {len(prefix)} chars")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hermes",
@@ -369,6 +389,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_dump.add_argument("--json", action="store_true", help="Output JSON")
     p_dump.set_defaults(func=cmd_dump_config)
+
+    # context-summary: cache-aware stable prefix inspection (A1, Reasonix borrow).
+    p_ctx = sub.add_parser(
+        "context-summary",
+        help="Print the stable environment summary + prompt prefix (A1)",
+    )
+    p_ctx.add_argument("--json", action="store_true", help="Output JSON")
+    p_ctx.set_defaults(func=cmd_context_summary)
 
     sub.add_parser("doctor", help="Run environment health checks").set_defaults(func=cmd_doctor)
 
