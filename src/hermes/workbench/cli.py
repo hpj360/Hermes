@@ -1578,6 +1578,62 @@ def _register_sync(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> 
     p.set_defaults(func=cmd_workbench_sync)
 
 
+def cmd_workbench_feishu_inbox(args: argparse.Namespace) -> int:
+    """Long-running Feishu bot inbox: consume im.message.receive_v1 into capture.
+
+    Spawns ``lark-cli event consume im.message.receive_v1`` (Feishu WebSocket
+    long-connection, NDJSON on stdout) and ingests each event through
+    :class:`CaptureService`. Bounded with ``--max-events`` / ``--timeout``.
+    """
+    import json as _json
+    import subprocess
+
+    from hermes.workbench.capture import CaptureService
+    from hermes.workbench.feishu_inbox import FeishuInboxService
+
+    svc = FeishuInboxService(CaptureService(_make_todo_store(), _make_notes_dir()))
+    cmd = ["lark-cli", "event", "consume", "im.message.receive_v1"]
+    if args.max_events:
+        cmd += ["--max-events", str(args.max_events)]
+    if args.timeout:
+        cmd += ["--timeout", args.timeout]
+    if args.quiet:
+        cmd += ["--quiet"]
+
+    print("feishu-inbox: consuming im.message.receive_v1 (chat_type=p2p only)")
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert proc.stdout is not None
+    try:
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = _json.loads(line)
+            except _json.JSONDecodeError:
+                continue
+            result = svc.ingest(event)
+            if result is not None:
+                print(f"captured: [{result['type']}] {result['title'][:60]}")
+            else:
+                print("skipped (non-p2p / duplicate / empty)")
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except Exception:  # noqa: BLE001
+            proc.kill()
+    return proc.returncode or 0
+
+
+def _register_feishu_inbox(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = sub.add_parser("feishu-inbox", help="Feishu bot inbox: capture messages into the workbench")
+    p.add_argument("--max-events", type=int, default=0, help="Exit after N events (0 = unlimited)")
+    p.add_argument("--timeout", default=None, help="Exit after DURATION (e.g. 30s, 2m)")
+    p.add_argument("--quiet", action="store_true", help="Suppress lark-cli informational messages")
+    p.set_defaults(func=cmd_workbench_feishu_inbox)
+
+
 def add_workbench_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Register the ``workbench`` subcommand and its nested subcommands."""
     p = sub.add_parser("workbench", help="Hermes Workbench runtime commands")
@@ -1595,6 +1651,7 @@ def add_workbench_subparser(sub: argparse._SubParsersAction[argparse.ArgumentPar
     _register_project(wb_sub)
     _register_trigger(wb_sub)
     _register_sync(wb_sub)
+    _register_feishu_inbox(wb_sub)
 
 
 def register_workbench_commands(parser: argparse.ArgumentParser) -> None:

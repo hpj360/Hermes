@@ -309,6 +309,63 @@ def create_app(state_dir: Path | None = None) -> FastAPI:
             status_code=capture.status,
         )
 
+    # Feishu bot inbox webhook (C3) --------------------------------------
+    @app.post("/feishu/events")
+    async def feishu_events(request: Request):  # type: ignore[no-untyped-def]
+        """Feishu event subscription webhook (bot inbox ingestion).
+
+        Handles ``url_verification`` challenge echo and ``im.message.receive_v1``
+        events. When ``FEISHU_VERIFICATION_TOKEN`` is set, the ``X-Lark-Signature``
+        is verified (HMAC-SHA256 over timestamp+nonce+body). This endpoint needs
+        a public URL (tunnel) — the no-tunnel local path is
+        ``hermes workbench feishu-inbox`` (lark-cli long connection).
+        """
+        import hashlib
+        import hmac as _hmac
+
+        from hermes.config import get_settings as _get_settings
+
+        raw = await request.body()
+        try:
+            payload = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            return JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+        # URL verification handshake
+        if payload.get("type") == "url_verification":
+            return JSONResponse({"challenge": payload.get("challenge", "")})
+
+        # Signature verification (best-effort when token configured)
+        settings = _get_settings()
+        verification_token = getattr(settings, "feishu_verification_token", None)
+        if verification_token:
+            ts = request.headers.get("X-Lark-Request-Timestamp", "")
+            nonce = request.headers.get("X-Lark-Request-Nonce", "")
+            sign = request.headers.get("X-Lark-Signature", "")
+            to_sign = f"{ts}{nonce}{raw.decode('utf-8', 'replace')}"
+            expected = _hmac.new(
+                verification_token.encode("utf-8"),
+                to_sign.encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
+            if not sign or not _hmac.compare_digest(sign, expected):
+                return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+        # Ingest the message event (Feishu nests the payload under "event").
+        from hermes.workbench.capture import CaptureService
+        from hermes.workbench.cli import _make_notes_dir, _make_todo_store
+        from hermes.workbench.feishu_inbox import FeishuInboxService
+
+        event_obj = payload.get("event") or payload
+        svc = FeishuInboxService(CaptureService(_make_todo_store(), _make_notes_dir()))
+        try:
+            result = svc.ingest(event_obj)
+        except Exception as exc:  # noqa: BLE001 - never break the webhook
+            return JSONResponse({"error": str(exc)}, status_code=500)
+        if result is None:
+            return JSONResponse({"skipped": True}, status_code=200)
+        return JSONResponse({"skipped": False, "result": result}, status_code=201)
+
     # SPA static
     dist = (Path(__file__).resolve().parents[3] / "apps" / "web" / "dist")
     if dist.exists():

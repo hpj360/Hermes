@@ -1,8 +1,8 @@
 # 个人工作台 · 实施落地与验收报告
 
-> 版本：v3 | 日期：2026-08-18
+> 版本：v4 | 日期：2026-08-18
 > 依据：`docs/prd/PERSONAL-WORKBENCH-PRD.md`（v4 最终版，D-A~D-E 全部按推荐方案决策）
-> 范围：P0 全部交付单元 + P0.5（捕获落 notes + 摘要 job）
+> 范围：P0 全部交付单元 + P0.5（捕获落 notes + 摘要 job）+ **P1-C3（飞书 bot 入箱）**
 
 ---
 
@@ -26,12 +26,13 @@
 | **日志轮转** | `logging.py` FileHandler → RotatingFileHandler(5MB×5)；网关启动写 `HERMES_DATA_DIR/logs/gateway.log` | `logging.py`、`gateway.py` | ✅ ruff + 全量回归 |
 | **计划任务脚本** | `register-scheduled-tasks.ps1`：一键注册 Workbench(AtLogon)/Backup(每日03:00)/Watchdog(每5分钟) 三个任务，支持 `-Unregister` | `scripts/register-scheduled-tasks.ps1` | ✅ 脚本就绪（运行需用户确认） |
 | **P0.5 捕获落笔记** | `NotesStore`（`HERMES_NOTES_DIR/inbox/<YYYY-MM>/<id>-<slug>.md` 带 frontmatter）+ `CaptureService`（idea/fact/link 落笔记，link 附摘要 job）+ `POST /wb/inbox` + `/notes/summary` | `workbench/notes.py`、`workbench/capture.py`、`config.py` `hermes_notes_dir`、server 路由、`CapturePage` 接入 | ✅ 8 单测 + 2 网关测试；冒烟 link→todo+job+note |
+| **P1-C3 飞书 bot 入箱** | 双通道入箱：①网关 webhook `POST /feishu/events`（url_verification + `FEISHU_VERIFICATION_TOKEN` 签名校验，需公网隧道）②`hermes workbench feishu-inbox` 长连接（lark-cli consume NDJSON，无需隧道）；仅 p2p、按 message_id 去重、URL→link 捕获 | `workbench/feishu_inbox.py`、`gateway.py` webhook、`cli.py` 子命令 | ✅ 12 测试（解析/去重/入箱/校验/签名/命令注册） |
 
 ## 2. 数据与验证
 
 | 项 | 基线（实施前） | 实施后 |
 |---|---|---|
-| 全量 pytest | 1795 passed, 18 skipped | **1878 passed, 18 skipped**（新增 83） |
+| 全量 pytest | 1795 passed, 18 skipped | **1890 passed, 18 skipped**（新增 95） |
 | ruff | 0 error | 0 error |
 | 前端 build | — | tsc 0 error + vite build 成功 |
 | 真实进程冒烟 | — | 44 skills / job 消费到 SUCCEEDED / content-team 项目注册 / inbox link→todo+job+note |
@@ -74,8 +75,8 @@ health scheduler: {workers:{active:0,size:2,running:True}, cron:True, queue_dept
 
 ## 5. 未完成项（P1 / P2）
 
-- **P0 与 P0.5 已全部完成**：调度修复 / 网关 / 鉴权 / content_team 双调度收敛 / content_team 鉴权+token 加密 / 日志轮转 / Windows 常驻与备份脚本 / 计划任务注册脚本 / **捕获落笔记 + 摘要 job**。`register-scheduled-tasks.ps1` 实际注册需用户确认后运行。
-- **P1**：GitHub 双向同步、飞书 bot 入箱、Obsidian vault 索引、数据回采、自动周报、Gated 发布流、知识卡联动、全局日 token 预算
+- **P0、P0.5 已全部完成**；**P1-C3 飞书 bot 入箱已完成**（webhook + lark-cli 长连接双通道）。
+- **P1 剩余**：C1 自动周报+数据回采、C2 GitHub 双向同步、C4 全局日 token 预算、C5 Gated 发布流、C6 Obsidian vault 索引/创作台知识卡
 - **P2**：纪要→行动项、妙计入库、多维表格同步、trajectory 面板、workflow 迁移
 
 > 说明：venv 的 editable 安装指向 `D:\Hermes-release\hermes\src`（运行时副本）。本工作区的 `D:\Hermes\hermes` 变更需同步到该副本才会被运行时加载；本报告交付的代码两树已同步。
