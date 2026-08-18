@@ -78,6 +78,23 @@ class Settings(BaseSettings):
     hermes_api_token: str | None = Field(default=None, alias="HERMES_API_TOKEN")
 
     # -------------------------------------------------------------------------
+    # At-rest encryption key (content_team platform credentials)
+    # -------------------------------------------------------------------------
+    # Used by hermes.content_team.crypto to encrypt PlatformAccount tokens at
+    # rest. When unset, at-rest encryption is disabled (dev mode passthrough).
+    hermes_secret_key: str | None = Field(default=None, alias="HERMES_SECRET_KEY")
+
+    # -------------------------------------------------------------------------
+    # Capture notes directory (P0.5)
+    # -------------------------------------------------------------------------
+    # Where capture marks down idea/link/fact entries as markdown, anchored
+    # outside the git-tracked code tree (D:\Hermes\notes). Only this directory
+    # is git-init'ed as the Obsidian vault notes sub-tree.
+    hermes_notes_dir: Path = Field(
+        default=Path("notes"), alias="HERMES_NOTES_DIR"
+    )
+
+    # -------------------------------------------------------------------------
     # Major model providers (OpenAI-compatible or native)
     # -------------------------------------------------------------------------
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")

@@ -656,6 +656,8 @@ class WorkerPool:
         self._running_jobs = running_jobs if running_jobs is not None else _default_running_jobs
         self._stop = threading.Event()
         self._workers: list[threading.Thread] = []
+        self._active = 0
+        self._active_lock = threading.Lock()
 
     def start(self) -> None:
         if self._workers:
@@ -671,6 +673,18 @@ class WorkerPool:
         for t in self._workers:
             t.join(timeout=2.0)
         self._workers = []
+
+    def is_running(self) -> bool:
+        return any(t.is_alive() for t in self._workers)
+
+    def active_count(self) -> int:
+        """Number of workers currently executing a job (in-flight)."""
+        with self._active_lock:
+            return self._active
+
+    def _mark_active(self, delta: int) -> None:
+        with self._active_lock:
+            self._active = max(0, self._active + delta)
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -738,9 +752,11 @@ class WorkerPool:
 
         # 注册到运行中登记表，使 DAG cascade cancel 能真正中断 RUNNING job。
         self._running_jobs.register(job.job_id, job.cancel_event)
+        self._mark_active(1)
         try:
             self._run_with_retries(job, runtime)
         finally:
+            self._mark_active(-1)
             self._running_jobs.unregister(job.job_id)
             if timer is not None:
                 timer.cancel()

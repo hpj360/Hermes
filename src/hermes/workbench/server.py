@@ -37,6 +37,7 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("GET", r"^/dashboard\.html$", "h_get_root"),
     ("GET", r"^/skills$", "h_get_skills"),
     ("GET", r"^/skills/(?P<name>[^/]+)$", "h_get_skill"),
+    ("POST", r"^/skills/(?P<name>[^/]+)/run$", "h_post_skill_run"),
     ("GET", r"^/memory/facts$", "h_get_facts"),
     ("POST", r"^/memory/facts$", "h_post_facts"),
     ("GET", r"^/memory/facts/(?P<key>[^/]+)$", "h_get_fact"),
@@ -50,6 +51,14 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("POST", r"^/memory/learn$", "h_post_memory_learn"),
     ("POST", r"^/memory/compact$", "h_post_memory_compact"),
     ("GET", r"^/memory/profile$", "h_get_profile"),
+    ("GET", r"^/todos$", "h_get_todos"),
+    ("POST", r"^/todos$", "h_post_todos"),
+    ("GET", r"^/todos/(?P<todo_id>[^/]+)$", "h_get_todo"),
+    ("POST", r"^/todos/(?P<todo_id>[^/]+)/status$", "h_post_todo_status"),
+    ("POST", r"^/todos/(?P<todo_id>[^/]+)/hand-off$", "h_post_todo_handoff"),
+    ("DELETE", r"^/todos/(?P<todo_id>[^/]+)$", "h_delete_todo"),
+    ("POST", r"^/inbox$", "h_post_inbox"),
+    ("GET", r"^/notes/summary$", "h_get_notes_summary"),
     ("GET", r"^/traces/(?P<trace_id>[^/]+)$", "h_get_trace"),
     ("POST", r"^/tasks$", "h_post_tasks"),
     ("GET", r"^/tasks$", "h_get_tasks"),
@@ -165,16 +174,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _check_auth(self) -> bool:
         """Return True if the request is authenticated.
 
-        When ``OPENCLAW_GATEWAY_TOKEN`` is unset, auth is disabled (dev mode).
+        Uses ``HERMES_API_TOKEN`` (constant-time compare) with a backward
+        compatible fallback to ``OPENCLAW_GATEWAY_TOKEN``. When neither is
+        set, auth is disabled (dev mode) — callers must then ensure the
+        server binds loopback only (see :func:`make_server`).
         """
+        import secrets
+
         from hermes.config import get_settings
 
-        token = get_settings().openclaw_gateway_token
-        if not token:
+        settings = get_settings()
+        expected = getattr(settings, "hermes_api_token", None) or getattr(
+            settings, "openclaw_gateway_token", None
+        )
+        if not expected:
             return True  # dev mode: no token configured
         auth_header = self.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
-            return auth_header[7:] == token
+            return secrets.compare_digest(auth_header[7:], expected)
         return False
 
     # CORS ---------------------------------------------------------------
@@ -270,6 +287,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "jobs_total": len(jobs),
                     "jobs_active": non_terminal,
                     "recovery": "ready",
+                    "workers": {
+                        "active": center.worker_pool.active_count(),
+                        "size": center.worker_pool.size,
+                        "running": center.worker_pool.is_running(),
+                    },
+                    "cron": center.cron_scheduler.is_running(),
                 },
             },
         )
@@ -382,6 +405,35 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "entrypoint": spec.entrypoint,
                 "description": spec.description,
                 "requires_bins": spec.requires_bins,
+            },
+        )
+
+    def h_post_skill_run(self, name: str) -> None:
+        """Run a skill synchronously.
+
+        Body: {"args": [...], "timeout": N}. Returns the RunResult.
+        """
+        from hermes.workbench.cli import _make_runner
+
+        body = self._read_json_body()
+        runner = _make_runner()
+        if runner.get(name) is None:
+            raise NotFoundError(f"skill not found: {name}")
+        result = runner.run(
+            name,
+            args=list(body.get("args", []) or []),
+            timeout=body.get("timeout"),
+        )
+        self._send_json(
+            200,
+            {
+                "skill": name,
+                "ok": result.ok,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "exit_code": result.exit_code,
+                "duration": result.duration,
+                "error": result.error,
             },
         )
 
@@ -575,6 +627,131 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         profile = _make_memory().get_user_profile()
         self._send_json(200, profile)
+
+    # todos (U7) ----------------------------------------------------------
+
+    def _todos(self) -> Any:
+        from hermes.workbench.cli import _make_todo_store
+
+        return _make_todo_store()
+
+    def h_get_todos(self) -> None:
+        from hermes.workbench.todos import TodoStatus
+
+        params = self._query_params()
+        status = None
+        if params.get("status"):
+            status = TodoStatus(params["status"].upper())
+        type_ = params.get("type")
+        todos = self._todos().list(status=status, type_=type_)
+        self._send_json(200, {"todos": [t.to_dict() for t in todos]})
+
+    def h_post_todos(self) -> None:
+        from hermes.workbench.todos import Todo
+
+        body = self._read_json_body()
+        if not isinstance(body, dict) or not body.get("title"):
+            raise ValidationError("body must contain 'title'")
+        todo = Todo(
+            title=body["title"],
+            type=body.get("type", "todo"),
+            due=body.get("due"),
+            source=body.get("source", "manual"),
+            external_ref=body.get("external_ref"),
+        )
+        self._todos().create(todo)
+        self._send_json(201, todo.to_dict())
+
+    def h_get_todo(self, todo_id: str) -> None:
+        from hermes.workbench.errors import NotFoundError
+
+        todo = self._todos().get(todo_id)
+        if todo is None:
+            raise NotFoundError(f"todo not found: {todo_id}")
+        self._send_json(200, todo.to_dict())
+
+    def h_post_todo_status(self, todo_id: str) -> None:
+        from hermes.workbench.errors import NotFoundError
+        from hermes.workbench.todos import TodoStatus
+
+        body = self._read_json_body()
+        raw = str(body.get("status", "")).upper()
+        try:
+            status = TodoStatus(raw)
+        except ValueError as e:
+            raise ValidationError(f"invalid status: {raw}") from e
+        ok = self._todos().update_status(todo_id, status)
+        if not ok:
+            raise NotFoundError(f"todo not found: {todo_id}")
+        self._send_json(200, self._todos().get(todo_id).to_dict())
+
+    def h_post_todo_handoff(self, todo_id: str) -> None:
+        from hermes.workbench.errors import NotFoundError
+        from hermes.workbench.todos import TodoService
+
+        body = self._read_json_body()
+        plan = body.get("plan")
+        if not isinstance(plan, list):
+            raise ValidationError("body must contain 'plan' (JSON array)")
+        store = self._todos()
+        if store.get(todo_id) is None:
+            raise NotFoundError(f"todo not found: {todo_id}")
+        try:
+            job_id = TodoService(store).hand_off(
+                todo_id,
+                plan,
+                project=body.get("project", "default"),
+                priority=body.get("priority", 5),
+                timeout=body.get("timeout"),
+            )
+        except ValueError as e:
+            raise ValidationError(str(e)) from e
+        self._send_json(200, {"todo_id": todo_id, "job_id": job_id})
+
+    def h_delete_todo(self, todo_id: str) -> None:
+        from hermes.workbench.errors import NotFoundError
+
+        ok = self._todos().delete(todo_id)
+        if not ok:
+            raise NotFoundError(f"todo not found: {todo_id}")
+        self._send_no_content()
+
+    # capture inbox (P0.5) -----------------------------------------------
+
+    def h_post_inbox(self) -> None:
+        """Route a capture: todo + notes markdown + async summary job.
+
+        Body: {"title", "type": idea|link|fact|todo, "url"?, "source"?,
+               "due"?}. See :class:`CaptureService`.
+        """
+        from hermes.workbench.capture import CaptureService
+        from hermes.workbench.cli import _make_notes_dir, _make_todo_store
+
+        body = self._read_json_body()
+        if not isinstance(body, dict) or not body.get("title"):
+            raise ValidationError("body must contain 'title'")
+        type_ = str(body.get("type", "idea"))
+        if type_ not in ("idea", "link", "fact", "todo"):
+            raise ValidationError(f"invalid capture type: {type_}")
+        result = CaptureService(
+            _make_todo_store(), _make_notes_dir()
+        ).capture(
+            title=str(body["title"]),
+            type_=type_,
+            url=body.get("url"),
+            source=body.get("source", "inbox"),
+            due=body.get("due"),
+        )
+        self._send_json(201, result)
+
+    def h_get_notes_summary(self) -> None:
+        """Return a lightweight vault index summary."""
+        from hermes.workbench.cli import _make_notes_dir, _make_todo_store
+        from hermes.workbench.notes import NotesStore
+
+        notes = NotesStore(_make_notes_dir())
+        todos = _make_todo_store().list()
+        self._send_json(200, {"notes": notes.summary(), "inbox_todos": len(todos)})
 
     # tasks --------------------------------------------------------------
 
@@ -1495,18 +1672,55 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_json(200 if ok else 503, {"success": ok})
 
 
-def make_server(host: str, port: int) -> ThreadingHTTPServer:
-    """Create a ThreadingHTTPServer bound to *host:port*."""
+def _is_loopback(host: str) -> bool:
+    """True when *host* is a loopback address (127.x, ::1, localhost, empty)."""
+    return host in ("", "127.0.0.1", "::1", "localhost")
+
+
+def make_server(host: str, port: int, insecure: bool = False) -> ThreadingHTTPServer:
+    """Create a ThreadingHTTPServer bound to *host:port*.
+
+    When no API token is configured, binding a non-loopback address is
+    refused (unless ``insecure=True``) so the server never silently runs
+    unauthenticated on the network.
+    """
+    from hermes.config import get_settings
+
+    settings = get_settings()
+    has_token = bool(
+        getattr(settings, "hermes_api_token", None)
+        or getattr(settings, "openclaw_gateway_token", None)
+    )
+    if not has_token and not _is_loopback(host) and not insecure:
+        raise ValueError(
+            "HERMES_API_TOKEN is not set: refusing to bind non-loopback "
+            f"address {host!r}. Set a token, bind loopback, or pass --insecure."
+        )
     return ThreadingHTTPServer((host, port), DashboardHandler)
 
 
-def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
-    """Start the dashboard server (blocking)."""
-    httpd = make_server(host, port)
+def run_server(host: str = "127.0.0.1", port: int = 8080, insecure: bool = False) -> None:
+    """Start the dashboard server (blocking).
+
+    Before serving, the scheduler center is started (crash recovery + worker
+    pool + cron scheduler) so that submitted jobs are actually consumed. On
+    shutdown the scheduler is stopped gracefully.
+    """
+    from hermes.workbench.cli import _make_scheduler_center
+
+    center = _make_scheduler_center()
+    recovery_stats = center.start()
+    httpd = make_server(host, port, insecure=insecure)
     print(f"Hermes workbench dashboard listening on http://{host}:{port}")
+    print(
+        f"scheduler started: requeued={recovery_stats['requeued']} "
+        f"abandoned={recovery_stats['abandoned']}"
+    )
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nShutting down.")
+    finally:
+        center.stop()
         httpd.shutdown()
         httpd.server_close()

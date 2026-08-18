@@ -174,16 +174,13 @@ def test_recovery_disabled_abandons_queued_and_running(tmp_path: Path) -> None:
 def test_get_scheduler_returns_same_singleton(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reset_scheduler: None
 ) -> None:
-    """get_scheduler 多次调用应返回同一组组件实例。"""
-    # 避免在项目 data 目录下创建真实内存存储
-    monkeypatch.setattr(
-        "hermes.content_team.scheduler.get_memory_service", lambda: None
-    )
+    """D2: get_scheduler 返回同一调度中心的同一组组件（门面语义）。"""
 
     first = get_scheduler(state_dir=tmp_path)
     second = get_scheduler()
 
-    assert first is second
+    # 返回的是门面 dict（每次新构造），但底层组件是同一个共享中心实例。
+    assert first is not second
     assert first["store"] is second["store"]
     assert first["queue"] is second["queue"]
     assert first["pool"] is second["pool"]
@@ -193,11 +190,8 @@ def test_get_scheduler_returns_same_singleton(
 def test_init_scheduler_on_startup_creates_all_components(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reset_scheduler: None
 ) -> None:
-    """init_scheduler_on_startup 应创建全部组件并启动工作线程池。"""
-    monkeypatch.setattr(
-        "hermes.content_team.scheduler.get_memory_service", lambda: None
-    )
-    # 预先用 tmp_path 构造单例，避免写入项目 data 目录
+    """D2: init_scheduler_on_startup 返回共享中心组件并启动工作线程池。"""
+    # 预先用 tmp_path 构造中心，避免写入项目 data 目录
     get_scheduler(state_dir=tmp_path)
 
     sched = init_scheduler_on_startup()
@@ -217,11 +211,8 @@ def test_init_scheduler_on_startup_creates_all_components(
 def test_env_var_disables_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reset_scheduler: None
 ) -> None:
-    """CONTENT_TEAM_SCHEDULER_RECOVERY=off 时 RecoveryManager 应禁用恢复。"""
-    monkeypatch.setattr(
-        "hermes.content_team.scheduler.get_memory_service", lambda: None
-    )
-    monkeypatch.setenv("CONTENT_TEAM_SCHEDULER_RECOVERY", "off")
+    """HERMES_SCHEDULER_RECOVERY=off 时共享中心的 RecoveryManager 禁用恢复。"""
+    monkeypatch.setenv("HERMES_SCHEDULER_RECOVERY", "off")
     # 在构造单例前预置一个 QUEUED 作业
     sched = get_scheduler(state_dir=tmp_path)
     queued = _make_job("job-queued", JobStatus.QUEUED)

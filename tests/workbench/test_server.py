@@ -43,6 +43,7 @@ def patched_services(monkeypatch, skills_dir, tmp_path):
 
     state = tmp_path / "state"
     state.mkdir()
+    monkeypatch.setattr(cli_mod, "_state_dir", lambda: state)
     runner = SkillRunner(base_dir=skills_dir)
     memory = MemoryService(state_dir=state)
     store = cli_mod.TaskStore(state_dir=state)
@@ -375,6 +376,77 @@ def test_auth_invalid_bearer_token_rejected(client, monkeypatch):
     monkeypatch.setattr("hermes.config.get_settings", lambda: FakeSettings())
     resp = client("GET", "/skills", headers={"Authorization": "Bearer wrong-token"})
     assert resp.status == 401
+
+
+def test_auth_hermes_api_token_priority(client, monkeypatch):
+    """HERMES_API_TOKEN takes priority over the legacy gateway token."""
+    from hermes.workbench.server import DashboardHandler
+
+    class _FakeHandler:
+        def __init__(self) -> None:
+            self.headers = {"Authorization": "Bearer hermes-token"}
+
+    class FakeSettings:
+        hermes_api_token = "hermes-token"
+        openclaw_gateway_token = "legacy-token"
+
+    monkeypatch.setattr("hermes.config.get_settings", lambda: FakeSettings())
+    assert DashboardHandler._check_auth(_FakeHandler()) is True
+
+
+def test_auth_hermes_api_token_rejects_legacy(client, monkeypatch):
+    """Legacy token no longer authenticates when HERMES_API_TOKEN is set."""
+    from hermes.workbench.server import DashboardHandler
+
+    class _FakeHandler:
+        def __init__(self) -> None:
+            self.headers = {"Authorization": "Bearer legacy-token"}
+
+    class FakeSettings:
+        hermes_api_token = "hermes-token"
+        openclaw_gateway_token = "legacy-token"
+
+    monkeypatch.setattr("hermes.config.get_settings", lambda: FakeSettings())
+    assert DashboardHandler._check_auth(_FakeHandler()) is False
+
+
+def test_make_server_refuses_non_loopback_without_token(monkeypatch):
+    """U2: non-loopback bind without token is refused (unless --insecure)."""
+    from hermes.workbench.server import make_server
+
+    class FakeSettings:
+        hermes_api_token = None
+        openclaw_gateway_token = None
+
+    monkeypatch.setattr("hermes.config.get_settings", lambda: FakeSettings())
+    with pytest.raises(ValueError, match="HERMES_API_TOKEN"):
+        make_server("0.0.0.0", 8123)
+
+
+def test_make_server_allows_non_loopback_insecure(monkeypatch):
+    """U2: --insecure explicitly opts out of the loopback guard."""
+    from hermes.workbench.server import make_server
+
+    class FakeSettings:
+        hermes_api_token = None
+        openclaw_gateway_token = None
+
+    monkeypatch.setattr("hermes.config.get_settings", lambda: FakeSettings())
+    srv = make_server("0.0.0.0", 0, insecure=True)
+    srv.server_close()
+
+
+def test_make_server_loopback_without_token_allowed(monkeypatch):
+    """U2: loopback bind without token stays allowed (dev mode)."""
+    from hermes.workbench.server import make_server
+
+    class FakeSettings:
+        hermes_api_token = None
+        openclaw_gateway_token = None
+
+    monkeypatch.setattr("hermes.config.get_settings", lambda: FakeSettings())
+    srv = make_server("127.0.0.1", 0)
+    srv.server_close()
 
 
 # ---------------------------------------------------------------------------
@@ -1102,3 +1174,74 @@ def test_stream_jobs_sse_connects(patched_services, server):
     chunk = resp.read1(64)
     assert b"connected" in chunk
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Todos (U7) routes
+# ---------------------------------------------------------------------------
+
+
+def test_todos_create_list_get(patched_services, client):
+    resp = client("POST", "/todos", body={"title": "写一篇关于博若莱的文章", "type": "idea"})
+    assert resp.status == 201
+    todo = _json(resp)
+    assert todo["title"] == "写一篇关于博若莱的文章"
+    todo_id = todo["todo_id"]
+
+    resp = client("GET", "/todos")
+    assert resp.status == 200
+    data = _json(resp)
+    assert any(t["todo_id"] == todo_id for t in data["todos"])
+
+    resp = client("GET", f"/todos/{todo_id}")
+    assert resp.status == 200
+    assert _json(resp)["status"] == "PENDING"
+
+
+def test_todos_filter_by_status(patched_services, client):
+    client("POST", "/todos", body={"title": "a"})
+    client("POST", "/todos", body={"title": "b"})
+    client("GET", "/todos")
+    todos = _json(client("GET", "/todos"))["todos"]
+    assert len(todos) == 2
+    done = [t for t in todos][0]
+    resp = client("POST", f"/todos/{done['todo_id']}/status", body={"status": "done"})
+    assert resp.status == 200
+    remaining = _json(client("GET", "/todos?status=PENDING"))["todos"]
+    assert len(remaining) == 1
+
+
+def test_todos_handoff_creates_job(patched_services, client):
+    resp = client("POST", "/todos", body={"title": "handoff me"})
+    todo = _json(resp)
+    resp = client("POST", f"/todos/{todo['todo_id']}/hand-off", body={"plan": [{"skill": "alpha"}]})
+    assert resp.status == 200
+    data = _json(resp)
+    assert data["todo_id"] == todo["todo_id"]
+    assert data["job_id"]
+
+    fetched = _json(client("GET", f"/todos/{todo['todo_id']}"))
+    assert fetched["status"] == "HANDED_OFF"
+    assert fetched["job_id"] == data["job_id"]
+
+    # job is registered in the shared scheduler center
+    resp = client("GET", "/jobs")
+    assert resp.status == 200
+    jobs = _json(resp)["jobs"]
+    assert any(j["job_id"] == data["job_id"] for j in jobs)
+
+
+def test_todos_handoff_invalid_plan(patched_services, client):
+    resp = client("POST", "/todos", body={"title": "x"})
+    todo = _json(resp)
+    resp = client("POST", f"/todos/{todo['todo_id']}/hand-off", body={"plan": "not-a-list"})
+    assert resp.status == 400
+
+
+def test_todos_delete(patched_services, client):
+    resp = client("POST", "/todos", body={"title": "gone"})
+    todo = _json(resp)
+    resp = client("DELETE", f"/todos/{todo['todo_id']}")
+    assert resp.status == 204
+    resp = client("GET", f"/todos/{todo['todo_id']}")
+    assert resp.status == 404

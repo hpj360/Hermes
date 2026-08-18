@@ -1127,13 +1127,16 @@ def test_cmd_serve_invokes_run_server(
 
     captured: list[tuple[str, int]] = []
 
-    def _fake_run_server(host: str, port: int) -> None:
+    def _fake_run_server(host: str, port: int, insecure: bool = False) -> None:
         captured.append((host, port))
+        captured_insecure.append(insecure)
 
+    captured_insecure: list[bool] = []
     monkeypatch.setattr(server_mod, "run_server", _fake_run_server)
     rc = cmd_workbench_serve(_ns(host="127.0.0.1", port=8123))
     assert rc == 0
     assert captured == [("127.0.0.1", 8123)]
+    assert captured_insecure == [False]
 
 
 # ---------------------------------------------------------------------------

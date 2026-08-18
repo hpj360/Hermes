@@ -427,6 +427,22 @@ def _make_scheduler() -> TaskScheduler:
     )
 
 
+def _best_effort_memory() -> Any | None:
+    """Build a memory service for recovery audit, or None when unavailable."""
+    try:
+        return _make_memory()
+    except Exception:  # noqa: BLE001 — recovery must not break on memory issues
+        return None
+
+
+def _recovery_enabled() -> bool:
+    """Whether crash recovery is enabled (HERMES_SCHEDULER_RECOVERY != 'off')."""
+    import os
+
+    raw = os.environ.get("HERMES_SCHEDULER_RECOVERY", "on")
+    return raw.strip().lower() != "off"
+
+
 # ---------------------------------------------------------------------------
 # Phase 3 scheduler center (JobStore/Queue/StatusBus/Router/Trigger/DAG)
 # ---------------------------------------------------------------------------
@@ -448,15 +464,18 @@ class _SchedulerCenter:
         "job_queue",
         "job_store",
         "project_registry",
+        "recovery",
         "router",
         "status_bus",
         "trigger_store",
+        "worker_pool",
     )
 
     def __init__(self) -> None:
         from hermes.workbench.dag import DependencyGraph
         from hermes.workbench.projects import ProjectRegistry, Router
-        from hermes.workbench.scheduler import JobQueue, JobStatus, JobStore, StatusBus
+        from hermes.workbench.recovery import RecoveryManager
+        from hermes.workbench.scheduler import JobQueue, JobStatus, JobStore, StatusBus, WorkerPool
         from hermes.workbench.triggers import CronScheduler, TriggerStore
 
         self.job_store = JobStore(state_dir=_state_dir())
@@ -478,6 +497,56 @@ class _SchedulerCenter:
         self.dag = DependencyGraph(
             self.job_store, self.job_queue, self.status_bus
         )
+
+        # 调度执行主线（P0 U1a）：serve 模式下必须真正消费 job，否则
+        # POST /jobs 的 job 永远停在 QUEUED。WorkerPool 消费队列，
+        # RecoveryManager 处理崩溃遗留，on_job_done 接 DAG 级联回调。
+        self.worker_pool = WorkerPool(
+            size=2,
+            router=self.router,
+            queue=self.job_queue,
+            store=self.job_store,
+            bus=self.status_bus,
+            on_job_done=self.dag.on_job_done,
+        )
+        self.recovery = RecoveryManager(
+            store=self.job_store,
+            queue=self.job_queue,
+            memory=_best_effort_memory(),
+            enabled=_recovery_enabled(),
+        )
+
+    # -- lifecycle ----------------------------------------------------------
+
+    def start(self) -> dict[str, Any]:
+        """Run crash recovery, then start the worker pool and cron scheduler.
+
+        Returns the recovery stats ``{requeued, abandoned, skipped}`` so the
+        server can surface them. All three steps are idempotent.
+        """
+        stats = self.recovery.recover()
+        self.worker_pool.start()
+        self.cron_scheduler.start()
+        return stats
+
+    def stop(self) -> None:
+        """Stop cron scheduler and worker pool (graceful)."""
+        self.cron_scheduler.stop()
+        self.worker_pool.stop()
+
+    @property
+    def scheduler_status(self) -> dict[str, Any]:
+        """Human/API-facing scheduler status (worker active/idle + queue)."""
+        return {
+            "running": self.worker_pool.is_running() or self.cron_scheduler.is_running(),
+            "workers": {
+                "active": self.worker_pool.active_count(),
+                "idle": max(0, self.worker_pool.size - self.worker_pool.active_count()),
+                "size": self.worker_pool.size,
+            },
+            "queue_depth": self.job_queue.size(),
+            "cron": self.cron_scheduler.is_running(),
+        }
 
 
 _center_lock: threading.Lock = threading.Lock()
@@ -503,6 +572,21 @@ def _reset_scheduler_center() -> None:
     global _center
     with _center_lock:
         _center = None
+
+
+def _make_todo_store() -> Any:
+    """Build (or reuse) the TodoStore backed by the shared state dir."""
+    from hermes.workbench.todos import TodoStore
+
+    return TodoStore(state_dir=_state_dir())
+
+
+def _make_notes_dir() -> Any:
+    """Resolve the capture notes directory (HERMES_NOTES_DIR)."""
+    notes_dir = get_settings().hermes_notes_dir
+    if not notes_dir.is_absolute():
+        notes_dir = get_settings().hermes_state_dir.parent / notes_dir
+    return notes_dir
 
 
 def _make_dag() -> Any:
@@ -746,7 +830,7 @@ def cmd_workbench_serve(args: argparse.Namespace) -> int:
     except ImportError as exc:
         print(f"server not available: {exc}", file=sys.stderr)
         return 1
-    run_server(args.host, args.port)
+    run_server(args.host, args.port, insecure=getattr(args, "insecure", False))
     return 0
 
 
@@ -1307,6 +1391,11 @@ def _register_serve(sub: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     p = sub.add_parser("serve", help="Run the dashboard API server (P3)")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
+    p.add_argument(
+        "--insecure",
+        action="store_true",
+        help="Allow binding non-loopback without HERMES_API_TOKEN (not recommended)",
+    )
     p.set_defaults(func=cmd_workbench_serve)
 
 

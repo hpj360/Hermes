@@ -64,6 +64,7 @@ def register_daily_collection_trigger(cron_expr: str = "0 9 * * *") -> str:
     trigger = Trigger(
         job_template={
             "type": "data_collection",
+            "target_project": "content-team",
             "payload": {"action": "collect_metrics"},
             # task 形状：worker 执行时经 ``_task_from_dict`` 恢复为
             # ``task.goal`` 承载业务上下文（type=collect），并由
@@ -106,6 +107,7 @@ def register_publish_trigger(cron_expr: str, content_id: Any, platform: str) -> 
     trigger = Trigger(
         job_template={
             "type": "publish",
+            "target_project": "content-team",
             "payload": payload,
             # task 形状：goal 承载发布上下文，由 ContentTeamTaskScheduler
             # 分发到 PublishDispatcher.dispatch 真正执行发布。

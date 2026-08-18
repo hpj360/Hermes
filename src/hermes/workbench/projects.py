@@ -318,6 +318,13 @@ class ProjectRuntime:
         if self._scheduler is None:
             with self._lock:
                 if self._scheduler is None:
+                    # D2: content-team 项目使用内容业务执行器（publish/collect），
+                    # 与其它项目的通用 AgentLoop/TaskScheduler 隔离。
+                    if self.conn.config.get("executor") == "content-team":
+                        from hermes.content_team.runtime import ContentTeamTaskScheduler
+
+                        self._scheduler = ContentTeamTaskScheduler()
+                        return self._scheduler
                     from hermes.workbench.cli import TaskScheduler, TaskStore, TaskRegistry
 
                     store = TaskStore(state_dir=Path(self.conn.state_dir))

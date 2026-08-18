@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
 def setup_logging(
     level: str = "INFO",
     log_file: Path | None = None,
+    max_bytes: int = 5 * 1024 * 1024,
+    backup_count: int = 5,
 ) -> logging.Logger:
     """Configure logging for Hermes.
 
     All logs go to stdout by default. If log_file is provided, logs are also
-    written there (rotated externally if needed).
+    written there through a ``RotatingFileHandler`` (5 MB × 5 backups) so a
+    long-running service never grows a log file without bound.
     """
     root_logger = logging.getLogger("hermes")
     root_logger.setLevel(getattr(logging, level.upper(), logging.INFO))
@@ -33,7 +37,12 @@ def setup_logging(
 
     if log_file is not None:
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+            encoding="utf-8",
+        )
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
 

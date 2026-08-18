@@ -1,151 +1,125 @@
-"""Content-team scheduler integration.
+"""Content-team scheduler integration (D2: converged single scheduler).
 
-Wraps hermes workbench scheduler and recovery for content-team use:
-- Initializes JobStore, JobQueue, WorkerPool
-- Integrates RecoveryManager for crash recovery on startup
-- Provides singleton access to scheduler components
+Since PRD decision D2, content-team no longer owns a second
+``JobStore``/``JobQueue``/``WorkerPool``. This module is a thin facade over
+the workbench scheduler center (``hermes.workbench.cli._make_scheduler_center``):
+
+* **One JobStore / JobQueue / WorkerPool / RecoveryManager** — the same center
+  the gateway starts, so publish/collect jobs submitted here are persisted to
+  the shared ``jobs.db``, recovered on crash, and executed by the gateway
+  workers.
+* **One Router** — the ``content-team`` project is registered in the center's
+  ``ProjectRegistry`` with ``config.executor == "content-team"`` so fired jobs
+  targeting ``content-team`` resolve to ``ContentTeamTaskScheduler`` (which
+  dispatches publish/collect via ``PublishDispatcher`` / ``MetricsCollector``).
+* ``init_scheduler_on_startup`` / ``shutdown_scheduler`` remain idempotent and
+  may be called from the gateway lifespan or a legacy content_team app entry.
 """
 from __future__ import annotations
 
-import os
 import threading
-from pathlib import Path
 from typing import Any
 
-from hermes.content_team.memory import get_memory_service
 from hermes.content_team.observability import log_event
-from hermes.content_team.runtime import ContentTeamRouter
-from hermes.workbench.recovery import RecoveryManager
-from hermes.workbench.scheduler import JobQueue, JobStore, WorkerPool
 
 __all__ = [
     "get_scheduler",
     "init_scheduler_on_startup",
     "shutdown_scheduler",
+    "ensure_content_team_project",
 ]
 
-
-# 存储目录：项目根目录下的 data/content_team_jobs/
-# JobStore 会在该目录下创建 jobs.json
-_DEFAULT_STATE_DIR = Path(__file__).resolve().parents[3] / "data" / "content_team_jobs"
-
-# 单例实例与保护锁
-_SCHEDULER: dict[str, Any] | None = None
-_SCHEDULER_LOCK = threading.Lock()
-
-# 环境变量名：控制是否启用崩溃恢复（值为 "off" 时禁用）
-_RECOVERY_ENV_VAR = "CONTENT_TEAM_SCHEDULER_RECOVERY"
+# 单例锁（仅保护并发初始化竞争；真正的单例由 workbench 中心管理）
+_INIT_LOCK = threading.Lock()
+_CONTENT_TEAM_PROJECT_ID = "content-team"
 
 
-class _NoopRouter:
-    """占位 Router（已废弃，保留仅作兼容引用）。
+def _center() -> Any:
+    """Return the shared workbench scheduler center (the single scheduler)."""
+    from hermes.workbench.cli import _make_scheduler_center
 
-    content_team 已接入 ``ContentTeamRouter``（见 ``hermes.content_team.runtime``），
-    能真正执行发布/采集任务。本类不再被调度器使用，仅保留以避免破坏可能
-    存在的旧 import。
+    return _make_scheduler_center()
+
+
+def ensure_content_team_project(center: Any) -> Any:
+    """Register the ``content-team`` project in the center's registry (idempotent).
+
+    The project routes to ``ContentTeamTaskScheduler`` (publish/collect)
+    instead of the generic skill loop. ``state_dir`` points at the shared
+    state dir so memory/task stores stay on the anchored data path.
     """
+    from hermes.config import get_settings
 
-    def resolve(self, project_id: str) -> Any:
-        raise RuntimeError(
-            "content_team scheduler has no project runtime wired; "
-            "job execution is not yet supported"
-        )
-
-    def try_acquire(self, project_id: str) -> bool:
-        return True
-
-    def release(self, project_id: str) -> None:
-        return None
-
-
-def _recovery_enabled() -> bool:
-    """读取 ``CONTENT_TEAM_SCHEDULER_RECOVERY`` 环境变量（默认 "on"）。
-
-    值为 "off"（不区分大小写、忽略首尾空白）时返回 False，表示禁用
-    自动恢复，QUEUED 与 RUNNING 作业都会被标记为 ABANDONED。
-    """
-    raw = os.environ.get(_RECOVERY_ENV_VAR, "on")
-    return raw.strip().lower() != "off"
-
-
-def _build_scheduler(state_dir: Path | str | None = None) -> dict[str, Any]:
-    """构造调度器各组件并返回组件字典。"""
-    resolved_dir = Path(state_dir) if state_dir is not None else _DEFAULT_STATE_DIR
-    store = JobStore(state_dir=resolved_dir)
-    queue = JobQueue()
-    router = ContentTeamRouter()
-    # 2 个守护线程 worker；WorkerPool.start() 内部以 daemon=True 创建线程
-    pool = WorkerPool(size=2, router=router, queue=queue, store=store)
-
-    # 内存服务：best-effort 接入，失败时降级为 None，不阻断恢复流程
-    try:
-        memory = get_memory_service()
-    except Exception:  # noqa: BLE001
-        memory = None
-
-    recovery = RecoveryManager(
-        store=store,
-        queue=queue,
-        memory=memory,
-        enabled=_recovery_enabled(),
+    registry = center.project_registry
+    if registry.get(_CONTENT_TEAM_PROJECT_ID) is not None:
+        return registry.get(_CONTENT_TEAM_PROJECT_ID)
+    conn = registry.add(
+        name="Content Team",
+        project_type="api",
+        state_dir=str(get_settings().hermes_state_dir),
+        config={"executor": "content-team"},
+        max_concurrent=2,
+        conn_id=_CONTENT_TEAM_PROJECT_ID,
     )
-    return {"store": store, "queue": queue, "pool": pool, "recovery": recovery}
+    log_event("content_team_project_registered", "content-team 项目已注册到调度中心")
+    return conn
 
 
-def get_scheduler(state_dir: Path | str | None = None) -> dict[str, Any]:
-    """获取（或首次初始化）content_team 调度器单例。
+def get_scheduler(state_dir: object = None) -> dict[str, Any]:
+    """Return the shared scheduler components as ``{store, queue, pool, recovery}``.
 
-    返回包含 ``store`` / ``queue`` / ``pool`` / ``recovery`` 四个组件的
-    字典。首次调用时按需构造；后续调用返回同一实例（此时 ``state_dir``
-    入参将被忽略）。
+    ``state_dir`` is ignored (kept for backward compatibility) — D2 requires a
+    single store backed by the workbench center.
     """
-    global _SCHEDULER
-    with _SCHEDULER_LOCK:
-        if _SCHEDULER is None:
-            _SCHEDULER = _build_scheduler(state_dir=state_dir)
-        return _SCHEDULER
+    with _INIT_LOCK:
+        center = _center()
+        ensure_content_team_project(center)
+        return {
+            "store": center.job_store,
+            "queue": center.job_queue,
+            "pool": center.worker_pool,
+            "recovery": center.recovery,
+        }
 
 
 def init_scheduler_on_startup() -> dict[str, Any]:
-    """应用启动时执行崩溃恢复并启动工作线程池。
+    """Start the shared scheduler center (recovery + worker pool) if needed.
 
-    - 获取调度器单例
-    - 调用 ``recovery.recover()`` 并以结构化日志记录恢复统计
-    - 启动 WorkerPool（已启动则幂等返回）
+    Also registers the ``content-team`` project and returns the components
+    dict. Idempotent — safe to call from both the gateway lifespan and any
+    legacy content_team app entry.
     """
-    sched = get_scheduler()
-    stats = sched["recovery"].recover()
+    center = _center()
+    stats = center.start()
+    ensure_content_team_project(center)
     log_event(
         "scheduler_recovery",
-        "crash recovery completed",
+        "crash recovery completed (shared center)",
         requeued=stats["requeued"],
         abandoned=stats["abandoned"],
         skipped=stats["skipped"],
     )
-    sched["pool"].start()
-    log_event("scheduler_started", "worker pool started", workers=2)
-    return sched
+    log_event("scheduler_started", "shared worker pool started", workers=center.worker_pool.size)
+    return {
+        "store": center.job_store,
+        "queue": center.job_queue,
+        "pool": center.worker_pool,
+        "recovery": center.recovery,
+    }
 
 
 def shutdown_scheduler() -> None:
-    """应用关闭时优雅停止工作线程池。"""
-    sched = get_scheduler()
+    """Gracefully stop the shared scheduler center."""
     try:
-        sched["pool"].stop()
-    finally:
-        log_event("scheduler_stopped", "worker pool stopped")
+        center = _center()
+        center.stop()
+    except Exception:  # noqa: BLE001
+        pass
+    log_event("scheduler_stopped", "shared worker pool stopped")
 
 
 def _reset_scheduler() -> None:
-    """重置调度器单例（仅供测试使用）。
+    """Reset the workbench center cache (only for tests)."""
+    from hermes.workbench import cli as wb_cli
 
-    会先尝试停止已启动的工作线程池，再清空单例，确保测试间互不干扰。
-    """
-    global _SCHEDULER
-    with _SCHEDULER_LOCK:
-        if _SCHEDULER is not None:
-            try:
-                _SCHEDULER["pool"].stop()
-            except Exception:  # noqa: BLE001
-                pass
-        _SCHEDULER = None
+    wb_cli._reset_scheduler_center()
