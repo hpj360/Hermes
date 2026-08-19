@@ -34,21 +34,89 @@ with the loop state machine decoupled into plain classes.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 __all__ = [
     "AGENT_FAILURE_THRESHOLD",
     "BudgetGuard",
     "BudgetVerdict",
+    "DifficultyTier",
     "RoleFailureTracker",
+    "TIER_BUDGETS",
     "TokenLimitBreaker",
     "TokenVerdict",
+    "resolve_tier",
+    "tier_budget",
 ]
 
 # Layer 2 threshold: a role failing this many consecutive rounds is tripped.
 # 1 failure may be noise; 2 consecutive failures mean the role truly cannot
 # complete the current task — continuing would just burn tokens.
 AGENT_FAILURE_THRESHOLD = 2
+
+
+# ── Layer 0: difficulty-tiered budgets ──────────────────────────────
+
+
+class DifficultyTier(str, Enum):
+    """Task difficulty tier declared by the task contract.
+
+    A single flat loop budget either starves hard tasks (the run dies inside
+    budget and the failure is misread as a capability gap) or over-provisions
+    easy ones (a stuck agent burns the whole pool). The tier comes from the
+    contract itself — explicit declaration, or the answer key's assertion-unit
+    count — never from human impression.
+    """
+
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
+
+
+# Loop-wide token budget per tier. Monotonic by construction (EASY < MEDIUM
+# < HARD); tests lock this so a config edit cannot silently invert it.
+TIER_BUDGETS: dict[DifficultyTier, int] = {
+    DifficultyTier.EASY: 100_000,
+    DifficultyTier.MEDIUM: 500_000,
+    DifficultyTier.HARD: 2_000_000,
+}
+
+# Derivation thresholds when the contract declares no tier: map the answer
+# key's assertion-unit count onto a tier. <=2 units is a trivial check, 3-8
+# a normal task, >=9 a multi-part integration task.
+_EASY_MAX_ASSERTIONS = 2
+_MEDIUM_MAX_ASSERTIONS = 8
+
+
+def resolve_tier(
+    declared: str | None = None,
+    assertion_count: int | None = None,
+) -> DifficultyTier:
+    """Resolve the tier from the task contract, never raising.
+
+    Priority: explicit declaration (case/whitespace tolerant) > derivation
+    from the answer key's assertion-unit count > MEDIUM default. Unknown
+    declared strings fall back to MEDIUM — a budget guard must degrade on
+    dirty metadata, not crash the loop.
+    """
+    if declared:
+        try:
+            return DifficultyTier(str(declared).strip().lower())
+        except ValueError:
+            return DifficultyTier.MEDIUM
+    if assertion_count is not None and assertion_count >= 0:
+        if assertion_count <= _EASY_MAX_ASSERTIONS:
+            return DifficultyTier.EASY
+        if assertion_count <= _MEDIUM_MAX_ASSERTIONS:
+            return DifficultyTier.MEDIUM
+        return DifficultyTier.HARD
+    return DifficultyTier.MEDIUM
+
+
+def tier_budget(tier: DifficultyTier) -> int:
+    """Token budget for *tier*."""
+    return TIER_BUDGETS[tier]
 
 
 # ── Layer 1: per-agent token limit ──────────────────────────────────
@@ -194,6 +262,11 @@ class BudgetGuard:
     used: int = 0
     limit: int = 500_000
     history: list[int] = field(default_factory=list)
+
+    @classmethod
+    def for_tier(cls, tier: DifficultyTier, used: int = 0) -> "BudgetGuard":
+        """Build a guard with the loop-wide budget for *tier* (Layer 0 → 3)."""
+        return cls(used=used, limit=tier_budget(tier))
 
     def add(self, tokens: int) -> BudgetVerdict:
         """Record one round's spend and return the verdict."""

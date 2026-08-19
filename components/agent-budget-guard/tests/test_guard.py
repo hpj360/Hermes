@@ -1,12 +1,16 @@
-"""Tests for agent_budget_guard: three-layer token circuit breaker semantics."""
+"""Tests for agent_budget_guard: tiered three-layer token circuit breaker semantics."""
 
 from __future__ import annotations
 
 from agent_budget_guard import (
     AGENT_FAILURE_THRESHOLD,
     BudgetGuard,
+    DifficultyTier,
     RoleFailureTracker,
+    TIER_BUDGETS,
     TokenLimitBreaker,
+    resolve_tier,
+    tier_budget,
 )
 
 # ── Layer 1: TokenLimitBreaker ──────────────────────────────────────
@@ -192,3 +196,78 @@ class TestBudgetGuard:
         assert g.rounds_remaining(1000) == 10**9
         assert g.rounds_remaining(0) == 10**9
         assert g.rounds_remaining(-5) == 10**9
+
+
+# ── Layer 0: difficulty-tiered budgets ──────────────────────────────
+
+
+class TestResolveTier:
+    def test_explicit_declaration_wins(self):
+        assert resolve_tier(declared="hard") is DifficultyTier.HARD
+        assert resolve_tier(declared="easy") is DifficultyTier.EASY
+
+    def test_declaration_case_and_whitespace_tolerant(self):
+        assert resolve_tier(declared="  HARD ") is DifficultyTier.HARD
+        assert resolve_tier(declared="Medium") is DifficultyTier.MEDIUM
+
+    def test_declaration_overrides_assertion_count(self):
+        """显式声明优先于断言数推导（契约声明是最高权威）。"""
+        assert resolve_tier(declared="easy", assertion_count=50) is DifficultyTier.EASY
+
+    def test_unknown_declaration_falls_back_to_medium(self):
+        """脏元数据回退 MEDIUM，不抛异常（guard 必须降级而非崩溃）。"""
+        assert resolve_tier(declared="extreme") is DifficultyTier.MEDIUM
+        assert resolve_tier(declared="") is DifficultyTier.MEDIUM
+        assert resolve_tier(declared=None, assertion_count=None) is DifficultyTier.MEDIUM
+
+    def test_derived_from_assertion_count_boundaries(self):
+        """未声明时按 answer key 的断言单元数推导。"""
+        assert resolve_tier(assertion_count=0) is DifficultyTier.EASY
+        assert resolve_tier(assertion_count=2) is DifficultyTier.EASY
+        assert resolve_tier(assertion_count=3) is DifficultyTier.MEDIUM
+        assert resolve_tier(assertion_count=8) is DifficultyTier.MEDIUM
+        assert resolve_tier(assertion_count=9) is DifficultyTier.HARD
+        assert resolve_tier(assertion_count=100) is DifficultyTier.HARD
+
+    def test_negative_assertion_count_ignored(self):
+        assert resolve_tier(assertion_count=-3) is DifficultyTier.MEDIUM
+
+
+class TestTierBudgets:
+    def test_budgets_monotonic_by_tier(self):
+        """预算随难度单调递增（锁死配置，防止编辑倒挂）。"""
+        assert (
+            TIER_BUDGETS[DifficultyTier.EASY]
+            < TIER_BUDGETS[DifficultyTier.MEDIUM]
+            < TIER_BUDGETS[DifficultyTier.HARD]
+        )
+
+    def test_tier_budget_lookup(self):
+        assert tier_budget(DifficultyTier.EASY) == TIER_BUDGETS[DifficultyTier.EASY]
+        assert tier_budget(DifficultyTier.HARD) == TIER_BUDGETS[DifficultyTier.HARD]
+
+    def test_for_tier_constructor_sets_limit(self):
+        g = BudgetGuard.for_tier(DifficultyTier.HARD)
+        assert g.limit == TIER_BUDGETS[DifficultyTier.HARD]
+        assert g.used == 0
+
+    def test_for_tier_preserves_used(self):
+        g = BudgetGuard.for_tier(DifficultyTier.EASY, used=40_000)
+        assert g.used == 40_000
+
+    def test_hard_task_not_starved_by_medium_budget(self):
+        """分档动机：hard 任务的消耗在 medium 预算下会被误判 budget_exceeded，
+        用 hard 档预算则不会（区分"预算不足"与"能力不足"）。"""
+        spend = 1_200_000
+        medium_guard = BudgetGuard.for_tier(DifficultyTier.MEDIUM)
+        assert medium_guard.add(spend).exceeded is True  # flat budget starves
+
+        hard_guard = BudgetGuard.for_tier(DifficultyTier.HARD)
+        assert hard_guard.add(spend).exceeded is False  # tiered budget fits
+
+    def test_easy_task_still_fused(self):
+        """分档不是放松：easy 任务超档预算仍然熔断。"""
+        g = BudgetGuard.for_tier(DifficultyTier.EASY)
+        verdict = g.add(TIER_BUDGETS[DifficultyTier.EASY])
+        assert verdict.exceeded is True
+        assert verdict.terminal == "budget_exceeded"
