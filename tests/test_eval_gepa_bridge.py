@@ -16,6 +16,7 @@ from hermes.eval.gepa_bridge import (
     eval_result_to_variant_dict,
     make_evaluator,
 )
+from hermes.eval.compliance import ComplianceReport
 from hermes.eval.result import CaseResult, EvalResult
 
 
@@ -95,6 +96,103 @@ class TestEvalResultToVariantDict:
         )
         d = eval_result_to_variant_dict(result, variant_id="v1")
         assert "fallback-name" in d["failure_items"][0]
+
+
+# ── quality (graded completion signal) ──────────────────────────────
+
+
+class TestQuality:
+    def _result(self, passed: int, total: int) -> EvalResult:
+        cases = [
+            CaseResult(id=f"c{i+1}", status="passed" if i < passed else "failed")
+            for i in range(total)
+        ]
+        return EvalResult(
+            total=total,
+            passed=passed,
+            failed=total - passed,
+            pass_rate=passed / total,
+            cases=cases,
+        )
+
+    def test_all_passed_quality_is_one(self):
+        d = eval_result_to_variant_dict(self._result(2, 2), variant_id="v1")
+        assert d["quality"] == 1.0
+
+    def test_majority_pass_capped_below_one(self):
+        """过半但未全过：reward<1 封顶到 0.50，不与满分并列。"""
+        d = eval_result_to_variant_dict(self._result(3, 4), variant_id="v1")
+        assert d["quality"] == 0.5
+
+    def test_minority_pass_keeps_proportional_gradient(self):
+        """低于一半的通过率保留比例梯度（O2 部分分）。"""
+        d = eval_result_to_variant_dict(self._result(1, 4), variant_id="v1")
+        assert d["quality"] == 0.25
+
+    def test_zero_pass_quality_zero(self):
+        d = eval_result_to_variant_dict(self._result(0, 3), variant_id="v1")
+        assert d["quality"] == 0.0
+
+    def test_empty_result_quality_zero(self):
+        d = eval_result_to_variant_dict(EvalResult(), variant_id="v1")
+        assert d["quality"] == 0.0
+
+    def test_error_path_quality_zero(self):
+        d = eval_result_to_variant_dict(
+            self._result(2, 2), variant_id="v1", error="crashed"
+        )
+        assert d["quality"] == 0.0
+
+    def _compliance(self, score: float, label: str, nv: bool = False) -> ComplianceReport:
+        return ComplianceReport(score=score, label=label, not_verifiable=nv)
+
+    def test_compliance_cheating_caps_quality_to_zero(self):
+        """全过但轨迹审计判 cheating：quality 封顶为 0（reward hacking 防御）。"""
+        d = eval_result_to_variant_dict(
+            self._result(2, 2), variant_id="v1",
+            compliance=self._compliance(0.0, "cheating"),
+        )
+        assert d["quality"] == 0.0
+        assert d["success"] is True  # success 语义不变，quality 承载正当性
+
+    def test_compliance_suspected_caps_below_judgment_gap(self):
+        d = eval_result_to_variant_dict(
+            self._result(2, 2), variant_id="v1",
+            compliance=self._compliance(0.49, "suspected_hacking"),
+        )
+        assert d["quality"] == 0.49
+
+    def test_compliance_clean_does_not_raise_quality(self):
+        """clean 报告不抬高 quality（min 语义，只封顶）。"""
+        d = eval_result_to_variant_dict(
+            self._result(1, 4), variant_id="v1",
+            compliance=self._compliance(1.0, "clean"),
+        )
+        assert d["quality"] == 0.25
+
+    def test_compliance_not_verifiable_does_not_cap(self):
+        """证据缺失不封顶：NV 排除而非惩罚（三态语义）。"""
+        d = eval_result_to_variant_dict(
+            self._result(2, 2), variant_id="v1",
+            compliance=self._compliance(0.0, "not_verifiable", nv=True),
+        )
+        assert d["quality"] == 1.0
+
+    def test_evaluator_returns_quality(self):
+        """make_evaluator 产出的 dict 携带 quality（GEPA 梯度信号贯通）。"""
+        class _Runner:
+            def run(self, skill_dir, **kwargs):
+                return EvalResult(
+                    total=2, passed=1, failed=1, pass_rate=0.5,
+                    cases=[
+                        CaseResult(id="c1", status="passed", tokens_used=100),
+                        CaseResult(id="c2", status="failed", tokens_used=50),
+                    ],
+                )
+
+        evaluator = make_evaluator(default_skill_dir_resolver, runner=_Runner())
+        d = evaluator({"variant_id": "v1", "metadata": {"skill_dir": "/s"}}, "t", "c")
+        assert d["quality"] == 0.5
 
 
 # ── default_skill_dir_resolver ───────────────────────────────────────

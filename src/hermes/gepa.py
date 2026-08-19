@@ -38,22 +38,27 @@ logger = logging.getLogger("hermes.gepa")
 
 # ── Scoring weights ──────────────────────────────────────────────────
 #
-# Priority: success >> tokens >> rounds.
-# - Success is binary and dominant: a successful variant always beats a failed
-#   one regardless of token cost (correctness > efficiency).
-# - SUCCESS_WEIGHT is sized to dominate the worst-case penalty envelope so the
-#   "success always wins" contract holds for any realistic benchmark:
-#     worst_case_penalty = |TOKENS| * 1_000_000 + |ROUNDS| * 100
-#                       = 0.01 * 1_000_000 + 50 * 100 = 10_000 + 5_000 = 15_000
-#   SUCCESS_WEIGHT=20_000 leaves a 5_000 safety margin below that envelope.
-#   Bumping TOKENS/ROUNDS magnitudes requires re-checking this bound.
+# Priority: completion-quality >> tokens >> rounds.
+# - Completion quality (VariantResult.quality, [0,1]) is dominant: it carries
+#   the three-state outcome partial credit * compliance cap produced by
+#   hermes.eval.scoring / compliance. When quality is None (legacy binary
+#   path) it degrades to success ? 1.0 : 0.0, so old behavior is unchanged.
+# - The whole efficiency penalty (tokens + rounds) is clamped to
+#   PENALTY_BUDGET = 0.1 * SUCCESS_WEIGHT - 1. This makes any quality gap
+#   >= 0.1 uncrossable by efficiency — in particular the compliance judgment
+#   gap (suspected_hacking <= 0.49 vs minor_violation >= 0.60, a 0.11 gap)
+#   stays intact in variant ranking: a gaming-suspect variant can never
+#   outscore a compliant one by being cheap.
 # - Token efficiency: slight negative weight (fewer tokens = higher score).
-#   Weight is small so it only breaks ties between successful variants.
+#   Weight is small so it only breaks ties between similar-quality variants.
 # - Rounds to converge: moderate negative weight. Faster convergence is better
-#   but secondary to correctness and token cost.
+#   but secondary to quality and token cost.
 SCORE_WEIGHT_SUCCESS = 20000.0
 SCORE_WEIGHT_TOKENS = -0.01
 SCORE_WEIGHT_ROUNDS = -50.0
+# Max total efficiency penalty: 10% of the success weight minus 1, so a 0.1
+# quality gap (2000 pts) always beats the worst-case penalty (1999 pts).
+PENALTY_BUDGET = SCORE_WEIGHT_SUCCESS * 0.1 - 1.0
 
 
 # ── Data model ───────────────────────────────────────────────────────
@@ -97,6 +102,9 @@ class VariantResult:
 
     Fields are designed to map cleanly onto RoundResult metrics:
     - success: did the variant solve the benchmark task?
+    - quality: graded completion signal in [0, 1] (outcome partial credit
+      capped by compliance audit). ``None`` = no graded signal available
+      (legacy binary path); scoring then falls back to success alone.
     - tokens_used: total tokens consumed (efficiency signal)
     - rounds_to_converge: how many builder-checker rounds to ALL GREEN
       (0 = never converged; lower is better)
@@ -110,11 +118,13 @@ class VariantResult:
     rounds_to_converge: int = 0
     failure_items: list[str] = field(default_factory=list)
     error: str | None = None
+    quality: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "variant_id": self.variant_id,
             "success": self.success,
+            "quality": self.quality,
             "tokens_used": self.tokens_used,
             "rounds_to_converge": self.rounds_to_converge,
             "failure_items": list(self.failure_items),
@@ -123,6 +133,11 @@ class VariantResult:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "VariantResult":
+        raw_quality = data.get("quality")
+        try:
+            quality = None if raw_quality is None else float(raw_quality)
+        except (TypeError, ValueError):
+            quality = None
         return cls(
             variant_id=str(data.get("variant_id", "")),
             success=bool(data.get("success", False)),
@@ -130,6 +145,7 @@ class VariantResult:
             rounds_to_converge=int(data.get("rounds_to_converge", 0) or 0),
             failure_items=list(data.get("failure_items") or []),
             error=data.get("error"),
+            quality=quality,
         )
 
 
@@ -186,25 +202,30 @@ class GEPAExperiment:
 def score_variant(result: VariantResult) -> float:
     """Score a variant result. Higher = better.
 
-    Priority: success >> tokens >> rounds.
-    Failed variants still get a score (for ranking/debugging), but a
-    successful variant always outscores a failed one due to the dominant
-    success weight.
+    Priority: completion quality >> tokens >> rounds.
+    - ``quality`` (when not None) is the effective completion level in
+      [0, 1]; it carries outcome partial credit and compliance caps, so
+      e.g. a suspected-gaming run (<=0.49) ranks below any compliant run
+      (>=0.60) regardless of token cost.
+    - ``quality=None`` (legacy) degrades to the binary success level
+      (1.0/0.0), preserving the old "success always wins" contract.
+    - The combined efficiency penalty is clamped to PENALTY_BUDGET so it
+      can never flip a >=0.1 quality gap.
 
     The weights are module-level constants (SCORE_WEIGHT_*) so they can be
     tuned without code changes to the scoring function.
     """
-    score = 0.0
-    if result.success:
-        score += SCORE_WEIGHT_SUCCESS
-    # Clamp tokens/rounds so an unbounded (malicious or buggy) evaluation cannot
-    # break the "success always wins" invariant via the penalty term.
-    # Rounds clamp (100) matches the worst-case envelope in the SCORE_WEIGHT_*
-    # comment: 0.01*1_000_000 + 50*100 = 15_000 < 20_000 (success weight).
+    if result.quality is not None:
+        effective = max(0.0, min(1.0, float(result.quality)))
+    else:
+        effective = 1.0 if result.success else 0.0
+    score = SCORE_WEIGHT_SUCCESS * effective
+    # Clamp tokens/rounds so an unbounded (malicious or buggy) evaluation
+    # cannot inflate the penalty past the budget that guards quality gaps.
     tokens = max(0, min(result.tokens_used, 1_000_000))
     rounds = max(0, min(result.rounds_to_converge, 100))
-    score += SCORE_WEIGHT_TOKENS * tokens
-    score += SCORE_WEIGHT_ROUNDS * rounds
+    penalty = SCORE_WEIGHT_TOKENS * tokens + SCORE_WEIGHT_ROUNDS * rounds
+    score += max(penalty, -PENALTY_BUDGET)
     return score
 
 
@@ -422,10 +443,14 @@ def run_gepa_cycle(
     successful = [r for r in experiment.results if r.success]
     if successful:
         best = max(successful, key=score_variant)
+        quality_note = (
+            f", quality={best.quality:.2f}" if best.quality is not None else ""
+        )
         experiment.winner_id = best.variant_id
         experiment.promotion_reason = (
             f"score={score_variant(best):.2f} "
-            f"(tokens={best.tokens_used}, rounds={best.rounds_to_converge}, "
+            f"(tokens={best.tokens_used}, rounds={best.rounds_to_converge}"
+            f"{quality_note}, "
             f"variants_evaluated={len(experiment.results)}, "
             f"successful={len(successful)})"
         )

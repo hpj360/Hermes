@@ -31,8 +31,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from hermes.eval.client import SkillUpError
+from hermes.eval.compliance import ComplianceReport
 from hermes.eval.runner import EvalRunner
 from hermes.eval.result import EvalResult
+from hermes.eval.scoring import score_outcome
 
 logger = logging.getLogger("hermes.eval.gepa_bridge")
 
@@ -41,10 +43,35 @@ logger = logging.getLogger("hermes.eval.gepa_bridge")
 GepaEvaluator = Callable[[dict[str, Any], str, str], dict[str, Any]]
 
 
+def _outcome_quality(result: EvalResult) -> float:
+    """Graded completion level in [0, 1] for a skill-up result.
+
+    Maps the eval onto the three-state outcome scorer:
+    - skill-up's aggregate pass_rate is the verifier reward (sole pass/fail
+      authority) — a partial pass therefore hits the reward<1 cap (0.50)
+      instead of tying with full marks.
+    - per-case results feed O2 (assertion-unit partial credit), which keeps
+      a graded signal for below-half passes.
+    - artifacts (O3) are not declared here → not_verifiable, excluded from
+      normalization rather than counted as zero.
+    """
+    if result.total <= 0:
+        return 0.0
+    case_results = [(c.id or c.name, c.passed) for c in result.cases]
+    outcome = score_outcome(
+        verifier_reward=result.pass_rate,
+        case_results=case_results or None,
+    )
+    if outcome.not_verifiable:
+        return 0.0
+    return outcome.score
+
+
 def eval_result_to_variant_dict(
     result: EvalResult,
     variant_id: str,
     error: str | None = None,
+    compliance: ComplianceReport | None = None,
 ) -> dict[str, Any]:
     """Map an EvalResult into a VariantResult-shaped dict.
 
@@ -52,15 +79,21 @@ def eval_result_to_variant_dict(
         result: Parsed skill-up result.
         variant_id: ID of the variant being evaluated.
         error: If skill-up itself crashed, the error message (overrides success).
+        compliance: Optional post-hoc redline audit of the run's trajectory.
+            When provided (and not not_verifiable) its score caps quality —
+            a cheating/suspected run cannot carry a high graded signal even
+            if all cases passed. A not_verifiable report does not cap:
+            absent evidence is excluded, not treated as compliance.
 
     Returns:
-        Dict with keys: variant_id, success, tokens_used,
+        Dict with keys: variant_id, success, quality, tokens_used,
         rounds_to_converge, failure_items, error.
     """
     if error is not None:
         return {
             "variant_id": variant_id,
             "success": False,
+            "quality": 0.0,
             "tokens_used": 0,
             "rounds_to_converge": 0,
             "failure_items": [],
@@ -74,9 +107,14 @@ def eval_result_to_variant_dict(
             err = case.error or case.status
             failure_items.append(f"{case.id or case.name}: {err}")
 
+    quality = _outcome_quality(result)
+    if compliance is not None and not compliance.not_verifiable:
+        quality = min(quality, compliance.score)
+
     return {
         "variant_id": variant_id,
         "success": result.all_passed,
+        "quality": quality,
         "tokens_used": sum(c.tokens_used for c in result.cases),
         "rounds_to_converge": 1 if result.all_passed else 0,
         "failure_items": failure_items,

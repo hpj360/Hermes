@@ -124,6 +124,99 @@ def test_score_variant_uses_module_weights():
     assert score_variant(r) == expected
 
 
+# ── Quality (graded completion signal) tests ────────────────────────
+
+
+def test_variant_result_quality_roundtrip():
+    """quality 字段在 to_dict / from_dict 往返中保留。"""
+    r = VariantResult(variant_id="v1", success=True, quality=0.49)
+    restored = VariantResult.from_dict(r.to_dict())
+    assert restored.quality == 0.49
+
+    r_none = VariantResult(variant_id="v2")
+    assert VariantResult.from_dict(r_none.to_dict()).quality is None
+
+    # 容错：非法 quality 回退为 None，不抛异常
+    bad = VariantResult.from_dict({"variant_id": "v3", "quality": "not-a-number"})
+    assert bad.quality is None
+
+
+def test_score_variant_quality_gives_gradient_among_failures():
+    """两个都失败的 variant：有梯度信号（quality 高）者胜，GEPA 获得进化梯度。"""
+    graceful = VariantResult(variant_id="v1", success=False, quality=0.5)
+    zero = VariantResult(variant_id="v2", success=False, quality=0.0)
+    assert score_variant(graceful) > score_variant(zero)
+
+    # quality=None（旧路径）退回二值 0.0，与显式 quality=0.0 等价
+    legacy = VariantResult(variant_id="v3", success=False)
+    assert score_variant(legacy) == score_variant(zero)
+
+
+def test_score_variant_quality_dominates_efficiency():
+    """quality 主导效率：同 quality 下省 token 者胜（tie-break 保留）。"""
+    cheap = VariantResult(variant_id="v1", success=True, quality=0.9, tokens_used=1000)
+    wasteful = VariantResult(variant_id="v2", success=True, quality=0.9, tokens_used=50000)
+    assert score_variant(cheap) > score_variant(wasteful)
+
+
+def test_score_variant_judgment_gap_not_flipped_by_efficiency():
+    """判级断层不可被效率翻转：compliance 0.60（minor）即使最贵，
+    也必须压过 0.49（suspected_hacking）即使最便宜。"""
+    suspect_cheap = VariantResult(
+        variant_id="suspect", success=True, quality=0.49,
+        tokens_used=0, rounds_to_converge=0,
+    )
+    minor_expensive = VariantResult(
+        variant_id="minor", success=True, quality=0.60,
+        tokens_used=1_000_000, rounds_to_converge=100,  # worst-case penalty
+    )
+    assert score_variant(minor_expensive) > score_variant(suspect_cheap)
+
+
+def test_score_variant_penalty_clamped_to_budget():
+    """效率惩罚总额被 clamp 到 PENALTY_BUDGET（守护 quality 断层）。"""
+    from hermes.gepa import PENALTY_BUDGET
+
+    r = VariantResult(
+        variant_id="v1", success=True, quality=1.0,
+        tokens_used=1_000_000, rounds_to_converge=100,
+    )
+    assert score_variant(r) == SCORE_WEIGHT_SUCCESS - PENALTY_BUDGET
+
+
+def test_score_variant_quality_out_of_range_clamped():
+    """越界 quality 被 clamp 到 [0, 1]，不会放大分数。"""
+    over = VariantResult(variant_id="v1", success=True, quality=7.5)
+    under = VariantResult(variant_id="v2", success=True, quality=-3.0)
+    assert score_variant(over) <= SCORE_WEIGHT_SUCCESS
+    assert score_variant(under) >= 0.0
+
+
+def test_run_gepa_cycle_compliant_variant_beats_cheating_winner():
+    """端到端：都 success=True 时，compliance 封顶后的 quality 决定赢家——
+    全过但 cheating（quality=0）的变体不能赢过干净的变体。"""
+    variants = [
+        Variant(variant_id="cheat", agent_file="/cheat.md"),
+        Variant(variant_id="clean", agent_file="/clean.md"),
+    ]
+
+    def evaluate(variant, task, context):
+        if variant.variant_id == "cheat":
+            # 全部通过但轨迹审计判 cheating → quality 封顶为 0
+            return VariantResult(
+                variant_id="cheat", success=True, quality=0.0,
+                tokens_used=10, rounds_to_converge=1,
+            )
+        return VariantResult(
+            variant_id="clean", success=True, quality=1.0,
+            tokens_used=999999, rounds_to_converge=10,
+        )
+
+    exp = run_gepa_cycle("test task", variants, evaluate)
+    assert exp.winner_id == "clean"
+    assert "quality=1.00" in exp.promotion_reason
+
+
 # ── run_gepa_cycle tests ────────────────────────────────────────────
 
 

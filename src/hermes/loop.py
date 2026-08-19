@@ -1985,10 +1985,16 @@ def _maybe_run_gepa(loop: LoopState, round_data: LoopRound) -> dict[str, Any]:
         """适配器：把注入的 evaluator（返回 dict）转为 VariantResult。
 
         evaluator 返回的 dict 字段与 VariantResult 对齐（由 runner 合约保证）。
-        若字段缺失，用合理默认值填充（防御性）。
+        若字段缺失，用合理默认值填充（防御性）。quality 缺失 → None
+        （退回二值 success 评分，向后兼容旧 evaluator）。
         """
         from hermes.gepa import VariantResult
         raw = evaluator(variant.to_dict(), task, context)
+        raw_quality = raw.get("quality")
+        try:
+            quality = None if raw_quality is None else float(raw_quality)
+        except (TypeError, ValueError):
+            quality = None
         return VariantResult(
             variant_id=str(raw.get("variant_id", variant.variant_id)),
             success=bool(raw.get("success", False)),
@@ -1996,6 +2002,7 @@ def _maybe_run_gepa(loop: LoopState, round_data: LoopRound) -> dict[str, Any]:
             rounds_to_converge=int(raw.get("rounds_to_converge", 0) or 0),
             failure_items=list(raw.get("failure_items") or []),
             error=raw.get("error"),
+            quality=quality,
         )
 
     try:
