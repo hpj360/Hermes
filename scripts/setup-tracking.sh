@@ -46,6 +46,12 @@ fi
 
 echo ""
 echo "── 验证 ──"
-git branch -vv | grep "$BRANCH" | sed 's/^/  /'
+# 本地无该分支（如在 main 上工作）时 grep 无匹配会退出 1，
+# 曾导致 set -e 的调用方（bootstrap.sh）在成功路径上中断。
+if git branch -vv | grep "$BRANCH" | sed 's/^/  /'; then
+    :
+else
+    echo "  ℹ️  本地暂无 $BRANCH 分支（在 main 上工作时属正常，refspec 已就绪）"
+fi
 echo ""
 echo "  ✅ 完成。现在 \`git status\` 会正确显示同步状态。"

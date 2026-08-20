@@ -25,6 +25,7 @@ from hermes.config import get_settings
 from hermes.skills import skills_dir
 
 # 常见 Agent 目录（name, home 下相对路径）。自动发现时逐一探测。
+# 注：opencode 的技能目录约定为 ~/.opencode/skill（单数），其余平台为 skills。
 KNOWN_AGENT_DIRS: list[tuple[str, str]] = [
     ("codex", ".codex/skills"),
     ("claude-code", ".claude-code/skills"),
@@ -33,6 +34,7 @@ KNOWN_AGENT_DIRS: list[tuple[str, str]] = [
     ("kiro", ".kiro/skills"),
     ("lingma", ".lingma/skills"),
     ("trae", ".trae/skills"),
+    ("opencode", ".opencode/skill"),
 ]
 
 

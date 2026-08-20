@@ -13,6 +13,13 @@
 
 set -euo pipefail
 
+# 优先使用 bootstrap.sh 创建的 .venv（存在时），保证 python/pytest/ruff
+# 与引导安装的依赖一致。
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -x "$ROOT_DIR/.venv/bin/python" ]; then
+    export PATH="$ROOT_DIR/.venv/bin:$PATH"
+fi
+
 BRANCH="main"
 WORK_BRANCH="trae/agent-glOxQF"
 PASS=0

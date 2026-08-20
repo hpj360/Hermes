@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# hermes — 零安装入口：首次调用自动引导（装依赖，仅一次），之后直接转发 CLI。
+#
+# 用法：./hermes <command>   （等价于已 pip install 后的 hermes 命令）
+# 示例：./hermes loop run my-task
+#       ./hermes skill-sync
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ ! -x "$ROOT/.venv/bin/hermes" ]; then
+    echo "首次运行：自动引导（安装依赖，仅需一次）…" >&2
+    bash "$ROOT/scripts/bootstrap.sh" >&2
+fi
+
+exec "$ROOT/.venv/bin/hermes" "$@"

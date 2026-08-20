@@ -5,22 +5,26 @@
 
 ---
 
-## 会话开始检查清单（必做，3 步）
+## 会话开始检查清单（必做，2 步）
 
-### 第 1 步：安装依赖（如未安装）
-
-```bash
-pip install -q -r requirements.txt -r requirements-dev.txt && pip install -e -q .
-```
-
-### 第 2 步：修复 git 远程跟踪 + 验证状态
+### 第 1 步：一键引导（幂等，可重复运行）
 
 ```bash
-bash scripts/setup-tracking.sh   # 修复 refspec 盲点（幂等，可重复运行）
-bash scripts/verify-state.sh     # 一键状态验证
+bash scripts/bootstrap.sh
 ```
 
-### 第 3 步：根据 `verify-state.sh` 输出决定下一步
+一条命令内置完成全部依赖装配：
+- 创建/复用 `.venv` 并安装依赖 + hermes 本体（hash 未变时秒级跳过）
+- 修复 git 远程跟踪 refspec 盲点（等价 `setup-tracking.sh`）
+- 分发 skills 到本机已装的各 Agent 平台（trae/codex/opencode 等，`skill-sync`）
+
+CLI 直接用根目录零安装入口：`./hermes <command>`（首次调用会自动引导）。
+
+### 第 2 步：根据 `verify-state.sh` 输出决定下一步
+
+```bash
+bash scripts/verify-state.sh   # 一键状态验证（自动优先使用 .venv）
+```
 
 | `verify-state.sh` 退出码 | 含义 | 下一步 |
 |--------------------------|------|--------|
@@ -139,11 +143,12 @@ Fresh clone 后必须运行 `bash scripts/setup-tracking.sh` 配置 `trae/agent-
 
 | 脚本 | 用途 | 何时运行 |
 |------|------|---------|
-| `scripts/setup-tracking.sh` | 修复 fresh clone 后的 refspec 盲点 | 新会话开始时（幂等） |
+| `scripts/bootstrap.sh` | 一键引导：.venv + 依赖 + git tracking + skill-sync | 新会话开始时（幂等，指定工作空间后运行一次即全量生效） |
+| `scripts/setup-tracking.sh` | 修复 fresh clone 后的 refspec 盲点 | 由 bootstrap.sh 自动执行（也可单独运行） |
 | `scripts/verify-state.sh` | 一键验证 git 同步 + tests + ruff + 关键文件 | 每次需要判断"任务是否完成"时 |
 | `scripts/git-push.sh` | push + ls-remote 校验原子化，防 push 幻觉 | 每次 commit 后推送时（替代裸 `git push`） |
 
-三个脚本都**不依赖 git refspec**，在 fresh clone 环境中也能正确工作。
+三个验证/推送脚本都**不依赖 git refspec**，在 fresh clone 环境中也能正确工作。`bootstrap.sh` 是它们的上游入口。
 
 ---
 

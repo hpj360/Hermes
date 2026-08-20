@@ -107,6 +107,19 @@ def test_discover_agent_dirs_finds_known_dirs(sync_env: types.SimpleNamespace) -
     assert all(not d.is_custom for d in dirs)
 
 
+def test_discover_agent_dirs_finds_opencode(
+    sync_env: types.SimpleNamespace,
+) -> None:
+    """opencode 的技能目录约定为 ~/.opencode/skill（单数），能被自动发现。"""
+    (sync_env.home / ".opencode" / "skill").mkdir(parents=True)
+
+    dirs = discover_agent_dirs()
+    opencode = [d for d in dirs if d.name == "opencode"]
+    assert len(opencode) == 1
+    assert opencode[0].exists is True
+    assert opencode[0].path == sync_env.home / ".opencode" / "skill"
+
+
 def test_discover_agent_dirs_includes_custom(
     sync_env: types.SimpleNamespace,
 ) -> None:
