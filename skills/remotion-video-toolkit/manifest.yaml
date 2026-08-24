@@ -1,0 +1,8 @@
+version: "1.0"
+provides:
+  - programmatic-video
+  - remotion
+  - video-rendering
+  - captions
+  - charts
+  - 3d

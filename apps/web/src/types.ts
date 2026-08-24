@@ -7,6 +7,7 @@ export interface Topic {
   priority: number;
   status: TopicStatus;
   target_platforms: string[];
+  keywords: string[];
   assigned_to: string | null;
   created_at: string;
   updated_at: string;
@@ -29,9 +30,28 @@ export interface PublishTask {
   platform: string;
   account_id: string;
   status: string;
+  scheduled_at: string | null;
+  published_at: string | null;
   external_url: string | null;
   error_message: string | null;
-  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ComplianceHit {
+  rule_id: string;
+  rule_name: string;
+  severity: string;
+  keyword: string;
+  source: string;
+  position: number;
+}
+
+export interface ComplianceReport {
+  passed: boolean;
+  blocking: ComplianceHit[];
+  warnings: ComplianceHit[];
+  summary: string;
 }
 
 export interface PlatformAccount {

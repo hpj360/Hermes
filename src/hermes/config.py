@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     # the workbench server refuses to bind non-loopback addresses (unless
     # --insecure is passed) instead of silently running open (dev-mode leak).
     hermes_api_token: str | None = Field(default=None, alias="HERMES_API_TOKEN")
+    compliance_approval_token: str | None = Field(
+        default=None, alias="HERMES_COMPLIANCE_APPROVAL_TOKEN"
+    )
 
     # -------------------------------------------------------------------------
     # At-rest encryption key (content_team platform credentials)

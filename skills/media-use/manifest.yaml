@@ -1,0 +1,7 @@
+version: "1.0"
+provides:
+  - media-asset-management
+  - audio
+  - tts
+  - captioning
+  - background-removal

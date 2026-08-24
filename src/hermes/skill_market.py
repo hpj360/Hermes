@@ -158,9 +158,35 @@ def _git_clone(url: str, workdir: Path) -> Path:
     return clone_dir
 
 
+def _is_file_source(s: str) -> bool:
+    """Return True for a ``file://`` URI pointing at a local skill directory.
+
+    Vendored registry entries use ``file://skills/<name>`` so the catalog stays
+    portable (no absolute machine paths). The path part resolves relative to
+    the repository root (``skills_dir().parent``), so the same registry works
+    on any checkout.
+    """
+    return s.startswith("file://")
+
+
+def _resolve_file_source(s: str) -> Path:
+    """Resolve a ``file://`` URI to a local path under the repo root.
+
+    ``file://skills/foo`` → ``<repo_root>/skills/foo``. Query/fragment parts
+    are ignored; an empty path resolves to the repo root itself.
+    """
+    raw = s[len("file://") :].lstrip("/")
+    root = skills_dir().parent
+    if not raw:
+        return root
+    return root / raw
+
+
 def _acquire(source: str, workdir: Path) -> Path:
     """Fetch *source* into *workdir* and return the staging root directory."""
     s = source.strip()
+    if _is_file_source(s):
+        s = str(_resolve_file_source(s))
     if os.path.isdir(s):
         return Path(s)
     if _is_zip_source(s) and os.path.isfile(s):

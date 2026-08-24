@@ -77,7 +77,9 @@ def test_discover_skills_handles_missing_dir(monkeypatch, tmp_path) -> None:
 def test_discover_skills_count_matches_manifest() -> None:
     # 33 original + 12 mattpocock - 2 merged (pskoett dup, product-manager-skills merged) = 43 (v0.7.0).
     # +1 grounded-citations skill added after v0.7.0 → 44.
-    assert len(discover_skills()) == 44
+    # +6 media skills migrated from content-team (seedance2-video-gen, hyperframes,
+    #   media-use, media-generation, remotion-video-toolkit, video-cut) → 50.
+    assert len(discover_skills()) == 50
 
 
 # ---------------------------------------------------------------------------

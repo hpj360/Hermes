@@ -226,6 +226,82 @@ async def test_claim_topic_not_found(client):
     assert resp.status_code == 404
 
 
+async def test_import_topic_library(client):
+    """POST /api/topics/import 导入选题库 markdown（IT-2）。"""
+    markdown = """# 前30天选题库
+
+## 第1篇（启动篇）：人设建立
+**标题方向**：
+- 《30岁北漂回成都，我决定在家开个小酒吧》
+- 《一个数据产品经理的家里，居然藏了这么多酒》
+
+**内容方向**：
+- 开头：拍你家酒柜/酒的全景图
+- 结尾：欢迎关注，一起喝好酒
+
+**关键词**：居家调酒、在家喝酒、微醺日常
+
+---
+
+## 第2篇（金汤力入门）：你的拿手酒
+**标题方向**：
+- 《我心中永远的第一：在家3分钟调一杯完美金汤力》
+
+**内容方向**：
+- 原料：金酒、汤力水、柠檬、冰块
+
+**关键词**：金汤力、居家调酒
+"""
+    resp = await client.post(
+        "/api/topics/import", json={"markdown": markdown}
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["imported"] == 2
+    assert len(data["topics"]) == 2
+
+    t1 = data["topics"][0]
+    assert t1["title"] == "30岁北漂回成都，我决定在家开个小酒吧"
+    assert t1["keywords"] == ["居家调酒", "在家喝酒", "微醺日常"]
+    assert t1["target_platforms"] == ["XIAOHONGSHU"]
+    assert t1["status"] == "PENDING"
+
+    # 已入库：列表可查
+    list_resp = await client.get("/api/topics")
+    assert list_resp.status_code == 200
+    assert len(list_resp.json()) == 2
+
+
+async def test_import_topic_library_custom_platform(client):
+    """导入可指定默认目标平台。"""
+    resp = await client.post(
+        "/api/topics/import",
+        json={
+            "markdown": "## 第1篇：测试\n**标题方向**：\n- 《标题A》\n**关键词**：酒、微醺",
+            "default_platform": "DOUYIN",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["imported"] == 1
+    assert data["topics"][0]["target_platforms"] == ["DOUYIN"]
+
+
+async def test_create_topic_with_keywords(client):
+    """创建选题时可携带 keywords。"""
+    resp = await client.post(
+        "/api/topics",
+        json={
+            "title": "带关键词选题",
+            "target_platforms": ["XIAOHONGSHU"],
+            "keywords": ["金酒", "居家调酒"],
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["keywords"] == ["金酒", "居家调酒"]
+
+
 async def test_member_create_and_list(client):
     """成员 API：创建后可在列表中查到。"""
     resp = await client.post(

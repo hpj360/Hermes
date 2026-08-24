@@ -105,6 +105,27 @@ export default function TopicsPage() {
         </button>
       </form>
 
+      <div className="bg-white rounded-lg shadow p-4 flex items-center gap-3">
+        <span className="text-sm text-gray-600">导入选题库</span>
+        <input
+          type="file"
+          accept=".md"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+              const md = String(reader.result ?? "");
+              post<{ imported: number }>("/topics/import", { markdown: md })
+                .then(() => load())
+                .catch((err) => setError((err as Error).message));
+            };
+            reader.readAsText(f);
+          }}
+          className="text-sm"
+        />
+      </div>
+
       <ul className="space-y-2">
         {topics.map((t) => (
           <li key={t.id} className="bg-white rounded-lg shadow p-4">
@@ -121,6 +142,18 @@ export default function TopicsPage() {
                 <span>{t.target_platforms.join(", ")}</span>
               )}
             </div>
+            {t.keywords.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {t.keywords.map((k) => (
+                  <span
+                    key={k}
+                    className="bg-gray-100 rounded px-1.5 py-0.5 text-xs text-gray-500"
+                  >
+                    #{k}
+                  </span>
+                ))}
+              </div>
+            )}
           </li>
         ))}
       </ul>

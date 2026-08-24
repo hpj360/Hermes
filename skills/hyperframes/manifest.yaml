@@ -1,0 +1,6 @@
+version: "1.0"
+provides:
+  - video-composition
+  - html-video
+  - animation
+  - captions

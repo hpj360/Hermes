@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { get, post } from "../api";
-import type { Content, MetricsSummary, PlatformAccount, PublishTask } from "../types";
+import type {
+  ComplianceReport,
+  Content,
+  MetricsSummary,
+  PlatformAccount,
+  PublishTask,
+} from "../types";
 
 export default function PublishPage() {
   const [accounts, setAccounts] = useState<PlatformAccount[]>([]);
@@ -10,6 +16,9 @@ export default function PublishPage() {
   const [error, setError] = useState("");
   const [contentId, setContentId] = useState("");
   const [accountIds, setAccountIds] = useState<string[]>([]);
+  const [confirmUrl, setConfirmUrl] = useState<Record<string, string>>({});
+  const [compliance, setCompliance] = useState<ComplianceReport | null>(null);
+  const [forceCompliance, setForceCompliance] = useState(false);
 
   async function load() {
     try {
@@ -42,8 +51,38 @@ export default function PublishPage() {
       await post("/publish", {
         content_id: contentId,
         platform_account_ids: accountIds,
+        force_compliance: forceCompliance,
       });
       setAccountIds([]);
+      setCompliance(null);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function precheckCompliance() {
+    const content = contents.find((c) => c.id === contentId);
+    if (!content) return;
+    try {
+      setCompliance(
+        await post<ComplianceReport>("/compliance/check", {
+          title: content.title,
+          body: content.body,
+        }),
+      );
+      setError("");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function confirmPublish(taskId: string) {
+    const url = confirmUrl[taskId]?.trim();
+    if (!url) return;
+    try {
+      await post(`/publish/${taskId}/confirm`, { external_url: url });
+      setConfirmUrl((prev) => ({ ...prev, [taskId]: "" }));
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -86,12 +125,51 @@ export default function PublishPage() {
             </label>
           ))}
         </div>
-        <button
-          onClick={() => void publish()}
-          className="bg-brand-600 text-white rounded px-4 py-2 hover:bg-brand-700"
-        >
-          发布
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => void publish()}
+            className="bg-brand-600 text-white rounded px-4 py-2 hover:bg-brand-700"
+          >
+            发布
+          </button>
+          <button
+            onClick={() => void precheckCompliance()}
+            className="border border-brand-600 text-brand-600 rounded px-4 py-2 hover:bg-brand-50"
+          >
+            合规预检
+          </button>
+          <label className="inline-flex items-center gap-1 text-sm text-gray-600">
+            <input
+              type="checkbox"
+              checked={forceCompliance}
+              onChange={(e) => setForceCompliance(e.target.checked)}
+            />
+            强制发布（跳过红线拦截）
+          </label>
+        </div>
+
+        {compliance && (
+          <div
+            className={`rounded p-3 text-sm ${
+              compliance.passed
+                ? "bg-green-50 text-green-700"
+                : "bg-red-50 text-red-700"
+            }`}
+          >
+            <div className="font-medium">{compliance.summary}</div>
+            {compliance.blocking.map((h, i) => (
+              <div key={i} className="mt-1">
+                {h.source === "title" ? "标题" : "正文"}含「{h.keyword}」→{" "}
+                {h.rule_name}（{h.rule_id}）
+              </div>
+            ))}
+            {compliance.warnings.map((h, i) => (
+              <div key={`w${i}`} className="mt-1 text-amber-600">
+                提示：{h.rule_name}「{h.keyword}」
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {summary && (
@@ -104,20 +182,43 @@ export default function PublishPage() {
 
       <ul className="space-y-2">
         {tasks.map((t) => (
-          <li key={t.id} className="bg-white rounded-lg shadow p-4 flex items-center justify-between">
-            <div>
-              <span className="text-sm text-gray-500">{t.platform}</span>
-              <span className="ml-2 text-xs text-gray-400">{t.status}</span>
+          <li key={t.id} className="bg-white rounded-lg shadow p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-sm text-gray-500">{t.platform}</span>
+                <span className="ml-2 text-xs text-gray-400">{t.status}</span>
+                {t.error_message && (
+                  <span className="ml-2 text-xs text-amber-600">{t.error_message}</span>
+                )}
+              </div>
+              {t.external_url && (
+                <a
+                  className="text-brand-600 text-sm hover:underline"
+                  href={t.external_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  查看
+                </a>
+              )}
             </div>
-            {t.external_url && (
-              <a
-                className="text-brand-600 text-sm hover:underline"
-                href={t.external_url}
-                target="_blank"
-                rel="noreferrer"
-              >
-                查看
-              </a>
+            {t.status === "PARTIAL_SUCCESS" && (
+              <div className="mt-2 flex gap-2">
+                <input
+                  className="flex-1 border rounded px-3 py-1 text-sm"
+                  placeholder="人工发布后粘贴真实链接"
+                  value={confirmUrl[t.id] ?? ""}
+                  onChange={(e) =>
+                    setConfirmUrl((prev) => ({ ...prev, [t.id]: e.target.value }))
+                  }
+                />
+                <button
+                  onClick={() => void confirmPublish(t.id)}
+                  className="bg-green-600 text-white rounded px-3 py-1 text-sm hover:bg-green-700"
+                >
+                  确认发布
+                </button>
+              </div>
             )}
           </li>
         ))}

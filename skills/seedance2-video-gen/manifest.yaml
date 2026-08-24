@@ -1,0 +1,6 @@
+version: "1.0"
+provides:
+  - video-generation
+  - text-to-video
+  - image-to-video
+  - reference-to-video

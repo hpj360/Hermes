@@ -753,3 +753,228 @@ class TestDefaultRecallUnsupported:
         result = await adapter.recall(task)
         assert result.success is True
         assert "不支持" in result.error
+
+
+# ---------------------------------------------------------------------------
+# 半自动发布确认（人工回填真实链接，IT-1）
+# ---------------------------------------------------------------------------
+
+
+async def test_confirm_partial_success_task(client):
+    """POST /api/publish/{id}/confirm 回填真实链接并置为 SUCCESS。"""
+    content_id = await _create_content(client)
+    account_id = await _create_account(client, Platform.DOUYIN, "抖音号")
+
+    resp = await client.post(
+        "/api/publish",
+        json={
+            "content_id": content_id,
+            "platform_account_ids": [account_id],
+        },
+    )
+    assert resp.status_code == 200
+    task = resp.json()[0]
+    assert task["status"] == "PARTIAL_SUCCESS"
+
+    real_url = "https://www.douyin.com/video/7xxxx"
+    confirm = await client.post(
+        f"/api/publish/{task['id']}/confirm",
+        json={"external_url": real_url},
+    )
+    assert confirm.status_code == 200
+    data = confirm.json()
+    assert data["status"] == "SUCCESS"
+    assert data["external_url"] == real_url
+    assert data["error_message"] is None
+
+    # 再次确认同一任务应 400（已非 PARTIAL_SUCCESS）
+    again = await client.post(
+        f"/api/publish/{task['id']}/confirm",
+        json={"external_url": real_url},
+    )
+    assert again.status_code == 400
+
+
+async def test_confirm_non_partial_task_rejected(client):
+    """非 PARTIAL_SUCCESS 任务不可确认。"""
+    content_id = await _create_content(client)
+    account_id = await _create_account(
+        client, Platform.WECHAT_OFFICIAL, "公众号"
+    )
+
+    resp = await client.post(
+        "/api/publish",
+        json={
+            "content_id": content_id,
+            "platform_account_ids": [account_id],
+        },
+    )
+    assert resp.status_code == 200
+    task = resp.json()[0]
+    assert task["status"] == "SUCCESS"
+
+    confirm = await client.post(
+        f"/api/publish/{task['id']}/confirm",
+        json={"external_url": "https://mp.weixin.qq.com/s/real"},
+    )
+    assert confirm.status_code == 400
+    assert "PARTIAL_SUCCESS" in confirm.json()["detail"]
+
+
+async def test_confirm_missing_task_404(client):
+    confirm = await client.post(
+        "/api/publish/00000000-0000-0000-0000-000000000000/confirm",
+        json={"external_url": "https://example.com/x"},
+    )
+    assert confirm.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 合规红线检查单（IT-2）
+# ---------------------------------------------------------------------------
+
+
+async def test_compliance_check_endpoint_clean(client):
+    """POST /api/compliance/check 对合规内容返回 passed。"""
+    resp = await client.post(
+        "/api/compliance/check",
+        json={"title": "居家调酒指南", "body": "今晚调一杯金汤力"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["passed"] is True
+    assert data["blocking"] == []
+    assert data["summary"] == "合规检查通过"
+
+
+async def test_compliance_check_endpoint_blocked(client):
+    """POST /api/compliance/check 对红线内容返回阻塞项。"""
+    resp = await client.post(
+        "/api/compliance/check",
+        json={"title": "未成年人请勿喝酒", "body": "劝酒不是好事"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["passed"] is False
+    rule_ids = {h["rule_id"] for h in data["blocking"]}
+    assert {"minors", "excessive_drinking"} <= rule_ids
+    assert "命中合规红线" in data["summary"]
+
+
+async def test_publish_blocked_by_compliance(client):
+    """发布命中红线内容被 422 拦截。"""
+    content_id = await _create_content(client, title="全网最好的酒", body="劝酒拼酒")
+    account_id = await _create_account(
+        client, Platform.WECHAT_OFFICIAL, "公众号"
+    )
+
+    resp = await client.post(
+        "/api/publish",
+        json={
+            "content_id": content_id,
+            "platform_account_ids": [account_id],
+        },
+    )
+    assert resp.status_code == 422
+    assert "合规红线" in resp.json()["detail"]
+
+    # 未创建任何任务
+    list_resp = await client.get("/api/publish")
+    assert len(list_resp.json()) == 0
+
+
+async def test_publish_force_compliance_overrides(client):
+    """force_compliance=true 人工确认后强制发布。"""
+    content_id = await _create_content(client, title="全网最好的酒", body="劝酒拼酒")
+    account_id = await _create_account(
+        client, Platform.WECHAT_OFFICIAL, "公众号"
+    )
+
+    resp = await client.post(
+        "/api/publish",
+        json={
+            "content_id": content_id,
+            "platform_account_ids": [account_id],
+            "force_compliance": True,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["status"] == "SUCCESS"
+
+
+async def test_publish_force_compliance_requires_approval_when_configured(client, monkeypatch):
+    """Red-line bypass requires a separate approval header when configured."""
+    content_id = await _create_content(client, title="全网最好的酒", body="劝酒拼酒")
+    account_id = await _create_account(client, Platform.WECHAT_OFFICIAL, "公众号")
+    monkeypatch.setenv("HERMES_API_TOKEN", "api-secret")
+    monkeypatch.setenv("HERMES_COMPLIANCE_APPROVAL_TOKEN", "approval-secret")
+    from hermes.config import get_settings
+
+    get_settings(force_reload=True)
+    payload = {
+        "content_id": content_id,
+        "platform_account_ids": [account_id],
+        "force_compliance": True,
+    }
+    api_headers = {"Authorization": "Bearer api-secret"}
+
+    denied = await client.post("/api/publish", json=payload, headers=api_headers)
+    assert denied.status_code == 403
+    approved = await client.post(
+        "/api/publish",
+        json=payload,
+        headers={**api_headers, "X-Hermes-Compliance-Approval": "approval-secret"},
+    )
+    assert approved.status_code == 200
+    monkeypatch.delenv("HERMES_API_TOKEN")
+    monkeypatch.delenv("HERMES_COMPLIANCE_APPROVAL_TOKEN")
+    get_settings(force_reload=True)
+
+
+async def test_retry_blocked_by_compliance(client):
+    """重试命中红线任务被 422 拦截，force 后可强制。"""
+    content_id = await _create_content(client, title="全网最好的酒", body="劝酒拼酒")
+    account_id = await _create_account(
+        client, Platform.WECHAT_OFFICIAL, "公众号"
+    )
+
+    # 强制发布创建任务
+    resp = await client.post(
+        "/api/publish",
+        json={
+            "content_id": content_id,
+            "platform_account_ids": [account_id],
+            "force_compliance": True,
+        },
+    )
+    task_id = resp.json()[0]["id"]
+
+    # 置为 FAILED 模拟失败
+    from hermes.content_team.app import app
+    from hermes.content_team.db import get_db
+    from hermes.content_team.models.publish import PublishTask as _PublishTask
+
+    override_fn = app.dependency_overrides[get_db]
+    gen = override_fn()
+    session = await gen.__anext__()
+    try:
+        task = await session.get(_PublishTask, task_id)
+        task.status = PublishStatus.FAILED
+        task.error_message = "模拟失败"
+        await session.commit()
+    finally:
+        await gen.aclose()
+
+    # 未 force：被拦截
+    blocked = await client.post(f"/api/publish/{task_id}/retry")
+    assert blocked.status_code == 422
+    assert "合规红线" in blocked.json()["detail"]
+
+    # force：重试成功
+    forced = await client.post(
+        f"/api/publish/{task_id}/retry?force_compliance=true"
+    )
+    assert forced.status_code == 200
+    assert forced.json()["status"] == "SUCCESS"

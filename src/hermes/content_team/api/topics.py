@@ -27,6 +27,7 @@ class TopicCreate(BaseModel):
     description: str = ""
     priority: int = Field(default=3, ge=1, le=5)
     target_platforms: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
     status: TopicStatus = TopicStatus.PENDING
 
 
@@ -38,6 +39,7 @@ class TopicUpdate(BaseModel):
     priority: int | None = Field(None, ge=1, le=5)
     status: TopicStatus | None = None
     target_platforms: list[str] | None = None
+    keywords: list[str] | None = None
     assigned_to: UUID | None = None
 
 
@@ -52,9 +54,24 @@ class TopicResponse(BaseModel):
     priority: int
     status: TopicStatus
     target_platforms: list[str]
+    keywords: list[str]
     assigned_to: UUID | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class TopicImportRequest(BaseModel):
+    """选题库导入请求体：原始 markdown 文本。"""
+
+    markdown: str = Field(..., min_length=1)
+    default_platform: str = "XIAOHONGSHU"
+
+
+class TopicImportResult(BaseModel):
+    """选题库导入结果。"""
+
+    imported: int
+    topics: list[TopicResponse]
 
 
 class TopicScoreRequest(BaseModel):
@@ -100,6 +117,30 @@ async def create_topic(
     await db.commit()
     await db.refresh(topic)
     return topic
+
+
+@router.post("/import", response_model=TopicImportResult)
+async def import_topic_library(
+    payload: TopicImportRequest, db: AsyncSession = Depends(get_db)
+) -> TopicImportResult:
+    """批量导入选题库 markdown（IT-2：选题库结构化导入）。
+
+    解析 ``content-creation/01-前30天选题库.md`` 格式的选题库文档，
+    每篇创建一条选题（标题/内容大纲/关键词/目标平台），返回导入统计。
+    """
+    from hermes.content_team.topic_import import parse_topic_library
+
+    parsed = parse_topic_library(payload.markdown)
+    topics: list[Topic] = []
+    for item in parsed:
+        data = item.to_topic_input(default_platform=payload.default_platform)
+        topic = Topic(**data, status=TopicStatus.PENDING)
+        db.add(topic)
+        topics.append(topic)
+    await db.commit()
+    for topic in topics:
+        await db.refresh(topic)
+    return TopicImportResult(imported=len(topics), topics=topics)
 
 
 @router.get("", response_model=list[TopicResponse])

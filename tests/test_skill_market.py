@@ -11,8 +11,10 @@ import pytest
 
 from hermes.main import main
 from hermes.skill_market import (
+    _is_file_source,
     _is_git_source,
     _is_zip_source,
+    _resolve_file_source,
     _safe_extract_zip,
     install_skill,
     list_registry,
@@ -83,6 +85,20 @@ def test_is_git_source() -> None:
     assert _is_git_source("https://example.com/foo.zip") is False
 
 
+def test_is_file_source() -> None:
+    assert _is_file_source("file://skills/foo") is True
+    assert _is_file_source("git@github.com:x/y.git") is False
+    assert _is_file_source("/abs/path") is False
+
+
+def test_resolve_file_source_under_repo_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr("hermes.skill_market.skills_dir", lambda: repo / "skills")
+    assert _resolve_file_source("file://skills/foo") == repo / "skills" / "foo"
+    assert _resolve_file_source("file://skills/foo") == _resolve_file_source("file:///skills/foo")
+
+
 def test_is_zip_source() -> None:
     assert _is_zip_source("https://example.com/foo.zip") is True
     assert _is_zip_source("/tmp/foo.zip") is True
@@ -101,6 +117,19 @@ def test_install_from_local_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr("hermes.skill_market.skills_dir", lambda: dest)
 
     result = install_skill("foo", source=str(src))
+    assert result.success is True
+    assert (dest / "foo" / "SKILL.md").exists()
+
+
+def test_install_from_file_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "skills").mkdir()
+    _make_skill(repo / "skills", "foo")
+    monkeypatch.setattr("hermes.skill_market.skills_dir", lambda: repo / "skills")
+
+    dest = tmp_path / "installed"
+    result = install_skill("foo", source="file://skills/foo", dest=dest)
     assert result.success is True
     assert (dest / "foo" / "SKILL.md").exists()
 

@@ -54,10 +54,12 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+exclude = ["skills/**", "_gen_report.py", "tmp*/**", ".*/**"]
 
 [tool.ruff.lint]
 # 只启用正确性关键规则（pyflakes + pycodestyle 基础）。其余规则

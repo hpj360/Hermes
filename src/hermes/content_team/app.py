@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from hermes.content_team.api.router import api_router
 from hermes.content_team.db import Base, engine
 from hermes.content_team.scheduler import init_scheduler_on_startup, shutdown_scheduler
+from hermes.content_team.schema import upgrade_schema
 
 # 显式导入模型，确保 Base.metadata 在建表前完成注册
 from hermes.content_team.models import (  # noqa: F401
@@ -61,6 +62,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """应用生命周期：启动时创建数据表并初始化调度器，关闭时停止调度器。"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await upgrade_schema(conn)
     init_scheduler_on_startup()
     yield
     shutdown_scheduler()

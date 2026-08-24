@@ -126,11 +126,11 @@ def test_manifest_includes_skill() -> None:
 
 
 def test_manifest_skill_count_is_44() -> None:
-    """manifest.json should list exactly 44 skills after adding grounded-citations."""
+    """manifest.json should list 50 skills (44 + 6 media skills migrated from content-team)."""
     manifest_path = PROJECT_ROOT / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     skills = manifest.get("skills", [])
-    assert len(skills) == 44, f"Expected 44 skills, got {len(skills)}"
+    assert len(skills) == 50, f"Expected 50 skills, got {len(skills)}"
 
 
 # ── Disk / manifest / discover consistency ───────────────────────

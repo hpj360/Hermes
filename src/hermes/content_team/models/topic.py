@@ -43,6 +43,9 @@ class Topic(Base):
     target_platforms: Mapped[list[str]] = mapped_column(
         sa.JSON, nullable=False, default=list
     )
+    keywords: Mapped[list[str]] = mapped_column(
+        sa.JSON, nullable=False, default=list
+    )
     assigned_to: Mapped[Optional[uuid.UUID]] = mapped_column(
         GUID(), nullable=True
     )

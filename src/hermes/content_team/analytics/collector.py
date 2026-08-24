@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hermes.content_team.analytics.adapters import (
     MetricsAdapterRegistry,
     MetricsSnapshot,
+    default_metrics_adapter_registry,
 )
 from hermes.content_team.models.content import Content
 from hermes.content_team.models.metrics import ContentMetric
@@ -98,7 +99,9 @@ class MetricsCollector:
         self.db_session = db_session
         # 每个 collector 实例独立维护一个种子化的 RNG，避免全局状态污染
         self._rng = random.Random(_RANDOM_SEED)
-        self._adapters = adapters or MetricsAdapterRegistry()
+        # 未显式注入适配器时使用默认注册表（当前含公众号真实适配器）；
+        # 无凭证时适配器返回 None，自动回退模拟。
+        self._adapters = adapters or default_metrics_adapter_registry()
 
     async def _fetch_metrics(
         self, task: PublishTask, account: Any

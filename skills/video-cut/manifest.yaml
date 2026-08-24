@@ -1,0 +1,6 @@
+version: "1.0"
+provides:
+  - video-editing
+  - rough-cut
+  - transcription
+  - speed-ramping

@@ -1,0 +1,8 @@
+version: "1.0"
+provides:
+  - image-generation
+  - image-editing
+  - video-generation
+  - inpainting
+  - outpainting
+  - reference-image

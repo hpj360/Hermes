@@ -14,6 +14,10 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from hermes.content_team.compliance import (
+    ComplianceBlockedError,
+    check_compliance,
+)
 from hermes.content_team.models.content import Content
 from hermes.content_team.models.platform import Platform, PlatformAccount
 from hermes.content_team.models.publish import PublishStatus, PublishTask
@@ -76,19 +80,33 @@ class PublishDispatcher:
         content_id: UUID,
         platform_accounts: list[UUID],
         scheduled_at: datetime | None = None,
+        force_compliance: bool = False,
     ) -> list[PublishTask]:
         """将内容分发到多个平台账号。
 
         - ``scheduled_at`` 非空时：任务状态为 ``SCHEDULED``，并注册 Cron 触发器。
         - ``scheduled_at`` 为空时：立即调用适配器发布并更新状态。
+        - ``force_compliance`` 为真时跳过合规红线拦截（人工确认强制发布）。
 
         :returns: 创建的全部 ``PublishTask`` 列表
         :raises ValueError: 内容或账号不存在时
+        :raises ComplianceBlockedError: 内容命中合规红线且未强制发布时
         """
         # 加载内容
         content = await self.db.get(Content, content_id)
         if content is None:
             raise ValueError(f"内容不存在: {content_id}")
+
+        # 合规红线检查：命中 BLOCK 且未强制发布时拦截
+        report = check_compliance(content.title, content.body)
+        if not report.passed and not force_compliance:
+            log_event(
+                "publish_blocked_by_compliance",
+                "发布被合规红线拦截",
+                content_id=str(content_id),
+                summary=report.summary(),
+            )
+            raise ComplianceBlockedError(report)
 
         tasks: list[PublishTask] = []
 
@@ -209,12 +227,14 @@ class PublishDispatcher:
     # 失败重试
     # ------------------------------------------------------------------
 
-    async def retry_task(self, task_id: UUID) -> PublishTask:
+    async def retry_task(self, task_id: UUID, force_compliance: bool = False) -> PublishTask:
         """重试失败的发布任务。
 
         仅允许对 ``FAILED`` 或 ``PARTIAL_SUCCESS`` 状态的任务进行重试。
+        ``force_compliance`` 为真时跳过合规红线拦截。
 
         :raises ValueError: 任务不存在或状态不允许重试时
+        :raises ComplianceBlockedError: 内容命中合规红线且未强制发布时
         """
         task = await self.db.get(PublishTask, task_id)
         if task is None:
@@ -230,6 +250,18 @@ class PublishDispatcher:
         content = await self.db.get(Content, task.content_id)
         if content is None:
             raise ValueError(f"内容不存在: {task.content_id}")
+
+        # 合规红线检查
+        report = check_compliance(content.title, content.body)
+        if not report.passed and not force_compliance:
+            log_event(
+                "publish_blocked_by_compliance",
+                "重试发布被合规红线拦截",
+                task_id=str(task.id),
+                content_id=str(task.content_id),
+                summary=report.summary(),
+            )
+            raise ComplianceBlockedError(report)
 
         # 重置状态并重新发布
         task.status = PublishStatus.IN_PROGRESS

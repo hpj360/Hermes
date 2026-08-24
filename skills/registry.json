@@ -1,0 +1,32 @@
+{
+  "seedance2-video-gen": {
+    "source": "file://skills/seedance2-video-gen",
+    "version": "1.0.2",
+    "provides": "video-generation,text-to-video,image-to-video"
+  },
+  "hyperframes": {
+    "source": "file://skills/hyperframes",
+    "version": "1.0.0",
+    "provides": "video-composition,html-video,animation,captions"
+  },
+  "media-use": {
+    "source": "file://skills/media-use",
+    "version": "1.0.0",
+    "provides": "media-asset-management,audio,tts,captioning"
+  },
+  "media-generation": {
+    "source": "file://skills/media-generation",
+    "version": "2.2.0",
+    "provides": "image-generation,image-editing,video-generation,inpainting,outpainting"
+  },
+  "remotion-video-toolkit": {
+    "source": "file://skills/remotion-video-toolkit",
+    "version": "1.0.0",
+    "provides": "programmatic-video,remotion,video-rendering,captions,charts"
+  },
+  "video-cut": {
+    "source": "file://skills/video-cut",
+    "version": "1.0.0",
+    "provides": "video-editing,rough-cut,transcription,speed-ramping"
+  }
+}
