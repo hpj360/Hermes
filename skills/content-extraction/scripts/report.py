@@ -6,6 +6,15 @@ F2/F3：与 distill.py（内容层）配套的"表现层"。
 - 各 reader 输出格式统一为：报告头（标题 + 元信息行）→ 正文 → 提取统计脚注。
 - emit() 统一 CLI 契约：``--json``（机器）/ 默认（人类报告）/ ``-o file``（保存）。
 
+风格档位（吸收 Caveman 压缩哲学，架构裁决边界）：
+
+- ``style="report"``（默认）——完整报告，面向人的存档/阅读。
+- ``style="concise"``——极简档，面向人的交互回复（标题 + 元信息 + 首段截断）。
+- **架构红线**：证据链路（checker 报告 / 轨迹 / 审计输出）**永不压缩**——
+  本模块的 concise 档只允许用于面向人的交互回复；任何写入证据链
+  （.learnings/、评估报告、审计日志）的调用方禁止传 ``style="concise"``。
+  这与项目"不过滤"原则一致：机器证据逐字保留，压缩只发生在人机边界。
+
 用法（作为库）：
 
     from report import render_report, emit
@@ -30,7 +39,11 @@ import json
 import sys
 from typing import Any
 
-__all__ = ["render_report", "emit"]
+__all__ = ["render_report", "emit", "STYLE_CONCISE_LIMIT"]
+
+# concise 档正文截断长度（字符）：够看清主旨，不够全文阅读——
+# 需要全文时用默认 report 档。
+STYLE_CONCISE_LIMIT = 400
 
 
 def render_report(
@@ -38,6 +51,8 @@ def render_report(
     meta: dict[str, str],
     body: str,
     stats: dict[str, Any] | None = None,
+    *,
+    style: str = "report",
 ) -> str:
     """渲染统一格式的人类可读报告。
 
@@ -45,6 +60,8 @@ def render_report(
     - meta: 有序元信息（作者/发布时间/来源/URL 等）；空值键自动跳过
     - body: 正文（Markdown 或纯文本）
     - stats: 提取统计脚注（distill 的 stats dict；None 则省略脚注）
+    - style: ``"report"``（完整，默认）或 ``"concise"``（交互回复用极简档）。
+      证据链路（checker 报告/轨迹/审计）禁止使用 concise——见模块 docstring。
     """
     parts: list[str] = []
 
@@ -54,6 +71,13 @@ def render_report(
     meta_lines = [f"{k}: {v}" for k, v in meta.items() if v]
     if meta_lines:
         parts.append("> " + " | ".join(meta_lines) + "\n")
+
+    if style == "concise":
+        # 极简档：正文截断 + 无统计脚注 + 提示如何取全文
+        snippet = body.rstrip()[:STYLE_CONCISE_LIMIT]
+        truncated = len(body) > STYLE_CONCISE_LIMIT
+        parts.append(snippet + ("\n\n…（截断，完整内容用默认档）" if truncated else "\n"))
+        return "\n".join(parts)
 
     if body:
         parts.append("---\n")

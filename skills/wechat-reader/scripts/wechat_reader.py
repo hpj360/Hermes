@@ -90,11 +90,14 @@ def parse_article(html_content, url):
 
 def main():
     if len(sys.argv) < 2:
-        print("用法: python3 wechat_reader.py <微信文章URL> [--json] [-o <文件>]")
+        print("用法: python3 wechat_reader.py <微信文章URL> [--json] [--concise] [-o <文件>]")
         sys.exit(1)
 
     url = sys.argv[1]
     fmt = "json" if "--json" in sys.argv else "report"
+    # concise 档：面向人的交互回复（标题+元信息+首段截断）。
+    # 仅用于人机边界；证据链路（审计/轨迹）永不使用。
+    style = "concise" if "--concise" in sys.argv else "report"
     out_path = ""
     if "-o" in sys.argv:
         out_path = sys.argv[sys.argv.index("-o") + 1]
@@ -125,6 +128,7 @@ def main():
         },
         body=article["markdown"],
         stats=article.get("stats"),
+        style=style,
     )
     sys.exit(emit(payload, report, fmt=fmt, output=out_path))
 

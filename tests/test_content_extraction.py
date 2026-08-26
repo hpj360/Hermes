@@ -328,6 +328,31 @@ class TestRenderReport:
         r = render_report(title="t", meta={}, body="b", stats={"mode": "regex-fallback"})
         assert "mode=regex-fallback" in r
 
+    def test_concise_style_truncates_and_drops_footnote(self):
+        """concise 档：正文截断 + 无统计脚注（面向人的交互回复）。"""
+        long_body = "x" * 600
+        r = render_report(
+            title="t", meta={"来源": "s"}, body=long_body,
+            stats={"raw_chars": 1000, "distilled_chars": 600, "reduction_ratio": 0.4},
+            style="concise",
+        )
+        assert "x" * 600 not in r  # 截断生效
+        assert "x" * 400 in r  # 保留前 400 字符
+        assert "提取统计" not in r  # 脚注被去除
+        assert "截断" in r  # 提示取全文
+
+    def test_concise_style_short_body_kept_intact(self):
+        r = render_report(title="t", meta={}, body="短正文", style="concise")
+        assert "短正文" in r
+        assert "截断" not in r
+
+    def test_default_style_is_full_report(self):
+        """默认档完整（证据链安全默认值）。"""
+        long_body = "x" * 600
+        r = render_report(title="t", meta={}, body=long_body,
+                          stats={"raw_chars": 1, "distilled_chars": 1})
+        assert "x" * 600 in r  # 未截断
+
 
 class TestEmit:
     def test_emit_json_stdout(self, capsys):

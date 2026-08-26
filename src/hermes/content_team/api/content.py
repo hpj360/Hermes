@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hermes.content_team.db import get_db
+from hermes.content_team.humanize import deai_text
 from hermes.content_team.models.content import (
     Content,
     ContentStatus,
@@ -216,6 +217,43 @@ async def list_content_versions(
     )
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+class HumanizeResponse(BaseModel):
+    """de-AI 处理响应：更新后的内容 + 可审计变更记录。"""
+
+    content: ContentResponse
+    changes: list[dict[str, object]] = Field(default_factory=list)
+    total_changes: int = 0
+
+
+@router.post(
+    "/{content_id}/humanize", response_model=HumanizeResponse
+)
+async def humanize_content(
+    content_id: UUID, db: AsyncSession = Depends(get_db)
+) -> dict[str, object]:
+    """对内容正文执行 de-AI 清理（伪 em dash / 客套句 / 空洞结尾段）。
+
+    显式管线步骤而非隐式后处理：清理后正文变更会创建新版本快照
+    （清理前文本天然保留、可回滚），并返回逐规则的变更记录供审计。
+    """
+    content = await db.get(Content, content_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail="Content not found")
+
+    result = deai_text(content.body)
+    if result.text != content.body:
+        content.body = result.text
+        await _create_version(db, content)
+
+    await db.commit()
+    await db.refresh(content)
+    return {
+        "content": content,
+        "changes": result.changes,
+        "total_changes": result.total_changes,
+    }
 
 
 # ---------------------------------------------------------------------------
