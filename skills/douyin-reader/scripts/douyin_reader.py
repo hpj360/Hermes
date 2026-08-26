@@ -19,6 +19,12 @@ import re
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
+
+# 寻址共享引擎（报告渲染统一契约）
+_ENGINE_DIR = Path(__file__).resolve().parents[2] / "content-extraction" / "scripts"
+sys.path.insert(0, str(_ENGINE_DIR))
+from report import emit, render_report  # noqa: E402
 
 
 def run_cmd(cmd, timeout=120):
@@ -168,6 +174,7 @@ def main():
     parser.add_argument("--model", default="tiny", help="Whisper 模型大小 (tiny/base/small/medium/large)")
     parser.add_argument("--language", default="zh", help="音频语言 (zh/en/ja/ko 等)")
     parser.add_argument("--json", action="store_true", help="输出 JSON 格式")
+    parser.add_argument("-o", "--output-file", help="写入文件（默认 stdout）")
     parser.add_argument("--skip-transcribe", action="store_true", help="跳过语音转写（仅下载+元数据）")
     args = parser.parse_args()
     
@@ -229,22 +236,30 @@ def main():
     
     if args.json:
         # 移除文件路径字段（JSON 输出不需要）
-        output = {k: v for k, v in result.items() if k not in ("video_file", "audio_file")}
-        print(json.dumps(output, ensure_ascii=False, indent=2))
+        payload = {k: v for k, v in result.items() if k not in ("video_file", "audio_file")}
+        report = ""
     else:
-        print(f"\n{'='*50}")
-        print(f"标题: {result['title']}")
-        print(f"作者: {result['uploader']}")
-        print(f"时长: {result['duration']}秒")
-        print(f"播放: {result['view_count']} | 点赞: {result['like_count']} | 评论: {result['comment_count']}")
-        if result.get('tags'):
-            print(f"标签: {', '.join(result['tags'])}")
-        if result.get('description'):
-            print(f"描述: {result['description'][:200]}")
-        if transcription:
-            print("\n--- 转写文字 ---")
-            print(transcription['full_text'])
-        print(f"{'='*50}")
+        payload = {}
+        meta: dict[str, str] = {
+            "来源": "抖音",
+            "作者": result["uploader"],
+            "时长": f"{result['duration']}秒",
+            "数据": (
+                f"播放 {result['view_count']:,} · 点赞 {result['like_count']:,}"
+                f" · 评论 {result['comment_count']:,}"
+            ),
+        }
+        if result.get("tags"):
+            meta["标签"] = ", ".join(result["tags"])
+        desc = result.get("description", "")
+        if desc:
+            meta["描述"] = desc[:200]
+        body = (
+            f"## 转写文字\n\n{transcription['full_text']}" if transcription
+            else "（未转写：使用 --skip-transcribe 或转写失败）"
+        )
+        report = render_report(title=result["title"], meta=meta, body=body)
+    sys.exit(emit(payload, report, fmt="json" if args.json else "report", output=args.output_file or ""))
 
 
 if __name__ == "__main__":

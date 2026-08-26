@@ -4,8 +4,9 @@
 获取层（本文件）：UA 轮换 + 重试 + 验证码检测（平台特异）。
 清洗层：共享蒸馏引擎 skills/content-extraction/scripts/distill.py
 （容器定位/噪声剥离/HTML→Markdown/压缩统计 统一实现）。
+表现层：共享报告渲染 skills/content-extraction/scripts/report.py
+（统一人类可读报告 + --json/-o 输出契约）。
 """
-import json
 import requests
 import sys
 import time
@@ -16,6 +17,7 @@ from pathlib import Path
 _ENGINE_DIR = Path(__file__).resolve().parents[2] / "content-extraction" / "scripts"
 sys.path.insert(0, str(_ENGINE_DIR))
 from distill import distill  # noqa: E402
+from report import emit, render_report  # noqa: E402
 
 USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36",
@@ -88,15 +90,14 @@ def parse_article(html_content, url):
 
 def main():
     if len(sys.argv) < 2:
-        print("用法: python3 wechat_reader_v2.py <微信文章URL> [--json|--text]")
+        print("用法: python3 wechat_reader.py <微信文章URL> [--json] [-o <文件>]")
         sys.exit(1)
 
     url = sys.argv[1]
-    fmt = "md"
-    if "--json" in sys.argv:
-        fmt = "json"
-    elif "--text" in sys.argv:
-        fmt = "text"
+    fmt = "json" if "--json" in sys.argv else "report"
+    out_path = ""
+    if "-o" in sys.argv:
+        out_path = sys.argv[sys.argv.index("-o") + 1]
 
     print(f"正在获取文章: {url}", file=sys.stderr)
     html_content = get_article(url)
@@ -106,34 +107,26 @@ def main():
         print("⚠️ 无法解析文章内容，请检查 URL", file=sys.stderr)
         sys.exit(1)
 
-    if fmt == "json":
-        output = {
-            "title": article["title"],
-            "author": article["author"],
-            "publish_time": article["publish_time"],
-            "url": article["url"],
-            "content_markdown": article["markdown"],
-            "stats": article.get("stats", {}),
-        }
-        print(json.dumps(output, ensure_ascii=False, indent=2))
-    elif fmt == "text":
-        print(f"# {article['title']}")
-        if article["author"]:
-            print(f"作者: {article['author']}")
-        if article["publish_time"]:
-            print(f"发布时间: {article['publish_time']}")
-        print(f"原文: {article['url']}")
-        print("\n" + "=" * 50 + "\n")
-        print(article["content_text"])
-    else:
-        print(f"# {article['title']}")
-        if article["author"]:
-            print(f"\n**作者**: {article['author']}")
-        if article["publish_time"]:
-            print(f"**发布时间**: {article['publish_time']}")
-        print(f"\n**原文**: {article['url']}")
-        print("\n" + "---" + "\n")
-        print(article["markdown"])
+    payload = {
+        "title": article["title"],
+        "author": article["author"],
+        "publish_time": article["publish_time"],
+        "url": article["url"],
+        "content_markdown": article["markdown"],
+        "stats": article.get("stats", {}),
+    }
+    report = render_report(
+        title=article["title"],
+        meta={
+            "来源": "微信公众号",
+            "作者": article["author"],
+            "发布时间": article["publish_time"],
+            "URL": article["url"],
+        },
+        body=article["markdown"],
+        stats=article.get("stats"),
+    )
+    sys.exit(emit(payload, report, fmt=fmt, output=out_path))
 
 if __name__ == "__main__":
     main()

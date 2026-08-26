@@ -288,3 +288,92 @@ class TestWechatReaderIntegration:
         finally:
             sys.path.remove(str(reader_path))
             sys.modules.pop("wechat_reader", None)
+
+
+# ── F2: 报告渲染器 ────────────────────────────────────────────
+
+from report import emit, render_report  # noqa: E402
+
+
+class TestRenderReport:
+    def test_full_report_structure(self):
+        r = render_report(
+            title="标题",
+            meta={"来源": "微信公众号", "作者": "Alice"},
+            body="正文内容",
+            stats={"raw_chars": 10000, "distilled_chars": 2000, "reduction_ratio": 0.8},
+        )
+        assert r.startswith("# 标题\n")
+        assert "> 来源: 微信公众号 | 作者: Alice" in r
+        assert "---" in r
+        assert "正文内容" in r
+        assert "*提取统计*: 原始 10,000 字符 → 蒸馏 2,000 字符 · 压缩 80.0%" in r
+
+    def test_empty_meta_values_skipped(self):
+        r = render_report(
+            title="t",
+            meta={"作者": "", "时间": "2024-01-01"},
+            body="b",
+        )
+        assert "作者" not in r
+        assert "时间: 2024-01-01" in r
+
+    def test_no_title_no_stats_minimal(self):
+        r = render_report(title="", meta={}, body="仅正文")
+        assert not r.startswith("#")
+        assert "提取统计" not in r
+        assert "仅正文" in r
+
+    def test_fallback_stats_mode(self):
+        r = render_report(title="t", meta={}, body="b", stats={"mode": "regex-fallback"})
+        assert "mode=regex-fallback" in r
+
+
+class TestEmit:
+    def test_emit_json_stdout(self, capsys):
+        code = emit({"a": 1}, "report-text", fmt="json")
+        out = capsys.readouterr().out
+        assert code == 0
+        assert '"a": 1' in out
+
+    def test_emit_report_stdout(self, capsys):
+        code = emit({"a": 1}, "# 报告\n正文", fmt="report")
+        out = capsys.readouterr().out
+        assert code == 0
+        assert out.startswith("# 报告")
+
+    def test_emit_writes_file(self, tmp_path, capsys):
+        target = tmp_path / "out.md"
+        code = emit({"a": 1}, "# 报告", fmt="report", output=str(target))
+        assert code == 0
+        assert target.read_text(encoding="utf-8").startswith("# 报告")
+        assert "已写入" in capsys.readouterr().err
+
+
+# ── F3: reader 统一输出契约接入验证 ───────────────────────────
+
+
+class TestReaderOutputContract:
+    """三个 Python reader 均接入 render_report + emit 统一契约。"""
+
+    READERS = [
+        ("wechat-reader", "scripts/wechat_reader.py"),
+        ("douyin-reader", "scripts/douyin_reader.py"),
+        ("youtube-watcher", "scripts/get_transcript.py"),
+    ]
+
+    def test_all_readers_use_shared_contract(self):
+        for skill, script in self.READERS:
+            path = Path(__file__).resolve().parents[1] / "skills" / skill / script
+            assert path.exists(), f"{skill}/{script} 不存在"
+            source = path.read_text(encoding="utf-8")
+            assert "from report import" in source, f"{skill} 未接入报告引擎"
+            assert "render_report(" in source, f"{skill} 未使用统一报告渲染"
+            assert "emit(" in source, f"{skill} 未使用统一输出契约"
+
+    def test_all_readers_support_json_and_output_file(self):
+        for skill, script in self.READERS:
+            path = Path(__file__).resolve().parents[1] / "skills" / skill / script
+            source = path.read_text(encoding="utf-8")
+            assert "--json" in source, f"{skill} 缺 --json 机器模式"
+            assert '"-o"' in source or "'-o'" in source, f"{skill} 缺 -o 文件输出"
