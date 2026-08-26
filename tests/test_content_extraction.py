@@ -402,3 +402,72 @@ class TestReaderOutputContract:
             source = path.read_text(encoding="utf-8")
             assert "--json" in source, f"{skill} 缺 --json 机器模式"
             assert '"-o"' in source or "'-o'" in source, f"{skill} 缺 -o 文件输出"
+
+
+# ── TOP5 融合落地验证 ─────────────────────────────────────────
+
+
+class TestTop5Integration:
+    """TOP5：stock-analysis / brave-search / tavily-search / figma-reader / 输出规范。"""
+
+    def test_stock_analysis_uses_emit_and_output_file(self):
+        """T1: stock-analysis 输出走 emit 契约，支持 -o 文件。"""
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "skills" / "stock-analysis" / "scripts" / "analyze_stock.py"
+        )
+        source = path.read_text(encoding="utf-8")
+        assert "from report import emit" in source
+        assert '"-o", "--output-file"' in source
+        assert "emit(" in source
+
+    def test_brave_search_python_primary_path(self):
+        """T2: brave-search 主路径 content.py 走共享引擎，JS 为降级。"""
+        py = Path(__file__).resolve().parents[1] / "skills" / "brave-search" / "content.py"
+        source = py.read_text(encoding="utf-8")
+        assert "from distill import distill" in source
+        assert "render_report(" in source
+        assert "emit(" in source
+
+        js = Path(__file__).resolve().parents[1] / "skills" / "brave-search" / "content.js"
+        js_source = js.read_text(encoding="utf-8")
+        assert "降级" in js_source, "content.js 应标注降级地位"
+
+    def test_brave_search_content_py_distills_html(self):
+        """T2 功能验证：content.py 的 distill 调用产出统一契约。"""
+        sys.path.insert(0, str(ENGINE_DIR))
+        from distill import distill  # noqa: F811
+
+        html = "<html><body><main><p>" + "内容" * 30 + "</p></main></body></html>"
+        result = distill(html, "https://example.com/x")
+        assert result.stats["container_found"] is True
+        assert "内容" in result.markdown
+
+    def test_tavily_search_report_structure_and_json(self):
+        """T3: tavily-search 输出对齐统一报告结构 + --json 模式。"""
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "skills" / "tavily-search" / "scripts" / "search.mjs"
+        )
+        source = path.read_text(encoding="utf-8")
+        assert "# 搜索: ${query}" in source  # 统一标题行
+        assert "> 来源: Tavily" in source  # 统一元信息行
+        assert '"--json"' in source  # 机器模式
+
+    def test_figma_reader_cli_surface_compliant(self):
+        """T4: figma-reader JSON 工具类 CLI 达标（-o + 结构化输出）。"""
+        base = Path(__file__).resolve().parents[1] / "skills" / "figma-reader" / "scripts"
+        for script in ("read_file.py", "read_nodes.py", "export_components.py"):
+            source = (base / script).read_text(encoding="utf-8")
+            assert '"--output", "-o"' in source, f"{script} 缺 -o"
+            assert "json.dumps" in source, f"{script} 缺结构化 JSON 输出"
+
+    def test_output_convention_documented(self):
+        """T5: 项目级输出规范已固化到引擎 SKILL.md。"""
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "skills" / "content-extraction" / "SKILL.md"
+        )
+        source = path.read_text(encoding="utf-8")
+        assert "项目级输出规范" in source
+        assert "永不压缩" in source  # 证据链红线

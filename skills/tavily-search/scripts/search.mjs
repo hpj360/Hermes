@@ -1,7 +1,9 @@
 #!/usr/bin/env node
+// 输出契约与 content-extraction 统一报告结构对齐（# 标题 + > 元信息行 + --- + 正文）。
+// 机器模式：--json。
 
 function usage() {
-  console.error(`Usage: search.mjs "query" [-n 5] [--deep] [--topic general|news] [--days 7]`);
+  console.error(`Usage: search.mjs "query" [-n 5] [--deep] [--topic general|news] [--days 7] [--json]`);
   process.exit(2);
 }
 
@@ -13,6 +15,7 @@ let n = 5;
 let searchDepth = "basic";
 let topic = "general";
 let days = null;
+let jsonMode = false;
 
 for (let i = 1; i < args.length; i++) {
   const a = args[i];
@@ -33,6 +36,10 @@ for (let i = 1; i < args.length; i++) {
   if (a === "--days") {
     days = Number.parseInt(args[i + 1] ?? "7", 10);
     i++;
+    continue;
+  }
+  if (a === "--json") {
+    jsonMode = true;
     continue;
   }
   console.error(`Unknown arg: ${a}`);
@@ -74,15 +81,25 @@ if (!resp.ok) {
 
 const data = await resp.json();
 
-// Print AI-generated answer if available
+const results = (data.results ?? []).slice(0, n);
+
+// 机器模式：原始 JSON 直出
+if (jsonMode) {
+  console.log(JSON.stringify({ query, answer: data.answer ?? null, results }, null, 2));
+  process.exit(0);
+}
+
+// 人类模式：统一报告结构（# 标题 + > 元信息行 + --- + 正文）
+console.log(`# 搜索: ${query}\n`);
+console.log(`> 来源: Tavily | 深度: ${searchDepth} | 主题: ${topic} | 结果数: ${results.length}\n`);
+console.log("---\n");
+
 if (data.answer) {
   console.log("## Answer\n");
   console.log(data.answer);
   console.log("\n---\n");
 }
 
-// Print results
-const results = (data.results ?? []).slice(0, n);
 console.log("## Sources\n");
 
 for (const r of results) {
@@ -90,7 +107,7 @@ for (const r of results) {
   const url = String(r?.url ?? "").trim();
   const content = String(r?.content ?? "").trim();
   const score = r?.score ? ` (relevance: ${(r.score * 100).toFixed(0)}%)` : "";
-  
+
   if (!title || !url) continue;
   console.log(`- **${title}**${score}`);
   console.log(`  ${url}`);

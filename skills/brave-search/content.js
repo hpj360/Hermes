@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// 降级实现（node-only 环境备选）。
+// 主路径：content.py（共享蒸馏引擎 content-extraction，统一清洗质量与输出契约，
+// 带 --json/--concise/-o）。有 Python 环境时优先用 content.py。
 
 import { Readability } from "@mozilla/readability";
 import { JSDOM } from "jsdom";

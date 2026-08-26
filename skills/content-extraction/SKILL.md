@@ -71,13 +71,33 @@ curl -sL https://example.com/a | python3 distill.py --url https://example.com/a
 `render_report(title, meta, body, stats)` → `# 标题` + `> 元信息行` + 正文 + `*提取统计*` 脚注；
 `emit(payload, report, fmt, output)` → `--json`（机器）/ 报告（人）/ `-o file`（保存）三模式。
 
+风格档位：`style="concise"`（面向人的交互回复，正文截断+无脚注）；
+默认完整档。**证据链路（checker 报告/轨迹/审计）永不压缩**——
+concise 只允许出现在人机边界。
+
 reader 接入后自动获得一致的人类可读输出与 CLI 表面。
+
+## 项目级输出规范（所有技能引用，含 prompt 型）
+
+无论有无脚本，技能产出面向人的报告时遵循统一结构：
+
+1. `# 标题`（一句话说明产出物）
+2. `> 元信息行`（来源/作者/时间/范围，`k: v` 用 ` | ` 连接，空值省略）
+3. `---` 分隔
+4. 正文（Markdown）
+5. `*统计脚注*`（可选：数据量/压缩比等归因信息）
+
+CLI 表面（有脚本的技能）：`--json`（机器模式）/ 默认（人类报告）/ `-o file`（写文件）。
+JSON-only 工具（如 figma-reader）至少提供 `-o` 写文件 + 结构化输出。
 
 ## 已接入 reader
 
-- wechat-reader（微信公众号：UA 轮换 + 验证码检测 → 本引擎清洗 + 报告）
+- wechat-reader（微信公众号：UA 轮换 + 验证码检测 → 本引擎清洗 + 报告，含 `--concise`）
 - douyin-reader（抖音：yt-dlp/whisper 获取 → 本引擎报告 + 输出契约）
 - youtube-watcher（YouTube 字幕：yt-dlp 获取 → 本引擎报告 + 输出契约）
+- brave-search（通用网页：content.py 主路径走本引擎；content.js 为 node-only 降级）
+- stock-analysis（股票分析：自有文本格式保留，输出走 emit 统一契约 + `-o`）
+- tavily-search（搜索：JS 侧对齐统一报告结构 + `--json`；figma-reader 已达标 `-o`+JSON）
 
 ## 测试
 

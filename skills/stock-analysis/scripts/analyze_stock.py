@@ -23,7 +23,13 @@ import sys
 import time
 from dataclasses import dataclass, asdict
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
+
+# 寻址共享引擎（统一输出契约：--json / 文本 / -o 文件）
+_ENGINE_DIR = Path(__file__).resolve().parents[2] / "content-extraction" / "scripts"
+sys.path.insert(0, str(_ENGINE_DIR))
+from report import emit  # noqa: E402
 
 import pandas as pd
 import yfinance as yf
@@ -2129,6 +2135,12 @@ def main():
         help="Output format (default: text)"
     )
     parser.add_argument(
+        "-o", "--output-file",
+        type=str,
+        default="",
+        help="Write output to file (default: stdout)"
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Verbose output to stderr"
@@ -2351,10 +2363,10 @@ def main():
 
         results.append(signal)
 
-    # Output results
+    # Output results（统一输出契约：--json / 文本 / -o 文件）
     if args.output == "json":
         if len(results) == 1:
-            print(format_output_json(results[0]))
+            payload_text = format_output_json(results[0])
         else:
             output_data = [asdict(r) for r in results]
             # Add portfolio summary if in portfolio mode
@@ -2367,16 +2379,23 @@ def main():
                     "assets": output_data,
                     "summary": portfolio_summary,
                 }
-            print(json.dumps(output_data, indent=2))
+            payload_text = json.dumps(output_data, indent=2)
+        sys.exit(emit({}, payload_text + "\n", fmt="report", output=args.output_file))
     else:
+        text_parts = []
         for i, signal in enumerate(results):
             if i > 0:
-                print("\n")
-            print(format_output_text(signal))
+                text_parts.append("\n")
+            text_parts.append(format_output_text(signal))
 
-        # Print portfolio summary if in portfolio mode
+        # Portfolio summary if in portfolio mode
         if portfolio_assets:
-            print_portfolio_summary(results, portfolio_assets, portfolio_name, args.period)
+            text_parts.append(
+                print_portfolio_summary(results, portfolio_assets, portfolio_name, args.period)
+            )
+
+        report_text = "\n".join(text_parts)
+        sys.exit(emit({}, report_text, fmt="report", output=args.output_file))
 
 
 def generate_portfolio_summary(
@@ -2485,13 +2504,15 @@ def print_portfolio_summary(
     portfolio_assets: list[tuple[str, float, float, str]],
     portfolio_name: str,
     period: str | None = None,
-) -> None:
-    """Print portfolio summary in text format."""
+) -> str:
+    """Format portfolio summary as text (caller prints or writes to file)."""
     summary = generate_portfolio_summary(results, portfolio_assets, portfolio_name, period)
 
-    print("\n" + "=" * 77)
-    print(f"PORTFOLIO SUMMARY: {portfolio_name}")
-    print("=" * 77)
+    lines = [
+        "\n" + "=" * 77,
+        f"PORTFOLIO SUMMARY: {portfolio_name}",
+        "=" * 77,
+    ]
 
     # Value overview
     total_cost = summary["total_cost"]
@@ -2499,30 +2520,34 @@ def print_portfolio_summary(
     total_pnl = summary["total_pnl"]
     total_pnl_pct = summary["total_pnl_pct"]
 
-    print(f"\nTotal Cost:    ${total_cost:,.2f}")
-    print(f"Current Value: ${total_value:,.2f}")
+    lines.append(f"\nTotal Cost:    ${total_cost:,.2f}")
+    lines.append(f"Current Value: ${total_value:,.2f}")
     pnl_sign = "+" if total_pnl >= 0 else ""
-    print(f"Total P&L:     {pnl_sign}${total_pnl:,.2f} ({pnl_sign}{total_pnl_pct:.1f}%)")
+    lines.append(f"Total P&L:     {pnl_sign}${total_pnl:,.2f} ({pnl_sign}{total_pnl_pct:.1f}%)")
 
     # Period return
     if "period_return_pct" in summary:
         period_return = summary["period_return_pct"]
         period_sign = "+" if period_return >= 0 else ""
-        print(f"{summary['period'].capitalize()} Return: {period_sign}{period_return:.1f}%")
+        lines.append(f"{summary['period'].capitalize()} Return: {period_sign}{period_return:.1f}%")
 
     # Concentration warnings
     if summary.get("concentration_warnings"):
-        print("\n⚠️ CONCENTRATION WARNINGS:")
+        lines.append("\n⚠️ CONCENTRATION WARNINGS:")
         for warning in summary["concentration_warnings"]:
-            print(f"   • {warning} (>30% of portfolio)")
+            lines.append(f"   • {warning} (>30% of portfolio)")
 
     # Recommendation summary
     recommendations = {"BUY": 0, "HOLD": 0, "SELL": 0}
     for r in results:
         recommendations[r.recommendation] = recommendations.get(r.recommendation, 0) + 1
 
-    print(f"\nRECOMMENDATIONS: {recommendations['BUY']} BUY | {recommendations['HOLD']} HOLD | {recommendations['SELL']} SELL")
-    print("=" * 77)
+    lines.append(
+        f"\nRECOMMENDATIONS: {recommendations['BUY']} BUY | "
+        f"{recommendations['HOLD']} HOLD | {recommendations['SELL']} SELL"
+    )
+    lines.append("=" * 77)
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
