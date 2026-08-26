@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
-"""微信文章提取器 - 带重试和多UA轮换"""
-import requests
-import re
+"""微信文章提取器 - 带重试和多UA轮换。
+
+获取层（本文件）：UA 轮换 + 重试 + 验证码检测（平台特异）。
+清洗层：共享蒸馏引擎 skills/content-extraction/scripts/distill.py
+（容器定位/噪声剥离/HTML→Markdown/压缩统计 统一实现）。
+"""
 import json
+import requests
 import sys
 import time
 import random
-from bs4 import BeautifulSoup, NavigableString
+from pathlib import Path
+
+# 寻址共享引擎（skill-sync symlink/复制分发下均可解析）
+_ENGINE_DIR = Path(__file__).resolve().parents[2] / "content-extraction" / "scripts"
+sys.path.insert(0, str(_ENGINE_DIR))
+from distill import distill  # noqa: E402
 
 USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36",
@@ -65,109 +74,17 @@ def get_article(url, max_retries=5):
     sys.exit(1)
 
 def parse_article(html_content, url):
-    result = {
-        "url": url,
-        "title": "",
-        "author": "",
-        "publish_time": "",
-        "markdown": "",
-        "content_text": "",
-    }
-
-    soup = BeautifulSoup(html_content, 'html.parser')
-
-    # 提取标题
-    for selector in ['h1.rich_media_title', 'h1#activity-name', '.rich_media_title', 'h1']:
-        el = soup.select_one(selector) if '.' in selector or '#' in selector else soup.find(selector)
-        if el and el.get_text(strip=True):
-            result["title"] = el.get_text(strip=True)
-            break
-
-    if not result["title"]:
-        title_match = re.search(r'var\s+msg_title\s*=\s*["\'](.+?)["\']', html_content)
-        if title_match:
-            result["title"] = title_match.group(1).strip()
-
-    # 提取作者
-    for selector in ['#js_name', '#meta_content .rich_media_meta_nickname', '.rich_media_meta_nickname', '.original_person']:
-        el = soup.select_one(selector)
-        if el and el.get_text(strip=True):
-            result["author"] = el.get_text(strip=True)
-            break
-
-    # 提取发布时间
-    for selector in ['#publish_time', '.rich_media_meta_text em', '.rich_media_meta_text']:
-        el = soup.select_one(selector)
-        if el and el.get_text(strip=True):
-            result["publish_time"] = el.get_text(strip=True)
-            break
-
-    # 提取正文
-    content = soup.find(id='js_content') or soup.find(class_='rich_media_content')
-    if content:
-        for tag in content.find_all(['script', 'style']):
-            tag.decompose()
-        result["content_text"] = content.get_text(separator='\n', strip=True)
-        result["markdown"] = html_to_markdown(content)
-
-    return result
-
-def html_to_markdown(element, depth=0):
-    if depth > 6:
-        return element.get_text(strip=True) if element else ""
-
-    md_parts = []
-    for child in element.children:
-        if isinstance(child, NavigableString):
-            text = str(child).strip()
-            if text:
-                md_parts.append(text)
-            continue
-
-        tag_name = (child.name or '').lower()
-        text = child.get_text(strip=True)
-
-        if tag_name in ['h1', 'h2', 'h3']:
-            md_parts.append(f"\n\n## {text}\n\n")
-        elif tag_name in ['h4', 'h5', 'h6']:
-            md_parts.append(f"\n\n### {text}\n\n")
-        elif tag_name == 'p':
-            inner = html_to_markdown(child, depth + 1)
-            if inner.strip():
-                md_parts.append(f"\n{inner.strip()}\n")
-        elif tag_name == 'br':
-            md_parts.append("\n")
-        elif tag_name in ['strong', 'b']:
-            md_parts.append(f"**{text}**")
-        elif tag_name in ['em', 'i']:
-            md_parts.append(f"*{text}*")
-        elif tag_name in ['ul', 'ol']:
-            for i, li in enumerate(child.find_all('li', recursive=False), 1):
-                li_text = li.get_text(strip=True)
-                bullet = f"{i}." if tag_name == 'ol' else "-"
-                md_parts.append(f"{bullet} {li_text}\n")
-            md_parts.append("\n")
-        elif tag_name == 'blockquote':
-            for line in text.split('\n'):
-                if line.strip():
-                    md_parts.append(f"> {line.strip()}\n")
-            md_parts.append("\n")
-        elif tag_name == 'a':
-            href = child.get('href', '')
-            if href:
-                md_parts.append(f"[{text}]({href})")
-            else:
-                md_parts.append(text)
-        elif tag_name in ['img']:
-            alt = child.get('data-src') or child.get('src') or ''
-            if alt:
-                md_parts.append(f"\n![图片]({alt})\n")
-        elif tag_name in ['section', 'div', 'span']:
-            md_parts.append(html_to_markdown(child, depth + 1))
-        elif text:
-            md_parts.append(text)
-
-    return re.sub(r'\n{4,}', '\n\n', ''.join(md_parts)).strip()
+    """解析层委托共享蒸馏引擎（清洗/定位/转换统一实现）。"""
+    return distill(
+        html_content,
+        url,
+        content_selectors=["#js_content", ".rich_media_content"],
+        meta_selectors={
+            "title": ["h1.rich_media_title", "h1#activity-name", ".rich_media_title"],
+            "author": ["#js_name", "#meta_content .rich_media_meta_nickname", ".original_person"],
+            "publish_time": ["#publish_time", ".rich_media_meta_text em"],
+        },
+    ).to_dict()
 
 def main():
     if len(sys.argv) < 2:
@@ -196,6 +113,7 @@ def main():
             "publish_time": article["publish_time"],
             "url": article["url"],
             "content_markdown": article["markdown"],
+            "stats": article.get("stats", {}),
         }
         print(json.dumps(output, ensure_ascii=False, indent=2))
     elif fmt == "text":
