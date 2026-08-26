@@ -259,6 +259,37 @@ def _run_knowledge_hygiene(
     }
 
 
+def _previous_checker_report(round_data: Any) -> str:
+    """上一轮 checker 报告，作为 round>=2 builder 的修复上下文。
+
+    并行模式下 checker 按 role 拆分为 checker_lint/checker_type/checker_test，
+    读取单一 "checker" 键永远为空（历史 bug：builder 从未见过 checker 报告）。
+    修复后的读取顺序：
+
+    1. ``verifier_result`` — orchestrator 聚合的逐字报告（带 ``### role``
+       分节，含 ``[CHECKER PRODUCED NO OUTPUT]`` 标记），两种模式都填充，
+       符合"不过滤"原则；
+    2. ``agent_reports["checker"]`` — 串行模式直存；
+    3. 合并 ``agent_reports`` 中所有 ``checker_*`` 键 — 历史数据兜底
+       （verifier_result 为空的旧 meta.json）。
+    """
+    aggregated = (getattr(round_data, "verifier_result", "") or "").strip()
+    if aggregated:
+        return aggregated
+
+    reports: dict[str, str] = getattr(round_data, "agent_reports", {}) or {}
+    single = reports.get("checker", "")
+    if single.strip():
+        return single
+
+    parts = [
+        f"### {role}\n{report}"
+        for role, report in sorted(reports.items())
+        if role.startswith("checker_") and (report or "").strip()
+    ]
+    return "\n\n".join(parts)
+
+
 def _run_builder_checker(
     name: str,
     loop: Any,
@@ -276,11 +307,12 @@ def _run_builder_checker(
         return _guidance_builder_checker(name, loop, round_num, loop_dir)
 
     # Get previous checker report for builder context (don't filter!)
+    # 并行模式 checker 报告按 role 拆分存储，需聚合读取（见 _previous_checker_report）
     previous_report = ""
     if loop.rounds:
         last_round = loop.rounds[-1]
-        if last_round.agent_reports:
-            previous_report = last_round.agent_reports.get("checker", "")
+        if last_round.agent_reports or last_round.verifier_result:
+            previous_report = _previous_checker_report(last_round)
 
     # Determine if parallel checks are enabled (based on sub_agents config)
     parallel_checks = True  # Default: parallel checker execution

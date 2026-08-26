@@ -2826,6 +2826,130 @@ def test_run_builder_checker_round_passes_denylist_to_builder():
     assert checker.denylist == []
 
 
+def test_previous_checker_report_reads_all_sources():
+    """_previous_checker_report 三级读取：verifier_result → 单 checker → checker_* 合并。
+
+    回归背景：并行模式 checker 报告按 checker_lint/type/test 拆分存储，
+    旧实现读 agent_reports["checker"] 恒为空，round>=2 的 builder
+    从未见过 checker 报告。
+    """
+    from hermes.loop import LoopRound
+    from hermes.runner import _previous_checker_report
+
+    def make_round(**kw) -> LoopRound:
+        base = dict(
+            round_num=1,
+            timestamp="t",
+            action="a",
+            result_summary="s",
+            verifier_result="",
+            passed=False,
+        )
+        base.update(kw)
+        return LoopRound(**base)
+
+    # 1) 优先读聚合报告（orchestrator 两种模式都会填充）
+    r = make_round(verifier_result="### checker_lint\nFAILED: E501")
+    assert _previous_checker_report(r) == "### checker_lint\nFAILED: E501"
+
+    # 2) 串行模式：单一 checker 键
+    r = make_round(agent_reports={"checker": "FAILED: tests broke"})
+    assert _previous_checker_report(r) == "FAILED: tests broke"
+
+    # 3) 并行模式历史数据兜底：合并 checker_* 键（含 ### 分节头）
+    r = make_round(
+        agent_reports={
+            "builder": "built",
+            "checker_lint": "FAILED: E501 line 10",
+            "checker_type": "ALL GREEN",
+            "checker_test": "FAILED: ImportError",
+        }
+    )
+    merged = _previous_checker_report(r)
+    assert "### checker_lint" in merged
+    assert "### checker_test" in merged
+    assert "FAILED: E501 line 10" in merged
+    assert "FAILED: ImportError" in merged
+    # builder 报告不属于 checker 上下文
+    assert "built" not in merged
+
+    # 4) 全空 → 空串（不抛异常）
+    assert _previous_checker_report(make_round()) == ""
+
+
+def test_run_builder_checker_round2_receives_parallel_checker_reports(monkeypatch):
+    """round>=2 的 builder task 必须内嵌上一轮并行 checker 报告（管道回归）。"""
+    import tempfile
+    from pathlib import Path
+    from typing import Any
+    from hermes import runner
+    from hermes.loop import LoopRound, LoopState, LoopStage, LoopStatus
+    from hermes.orchestrator import RoundResult
+
+    loop = LoopState(
+        name="test-parallel-report",
+        pattern="builder-checker",
+        stage=LoopStage.L2_ASSIST,
+        status=LoopStatus.IDLE,
+        config_path=Path("/tmp/LOOP.md"),
+        state_path=Path("/tmp/STATE.md"),
+        budget_path=Path("/tmp/budget.md"),
+        created_at="",
+        max_rounds=5,
+    )
+    # 上一轮按并行模式存储：报告在 checker_lint/type/test 键下
+    loop.rounds.append(
+        LoopRound(
+            round_num=1,
+            timestamp="t",
+            action="a",
+            result_summary="s",
+            verifier_result=(
+                "### checker_lint\nFAILED: E501 line 10\n\n"
+                "### checker_test\nFAILED: ImportError at src/a.py"
+            ),
+            passed=False,
+            agent_reports={
+                "builder": "built something",
+                "checker_lint": "FAILED: E501 line 10",
+                "checker_type": "ALL GREEN",
+                "checker_test": "FAILED: ImportError at src/a.py",
+            },
+        )
+    )
+
+    captured: dict[str, Any] = {}
+
+    class FakeOrchestrator:
+        def __init__(self, client=None, trajectory=None):
+            self.client = None
+            self.trajectory = None
+
+        def is_available(self):
+            return True
+
+        def run_builder_checker_round(self, *, loop_dir, round_num, builder_task,
+                                       checker_context, parallel_checks, denylist):
+            captured["builder_task"] = builder_task
+            captured["checker_context"] = checker_context
+            return RoundResult(round_num=round_num, tasks=[], all_passed=True, summary="ok")
+
+    monkeypatch.setattr(runner, "Orchestrator", FakeOrchestrator)
+    monkeypatch.setattr(runner, "record_round", lambda *a, **kw: {"success": True})
+    monkeypatch.setattr(runner, "check_stop_rules", lambda *a, **kw: {"should_stop": True, "rule_name": "all_green"})
+
+    with tempfile.TemporaryDirectory() as tmp:
+        runner._run_builder_checker("test", loop, 2, "now", Path(tmp))
+
+    task = captured["builder_task"]
+    # 修复前：并行模式下这里内嵌的是空串
+    assert "FAILED: E501 line 10" in task
+    assert "FAILED: ImportError at src/a.py" in task
+    assert "### checker_test" in task
+    # checker_context 同步携带（供 orchestrator 侧使用）
+    assert "FAILED: ImportError at src/a.py" in captured["checker_context"]
+
+
 def test_runner_wires_denylist_from_loop_patterns(monkeypatch):
     """runner._run_builder_checker 从 LOOP_PATTERNS[pattern]['denylist'] 注入。"""
     import tempfile
