@@ -1,233 +1,201 @@
 #!/usr/bin/env python3
-"""Skill Manager - 管理所有已安装的skill"""
+"""Skill Manager - 已安装 skill 的薄包装入口。
+
+本脚本不含任何业务逻辑，只把旧的/友好的子命令名映射到 Hermes 的真实 CLI：
+
+    skill-manager 命令              →  实际 Hermes 命令
+    -----------------------------   →  -----------------------------
+    list / status                   →  hermes skill-sync status
+    agents                          →  hermes skill-sync agents
+    search <query>                  →  hermes skills remote（目录，无过滤）
+    install <name> [--source]       →  hermes skills install <name>
+    uninstall <name>                →  hermes skill-sync remove <name>
+    update [name] / sync [name]     →  hermes skill-sync sync [name]
+    add <name|--all> [--copy]       →  hermes skill-sync add ...
+    remove <name|--all>             →  hermes skill-sync remove ...
+    add-agent <name> <path>         →  hermes skill-sync add-agent ...
+
+真实能力（单一信源）位于 `hermes skill-sync`（跨 Agent 目录同步）与
+`hermes skills`（marketplace：安装/打包/目录），见 SKILL.md。
+"""
+
+from __future__ import annotations
 
 import argparse
-import json
+import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 
-DEFAULT_SKILLS_DIR = ".trae/skills"
-LOCKFILE_NAME = ".skills_store_lock.json"
+def _repo_root() -> Path:
+    """skill_manager.py 位于 <repo>/skills/skill-manager/scripts/ 下。"""
+    return Path(__file__).resolve().parents[3]
 
 
-def load_lockfile(skills_dir: Path) -> dict:
-    """加载技能锁文件"""
-    lock_path = skills_dir / LOCKFILE_NAME
-    if not lock_path.exists():
-        return {"version": 1, "skills": {}}
-    try:
-        with open(lock_path, 'r', encoding='utf-8') as f:
-            raw = json.load(f)
-    except json.JSONDecodeError:
-        return {"version": 1, "skills": {}}
-    if not isinstance(raw, dict):
-        return {"version": 1, "skills": {}}
-    if not isinstance(raw.get("skills"), dict):
-        raw["skills"] = {}
-    return raw
+def _resolve_hermes() -> list[str]:
+    """定位 hermes CLI：仓库零安装入口 → venv console script → PATH。"""
+    root = _repo_root()
+
+    entry = root / "hermes"
+    if entry.is_file() and os.access(entry, os.X_OK):
+        return [str(entry)]
+
+    suffix = "Scripts/hermes.exe" if os.name == "nt" else "bin/hermes"
+    venv = root / ".venv" / suffix
+    if venv.exists():
+        return [str(venv)]
+
+    which = shutil.which("hermes")
+    if which:
+        return [which]
+
+    return []
 
 
-def save_lockfile(skills_dir: Path, lock: dict) -> None:
-    """保存技能锁文件"""
-    skills_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = skills_dir / LOCKFILE_NAME
-    with open(lock_path, 'w', encoding='utf-8') as f:
-        json.dump(lock, f, indent=2, ensure_ascii=False)
+def _forward(args: list[str]) -> int:
+    hermes = _resolve_hermes()
+    if not hermes:
+        print(
+            "Error: hermes CLI not found. 在仓库根目录运行 `bash scripts/bootstrap.sh` 引导。",
+            file=sys.stderr,
+        )
+        return 2
+    return subprocess.call([*hermes, *args])
 
 
-def cmd_list(args: argparse.Namespace) -> None:
-    """列出所有已安装的技能"""
-    skills_dir = Path(args.dir).expanduser().resolve()
-    lock = load_lockfile(skills_dir)
-    skills = lock.get("skills", {})
-    
-    if not skills:
-        print("No installed skills.")
-        return
-    
-    print("Installed skills:")
-    print("-" * 80)
-    for slug, info in skills.items():
-        name = info.get("name", slug)
-        version = info.get("version", "")
-        source = info.get("source", "local")
-        print(f"{slug}")
-        print(f"  Name:     {name}")
-        print(f"  Version:  {version}")
-        print(f"  Source:   {source}")
-        print(f"  Path:     {skills_dir / slug}")
-        print("-" * 80)
+# ── 子命令映射 ──────────────────────────────────────────────────────
 
 
-def cmd_install(args: argparse.Namespace) -> None:
-    """安装新技能"""
-    skills_dir = Path(args.dir).expanduser().resolve()
-    target_dir = skills_dir / args.slug
-    
-    if target_dir.exists():
-        print(f"Skill {args.slug} is already installed.")
-        return
-    
-    # 创建技能目录
-    target_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 创建基本的SKILL.md文件
-    skill_md = target_dir / "SKILL.md"
-    skill_md.write_text(f"""---
-name: {args.slug}
-description: Skill {args.slug}
----
-
-# {args.slug}
-
-This is a skill for {args.slug}.
-""", encoding='utf-8')
-    
-    # 更新锁文件
-    lock = load_lockfile(skills_dir)
-    lock["skills"][args.slug] = {
-        "name": args.slug,
-        "version": "1.0.0",
-        "source": "local",
-        "installed_at": "local"
-    }
-    save_lockfile(skills_dir, lock)
-    
-    print(f"Installed: {args.slug} -> {target_dir}")
+def cmd_list(args: argparse.Namespace) -> int:
+    return _forward(["skill-sync", "status"])
 
 
-def cmd_uninstall(args: argparse.Namespace) -> None:
-    """卸载技能"""
-    skills_dir = Path(args.dir).expanduser().resolve()
-    target_dir = skills_dir / args.slug
-    
-    if not target_dir.exists():
-        print(f"Skill {args.slug} is not installed.")
-        return
-    
-    # 删除技能目录
-    shutil.rmtree(target_dir)
-    
-    # 更新锁文件
-    lock = load_lockfile(skills_dir)
-    if args.slug in lock["skills"]:
-        del lock["skills"][args.slug]
-        save_lockfile(skills_dir, lock)
-    
-    print(f"Uninstalled: {args.slug}")
+def cmd_status(args: argparse.Namespace) -> int:
+    return _forward(["skill-sync", "status"])
 
 
-def cmd_search(args: argparse.Namespace) -> None:
-    """搜索技能"""
-    print(f"Searching for skills related to: {' '.join(args.query)}")
-    print("Note: This is a placeholder for skillhub search functionality.")
-    print("In a real implementation, this would query skillhub API.")
+def cmd_agents(args: argparse.Namespace) -> int:
+    return _forward(["skill-sync", "agents"])
 
 
-def cmd_update(args: argparse.Namespace) -> None:
-    """更新技能"""
-    skills_dir = Path(args.dir).expanduser().resolve()
-    lock = load_lockfile(skills_dir)
-    
+def cmd_search(args: argparse.Namespace) -> int:
+    if args.query:
+        print(
+            "Note: 本地 registry 目录不支持关键词过滤，展示全部条目。",
+            file=sys.stderr,
+        )
+    return _forward(["skills", "remote"])
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    argv = ["skills", "install", args.slug]
+    if args.source:
+        argv += ["--source", args.source]
+    if args.force:
+        argv.append("--force")
+    return _forward(argv)
+
+
+def cmd_uninstall(args: argparse.Namespace) -> int:
+    return _forward(["skill-sync", "remove", args.slug])
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    argv = ["skill-sync", "sync"]
     if args.slug:
-        # 更新特定技能
-        if args.slug not in lock["skills"]:
-            print(f"Skill {args.slug} is not installed.")
-            return
-        print(f"Updating skill: {args.slug}")
-        print("Note: This is a placeholder for skill update functionality.")
-    else:
-        # 更新所有技能
-        print("Updating all skills...")
-        for slug in lock["skills"]:
-            print(f"- {slug}")
-        print("Note: This is a placeholder for batch skill update functionality.")
+        argv.append(args.slug)
+    return _forward(argv)
 
 
-def cmd_config(args: argparse.Namespace) -> None:
-    """管理技能配置"""
-    skills_dir = Path(args.dir).expanduser().resolve()
-    target_dir = skills_dir / args.slug
-    
-    if not target_dir.exists():
-        print(f"Skill {args.slug} is not installed.")
-        return
-    
-    config_path = target_dir / "config.json"
-    
-    if not args.key:
-        # 查看配置
-        if config_path.exists():
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-            print(f"Configuration for {args.slug}:")
-            print(json.dumps(config, indent=2, ensure_ascii=False))
-        else:
-            print(f"No configuration file found for {args.slug}.")
+def cmd_sync(args: argparse.Namespace) -> int:
+    argv = ["skill-sync", "sync"]
+    if args.slug:
+        argv.append(args.slug)
+    return _forward(argv)
+
+
+def cmd_add(args: argparse.Namespace) -> int:
+    argv = ["skill-sync", "add"]
+    if args.all:
+        argv.append("--all")
+    elif args.slug:
+        argv.append(args.slug)
     else:
-        # 修改配置
-        if config_path.exists():
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-        else:
-            config = {}
-        
-        config[args.key] = args.value
-        
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-        
-        print(f"Updated configuration for {args.slug}:")
-        print(f"  {args.key}: {args.value}")
+        print("Error: provide a skill name or use --all", file=sys.stderr)
+        return 2
+    if args.copy:
+        argv.append("--copy")
+    return _forward(argv)
+
+
+def cmd_remove(args: argparse.Namespace) -> int:
+    argv = ["skill-sync", "remove"]
+    if args.all:
+        argv.append("--all")
+    elif args.slug:
+        argv.append(args.slug)
+    else:
+        print("Error: provide a skill name or use --all", file=sys.stderr)
+        return 2
+    return _forward(argv)
+
+
+def cmd_add_agent(args: argparse.Namespace) -> int:
+    return _forward(["skill-sync", "add-agent", args.name, args.path])
 
 
 def main() -> None:
-    """主函数"""
-    parser = argparse.ArgumentParser(description="Skill Manager")
-    parser.add_argument("--dir", default=DEFAULT_SKILLS_DIR, help="Skills directory")
-    
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    
-    # list command
-    subparsers.add_parser("list", help="List installed skills")
+    parser = argparse.ArgumentParser(
+        description="Skill Manager（转发到 hermes skill-sync / hermes skills）"
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
 
-    # install command
-    install_parser = subparsers.add_parser("install", help="Install a skill")
-    install_parser.add_argument("slug", help="Skill slug")
-    
-    # uninstall command
-    uninstall_parser = subparsers.add_parser("uninstall", help="Uninstall a skill")
-    uninstall_parser.add_argument("slug", help="Skill slug")
-    
-    # search command
-    search_parser = subparsers.add_parser("search", help="Search for skills")
-    search_parser.add_argument("query", nargs="+", help="Search query")
-    
-    # update command
-    update_parser = subparsers.add_parser("update", help="Update skills")
-    update_parser.add_argument("slug", nargs="?", help="Skill slug (optional, update all if not specified)")
-    
-    # config command
-    config_parser = subparsers.add_parser("config", help="Manage skill configuration")
-    config_parser.add_argument("slug", help="Skill slug")
-    config_parser.add_argument("key", nargs="?", help="Configuration key")
-    config_parser.add_argument("value", nargs="?", help="Configuration value")
-    
+    sub.add_parser("list", help="列出所有 skill 及其同步状态").set_defaults(func=cmd_list)
+    sub.add_parser("status", help="同步状态总览").set_defaults(func=cmd_status)
+    sub.add_parser("agents", help="列出发现的 Agent 目录").set_defaults(func=cmd_agents)
+
+    p_search = sub.add_parser("search", help="列出 registry 目录")
+    p_search.add_argument("query", nargs="*", help="搜索关键词（本地目录不支持过滤）")
+    p_search.set_defaults(func=cmd_search)
+
+    p_install = sub.add_parser("install", help="从 registry/source 安装 skill")
+    p_install.add_argument("slug", help="skill 名称")
+    p_install.add_argument("--source", default=None, help="git URL / 本地路径 / zip URL")
+    p_install.add_argument("--force", action="store_true", help="覆盖已安装 skill")
+    p_install.set_defaults(func=cmd_install)
+
+    p_uninstall = sub.add_parser("uninstall", help="取消 skill 跨 Agent 同步")
+    p_uninstall.add_argument("slug", help="skill 名称")
+    p_uninstall.set_defaults(func=cmd_uninstall)
+
+    p_update = sub.add_parser("update", help="同步中心改动到 Agent（缺省同步全部）")
+    p_update.add_argument("slug", nargs="?", default=None, help="skill 名称")
+    p_update.set_defaults(func=cmd_update)
+
+    p_sync = sub.add_parser("sync", help="同步中心改动到 Agent")
+    p_sync.add_argument("slug", nargs="?", default=None, help="skill 名称")
+    p_sync.set_defaults(func=cmd_sync)
+
+    p_add = sub.add_parser("add", help="将 skill 纳入同步管理")
+    p_add.add_argument("slug", nargs="?", default=None, help="skill 名称")
+    p_add.add_argument("--all", action="store_true", help="纳入全部中心 skill")
+    p_add.add_argument("--copy", action="store_true", help="用 copy 而非 symlink")
+    p_add.set_defaults(func=cmd_add)
+
+    p_remove = sub.add_parser("remove", help="取消 skill 的同步管理")
+    p_remove.add_argument("slug", nargs="?", default=None, help="skill 名称")
+    p_remove.add_argument("--all", action="store_true", help="取消全部 managed skill")
+    p_remove.set_defaults(func=cmd_remove)
+
+    p_add_agent = sub.add_parser("add-agent", help="添加自定义 Agent 目录")
+    p_add_agent.add_argument("name", help="Agent 名称")
+    p_add_agent.add_argument("path", help="Agent skills 目录路径")
+    p_add_agent.set_defaults(func=cmd_add_agent)
+
     args = parser.parse_args()
-    
-    if args.command == "list":
-        cmd_list(args)
-    elif args.command == "install":
-        cmd_install(args)
-    elif args.command == "uninstall":
-        cmd_uninstall(args)
-    elif args.command == "search":
-        cmd_search(args)
-    elif args.command == "update":
-        cmd_update(args)
-    elif args.command == "config":
-        cmd_config(args)
+    sys.exit(args.func(args))
 
 
 if __name__ == "__main__":

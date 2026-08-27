@@ -1,203 +1,119 @@
 ---
 name: skill-manager
-description: 管理所有已安装的skill，包括列出、安装、更新、卸载、搜索和配置管理
+description: 管理已安装的 skill 生命周期：列出、安装、同步、卸载、搜索目录。基于 Hermes 的本地 Skill Sync（跨 Agent 目录分发）与 Skill marketplace（安装/打包/目录）机制。
 ---
 
 # Skill Manager
 
-这个技能用于全面管理已安装的skill，提供完整的生命周期管理功能。
+这个技能用于管理**本机已安装**的 skill。核心机制是两套真实的 Hermes CLI：
+
+- **`hermes skill-sync`**：跨 Agent 目录的同步管理（中心仓库 `skills/` 是唯一可信来源，通过 symlink/copy 分发到 codex/cursor/trae/opencode 等目录）。
+- **`hermes skills`**：marketplace（从 registry/git/zip/本地路径安装 skill，打包分发，查看目录）。
+
+> 本技能原文档引用虚构的 `skillhub`/`clawhub` CLI，现已移除。所有操作一律走 `hermes` 命令。
 
 ## 功能
 
-- **列出技能**：显示所有已安装的skill及其状态
-- **安装技能**：从skillhub或其他源安装新的skill
-- **更新技能**：检查并更新现有的skill到最新版本
-- **卸载技能**：移除不需要的skill
-- **搜索技能**：在skillhub中搜索新的skill
-- **配置管理**：查看和修改skill的配置
+- **列出**：`hermes skill-sync status`（含各 Agent 目录同步状态）或 `hermes skills list`
+- **安装**：`hermes skills install <name> [--source ...] [--force]`
+- **同步**：`hermes skill-sync sync [name]`（把中心改动分发到各 Agent）
+- **卸载/取消管理**：`hermes skill-sync remove <name>`
+- **搜索目录**：`hermes skills remote`（vendor + 远程 registry 合并目录）
+- **纳入/取消管理**：`hermes skill-sync add/remove [--all] [--copy]`
+- **Agent 目录**：`hermes skill-sync agents` / `hermes skill-sync add-agent <name> <path>`
 
 ## 工作流程
 
-### 列出技能
+### Step 1: 检测 Hermes CLI 可用性
 
-运行以下命令查看所有已安装的skill：
-
-```bash
-skillhub list
-```
-
-### 安装技能
-
-从skillhub安装新的skill：
+**CHECKPOINT**: `hermes` 命令是否可用？
 
 ```bash
-skillhub install <skill-name>
+which hermes || ./hermes --help
 ```
 
-### 更新技能
-
-更新所有已安装的skill或特定skill：
-
-```bash
-# 更新所有skill
-skillhub update
-
-# 更新特定skill
-skillhub update <skill-name>
-```
-
-### 卸载技能
-
-移除不需要的skill：
-
-```bash
-skillhub uninstall <skill-name>
-```
-
-### 搜索技能
-
-在skillhub中搜索新的skill：
-
-```bash
-skillhub search <query>
-```
-
-### 配置管理
-
-查看和修改skill的配置：
-
-```bash
-# 查看配置
-skillhub config <skill-name>
-
-# 修改配置
-skillhub config <skill-name> <key> <value>
-```
-
-## 使用示例
-
-1. **列出所有技能**：
-   - 输入："列出所有已安装的skill"
-   - 操作：运行 `skillhub list` 并展示结果
-
-2. **安装新技能**：
-   - 输入："安装一个代码审查的skill"
-   - 操作：运行 `skillhub search code review`，展示结果，然后安装用户选择的skill
-
-3. **更新技能**：
-   - 输入："更新所有skill"
-   - 操作：运行 `skillhub update` 并展示更新结果
-
-4. **卸载技能**：
-   - 输入："卸载不需要的skill"
-   - 操作：运行 `skillhub list`，用户选择要卸载的skill，然后运行 `skillhub uninstall <skill-name>`
-
-5. **搜索技能**：
-   - 输入："搜索与前端开发相关的skill"
-   - 操作：运行 `skillhub search frontend` 并展示结果
-
-6. **管理配置**：
-   - 输入："查看skill的配置"
-   - 操作：运行 `skillhub config <skill-name>` 并展示配置信息
-
-## 注意事项
-
-- 确保skillhub命令可用且已正确安装
-- 对于网络问题，会自动尝试使用clawhub作为备选
-- 安装前会检查技能的安全性和兼容性
-- 配置修改时会备份原始配置，以便恢复
-
----
-
-## 标准工作流
-
-### Step 1: 检测 skillhub 可用性
-
-**CHECKPOINT**: `skillhub` 命令是否可用？
-- 验证：运行 `which skillhub` 或 `skillhub --version`
-- 可用：继续
-- 不可用：尝试 `clawhub` 作为备选；两者都不可用时通知用户
+- 仓库内：直接 `./hermes`（零安装入口）。
+- pip install 后：直接 `hermes`。
+- 两者都不可用：运行 `bash scripts/bootstrap.sh` 引导。
 
 ### Step 2: 执行操作
 
-根据用户需求选择对应命令：
-
-#### 操作 A: 列出技能
+#### 操作 A: 列出 skill 与同步状态
 
 ```bash
-skillhub list
+hermes skill-sync status
+# 或只看中心仓库已安装列表
+hermes skills list
 ```
 
-**CHECKPOINT**: 是否获得有意义的输出？
-- 成功：展示列表，包含每个 skill 的名称、版本、状态
-- 失败：如果输出为空，提示"尚未安装任何 skill"或检查 skillhub 配置
+**CHECKPOINT**: 输出是否包含 skill 名与各 Agent 状态（linked/synced/missing/conflict/local_changes/external_changes）？
+- 成功：向用户展示列表，重点标注 `conflict` / `external_changes` 这类需人工介入的状态。
+- `No skills found`：中心仓库为空，或尚未 `add` 纳管。
 
-#### 操作 B: 搜索并安装技能
+#### 操作 B: 搜索目录并安装 skill
 
 ```bash
-# 先搜索
-skillhub search <关键词>
+# 查看 registry 目录（vendor + 远程合并）
+hermes skills remote
 
-# 再安装
-skillhub install <skill-name>
+# 安装（默认走 registry；也可指定 --source）
+hermes skills install <name>
+hermes skills install <name> --source <git-url|local-path|zip-url>
 ```
 
 **CHECKPOINT**: 安装前安全检查
-- [ ] skill 名称格式正确（kebab-case）
-- [ ] 来源可信（skillhub 官方仓库）
-- [ ] 无已知安全漏洞
-- [ ] 与当前环境兼容
+- [ ] skill 名称是单个路径组件（kebab-case，无 `..`、路径分隔符）
+- [ ] 来源可信（官方 registry 或已知仓库）
+- [ ] 与当前环境兼容（安装后能加载 SKILL.md）
 
-#### 操作 C: 更新技能
+> 安装只会写入中心仓库 `skills/`。若需分发到各 Agent，安装后执行 `hermes skill-sync add <name>`（见操作 C）。
+
+#### 操作 C: 同步到各 Agent 目录
 
 ```bash
-# 更新所有
-skillhub update
+# 将 skill 纳入同步管理（symlink 或 copy）
+hermes skill-sync add <name>            # symlink（默认，实时同步）
+hermes skill-sync add <name> --copy     # copy 模式
 
-# 或更新特定
-skillhub update <skill-name>
+# 同步中心改动
+hermes skill-sync sync [name]           # name 缺省同步全部
 ```
 
-**CHECKPOINT**: 更新前备份
-- 保存当前 skill 的 SKILL.md 内容作为备份
-- 更新后验证 skill 仍正常工作
+**CHECKPOINT**: 冲突保护
+- copy 模式下，`conflict`/`external_changes` 会被跳过（不覆盖 Agent 侧用户改动）。
+- 遇到 `conflict`：先 `hermes skill-sync status` 定位，人工决策后再处理，不擅自合并。
 
-#### 操作 D: 卸载技能
+#### 操作 D: 取消管理 / 卸载
 
 ```bash
 # 先列出确认
-skillhub list | grep <关键词>
+hermes skill-sync status | grep <关键词>
 
-# 确认后卸载
-skillhub uninstall <skill-name>
+# 取消同步管理（symlink 删除链接 / copy 回写后删中心副本）
+hermes skill-sync remove <name>
 ```
 
 **CHECKPOINT**: 卸载前确认
 - 确认 skill 名称正确（避免误删）
-- 确认 skill 不再被其他技能依赖
-- 保留配置文件（如有）
+- 确认不再被其他 skill 依赖
+- `remove` 作用于“同步管理”，不等于删除中心仓库源文件；如需彻底删除中心 `skills/<name>/`，另行说明。
 
-#### 操作 E: 配置管理
+#### 操作 E: 查看 / 管理 Agent 目录
 
 ```bash
-# 查看配置
-skillhub config <skill-name>
-
-# 修改配置
-skillhub config <skill-name> <key> <value>
+hermes skill-sync agents                 # 列出已发现的 Agent 目录
+hermes skill-sync add-agent <name> <path> # 添加自定义 Agent 目录
 ```
 
-**CHECKPOINT**: 配置修改前备份
-- [ ] 保存当前配置文件内容
-- [ ] 修改后验证配置格式正确
-- [ ] 验证 skill 在新配置下正常工作
+**CHECKPOINT**: 自定义目录是否纳入发现
+- `agents` 输出中自定义项带 `*` 标记。
+- 目录不存在时标注 `(missing)`。
 
 ### Step 3: 验证结果
 
 **CHECKPOINT**: 操作是否成功？
-- 检查命令退出码（应为 0）
-- 检查输出是否包含成功标识（如 "安装完成"、"更新成功"）
-- 执行简单测试验证 skill 可用
+- 检查退出码（0 成功，1 软失败，2 硬错误）。
+- `skill-sync` 的 `--json` 标志可输出机器可读结果（含 `errors` 明细）。
 
 ---
 
@@ -207,150 +123,43 @@ skillhub config <skill-name> <key> <value>
 
 | 场景 | 原因 | 处理方式 |
 |------|------|---------|
-| skillhub 命令不存在 | skillhub 未安装或 PATH 不正确 | 尝试 `clawhub`；两者都不可用时告知用户如何安装 |
-| 搜索无结果 | 关键词不匹配或仓库中无对应 skill | 建议用户尝试不同关键词，或用更通用的词 |
-| 安装失败 | 网络问题、权限不足、版本冲突 | 检查网络；检查磁盘空间；尝试指定版本号；重试 |
-| 更新失败 | skill 已修改导致冲突；网络问题 | 提示用户手动恢复备份；如果是自定义修改，保留本地变更 |
-| 卸载失败 | skill 正在使用中；权限不足 | 等待会话结束后重试；检查并修复文件权限 |
-| 配置修改失败 | 配置文件被锁定；格式错误 | 从备份恢复；手动检查配置文件语法 |
-| 返回码非 0 | 未知错误 | 查看详细错误输出；运行 `skillhub --help` 获取帮助 |
+| `hermes` 命令不存在 | 未引导 / 不在 PATH | 仓库内跑 `bash scripts/bootstrap.sh` |
+| `skill X not found in central repo` | 中心 `skills/` 无此 skill | 先 `hermes skills remote` 找目录，再 `install` |
+| `existing content, skipped` | Agent 目录已有同名内容 | 人工确认后决定是否覆盖，勿擅自删除 |
+| `conflict` | 中心与 Agent 双端均有改动 | 用 `status` 定位，人工合并，不自动覆盖 |
+| `external_changes` | Agent 侧有本地改动 | copy 模式下 sync 会跳过；人工确认后再处理 |
+| 安装 `already installed` | 目标已存在 | 用 `--force` 覆盖（谨慎），或换名 |
+| `path outside known agent dirs (skipped)` | 状态文件被污染 | 检查 `.state/skill_sync.json`，修正后重试 |
 
-### 失败时的用户通知
+### 失败时用户通知
 
-当 skill 管理操作失败时，**明确告知用户**：
-
-**示例**：
 ```
-❌ 安装 skill: code-review 失败
+❌ 同步 skill <name> 失败
 
 原因：
-- skillhub 返回错误："repository not reachable"
-- 可能原因：网络连接中断
+- agent <cursor> 存在本地改动（state=external_changes），copy 模式跳过覆盖
 
 建议：
-1. 检查网络连接
-2. 尝试使用备选源：clawhub install code-review
-3. 稍后重试
-
-要我尝试 clawhub 备选方案吗？
+1. hermes skill-sync status 查看详情
+2. 人工确认 cursor 侧改动是否需要保留
+3. 保留则不动；要覆盖则先备份后手动同步
 ```
 
 ---
 
 ## 反例与黑名单
 
-### 禁止行为
-
 | 禁止 | 原因 | 替代方案 |
 |------|------|---------|
-| ❌ 未经确认直接卸载 | 可能误删用户重要 skill | 先列出 skill 列表，让用户选择确认 |
-| ❌ 不备份直接修改配置 | 可能导致 skill 不可用 | 修改前备份配置文件 |
-| ❌ 不验证直接安装 | 可能安装恶意或不兼容的 skill | 安装前检查安全性和兼容性 |
-| ❌ 忽略错误输出 | 无法诊断问题根源 | 捕获并展示完整错误输出 |
-| ❌ 覆盖本地修改 | 用户可能有自定义的 skill 修改 | 更新前检查 diff，保留本地变更 |
-| ❌ 用 sudo 强制安装 | 可能导致权限问题或安全风险 | 检查是否有无需 sudo 的替代方案 |
-
-### 错误示例（反例）
-
-**❌ 错误示例 1：不确认直接卸载**
-
-```
-用户：卸载不需要的 skill
-执行：skillhub uninstall foo
-（无任何确认）
-结果：误删了用户正在使用的 skill
-```
-
-**✅ 正确做法**：
-
-```
-用户：卸载不需要的 skill
-执行：
-1. skillhub list 展示所有 skill
-2. 询问用户要卸载哪些
-3. 确认后执行 skillhub uninstall
-4. 告知卸载结果
-```
-
----
-
-**❌ 错误示例 2：不验证直接安装**
-
-```
-用户：安装代码审查 skill
-执行：skillhub install random-skill
-（无任何检查）
-结果：安装了恶意或不兼容的 skill
-```
-
-**✅ 正确做法**：
-
-```
-用户：安装代码审查 skill
-执行：
-1. skillhub search code review
-2. 展示搜索结果，让用户选择
-3. 检查所选 skill 的元数据（作者、版本、最后更新时间）
-4. 确认用户后才 skillhub install
-```
-
----
-
-**❌ 错误示例 3：不备份直接修改配置**
-
-```
-执行：skillhub config my-skill key value
-（无备份）
-结果：配置格式错误导致 skill 不可用
-```
-
-**✅ 正确做法**：
-
-```
-执行：
-1. 先读取当前配置并备份
-2. skillhub config my-skill key value
-3. 验证 skill 在新配置下是否正常（读取 SKILL.md，检查格式）
-4. 如果有问题，从备份恢复
-```
-
----
-
-## FAQ 常见问题
-
-**Q: skillhub 和 clawhub 有什么区别？**
-A: skillhub 是主要的 skill 包管理器，clawhub 是备选/兼容实现。优先使用 skillhub，失败时尝试 clawhub。
-
-**Q: 如何查看已安装的 skill 版本？**
-A: 运行 `skillhub list` 或 `skillhub info <skill-name>` 查看详细信息，包括版本号。
-
-**Q: 安装失败时如何重试？**
-A: 先检查网络和磁盘空间，然后重试。可以指定版本号：`skillhub install <skill-name>@<version>`。
-
-**Q: 如何更新所有 skill 而不中断工作？**
-A: `skillhub update` 会自动处理更新。但建议在非关键任务期间执行，更新后快速验证每个 skill 的可用性。
-
-**Q: 卸载后 skill 的配置文件怎么办？**
-A: 默认会保留配置文件。如需完全删除，手动删除配置目录（通常在 `~/.config/skillhub/`）。
-
-**Q: 如何搜索 skillhub 仓库？**
-A: `skillhub search <关键词>`。支持模糊匹配，可以用多个关键词组合搜索。
-
-**Q: 能安装本地目录作为 skill 吗？**
-A: 可以：`skillhub install /path/to/local/skill` 或直接将目录放入 skills 目录。
-
-**Q: 如何知道哪些 skill 有更新？**
-A: `skillhub list --outdated` 列出有新版本的 skill。或定期运行 `skillhub update --dry-run` 预览更新。
-
-**Q: skill 配置格式错误怎么办？**
-A: skillhub 通常会在启动时验证配置。如果格式错误，会给出提示。从备份恢复，或手动修复 YAML/JSON 格式。
-
-**Q: 可以同时安装多个版本的同一个 skill 吗？**
-A: 大多数包管理器不支持。如果需要特定版本，使用 `skillhub install <skill-name>@<version>`。
+| ❌ 未经确认直接 `remove` | 可能误删正在使用的同步/源 | 先 `status` 列出，让用户确认 |
+| ❌ 遇到 `conflict` 擅自合并 | 会覆盖双端改动 | 报告状态，人工决策 |
+| ❌ 安装来源不明即执行 | 安全风险 | 校验名称与来源，用官方 registry |
+| ❌ 用 `--force` 覆盖中心 skill | 丢失本地修改 | 覆盖前 diff 并备份 |
+| ❌ 忽略 `errors` 明细 | 无法定位问题 | 用 `--json` 读取完整 errors |
 
 ---
 
 ## Related skills（边界声明）
 
-- **find-skills**: 候选 skill **发现**。本 skill 是**安装后管理**（list/install/update/remove），find-skills 关注**发现**（"世界上有什么 skill"）。标准流程：`find-skills → skill-manager`。
+- **find-skills**: 候选 skill **发现**（“世界上有什么 skill”，`npx skills`）。本 skill 是**安装后管理**。标准流程：`find-skills → skill-manager`。
 - **skill-creator**: skill 创建/改进。本 skill 关注**已安装** skill 的管理；skill-creator 关注**开发**阶段。
