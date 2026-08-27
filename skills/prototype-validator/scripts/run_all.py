@@ -97,7 +97,9 @@ def _run_script(args: list[str], name: str) -> dict | None:
         # 从 output 文件读取
         output_path = args[args.index("--output") + 1]
         if os.path.exists(output_path):
-            return json.loads(Path(output_path).read_text(encoding="utf-8")).get(name.replace("a11y", "a11y").replace("perf", "perf"), {})
+            data = json.loads(Path(output_path).read_text(encoding="utf-8"))
+            # 子脚本结构不一：a11y/perf 输出嵌套 {name: {...}}，visual 输出扁平 {score: ...}
+            return data.get(name, data if "score" in data else {})
         return None
     except (subprocess.TimeoutExpired, json.JSONDecodeError) as e:
         sys.stderr.write(f"[{name}] 运行失败: {e}\n")

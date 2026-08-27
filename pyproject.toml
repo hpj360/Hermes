@@ -33,6 +33,8 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.9",
     "httpx>=0.27",
+    "beautifulsoup4>=4.12",
+    "requests>=2.31",
 ]
 content_team = [
     "sqlalchemy[asyncio]>=2.0",

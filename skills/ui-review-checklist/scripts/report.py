@@ -28,8 +28,7 @@ def main():
     lines = [
         "# UI 评审报告",
         "",
-        f"**目标**: `{scan['target']}`",
-        f"**文件数**: {scan['files_scanned']}",
+        f"> 目标: `{scan['target']}` | 文件数: {scan['files_scanned']}",
         "",
     ]
 
@@ -50,9 +49,7 @@ def main():
     if anti:
         lines.append("| ID | 名称 | 严重度 | 命中数 | 修复建议 |")
         lines.append("|----|------|--------|--------|----------|")
-        for f in anti:
-            pass
-        # 聚合
+        # 按 id 聚合去重
         for pid, count in anti_by_id.most_common():
             sample = next((f for f in anti if f["id"] == pid), {})
             lines.append(f"| {pid} | {sample.get('name', '?')} | {sample.get('severity', '?')} | {count} | {sample.get('fix', '')} |")
