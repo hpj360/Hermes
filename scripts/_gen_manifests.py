@@ -37,7 +37,6 @@ CAPABILITIES = {
     "self-improving-agent": ("self-improvement", []),
     "skill-creator": ("skill-authoring", []),
     "skill-manager": ("skill-management", []),
-    "skill-vetter": ("skill-vetting", []),
     "stock-analysis": ("stock-analysis", []),
     "storybook-chromatic": ("storybook-integration", []),
     "style-dictionary-sync": ("design-token-sync", []),

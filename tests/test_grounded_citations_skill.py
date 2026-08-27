@@ -126,11 +126,11 @@ def test_manifest_includes_skill() -> None:
 
 
 def test_manifest_skill_count_is_44() -> None:
-    """manifest.json should list 51 skills (50 + content-extraction shared engine)."""
+    """manifest.json should list 50 skills (49 + content-extraction shared engine)."""
     manifest_path = PROJECT_ROOT / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     skills = manifest.get("skills", [])
-    assert len(skills) == 51, f"Expected 51 skills, got {len(skills)}"
+    assert len(skills) == 50, f"Expected 50 skills, got {len(skills)}"
 
 
 # ── Disk / manifest / discover consistency ───────────────────────

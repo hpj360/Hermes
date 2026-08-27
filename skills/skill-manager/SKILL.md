@@ -352,6 +352,5 @@ A: 大多数包管理器不支持。如果需要特定版本，使用 `skillhub 
 
 ## Related skills（边界声明）
 
-- **find-skills**: 候选 skill **发现**。本 skill 是**安装后管理**（list/install/update/remove），find-skills 关注**发现**（"世界上有什么 skill"）。标准流程：`find-skills → skill-vetter → skill-manager`。
-- **skill-vetter**: 质量/安全审查。本 skill 的 install 操作**应**在 skill-vetter 审查通过后执行。
+- **find-skills**: 候选 skill **发现**。本 skill 是**安装后管理**（list/install/update/remove），find-skills 关注**发现**（"世界上有什么 skill"）。标准流程：`find-skills → skill-manager`。
 - **skill-creator**: skill 创建/改进。本 skill 关注**已安装** skill 的管理；skill-creator 关注**开发**阶段。

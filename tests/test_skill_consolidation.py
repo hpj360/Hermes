@@ -98,13 +98,13 @@ def test_product_manager_has_completion_criteria() -> None:
 
 
 def test_manifest_has_44_skills() -> None:
-    """manifest.json should list 51 skills (50 + content-extraction shared engine)."""
+    """manifest.json should list 50 skills (49 + content-extraction shared engine)."""
     import json
 
     manifest_path = PROJECT_ROOT / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     skills = manifest.get("skills", [])
-    assert len(skills) == 51, f"Expected 51 skills, got {len(skills)}"
+    assert len(skills) == 50, f"Expected 50 skills, got {len(skills)}"
 
 
 def test_manifest_no_pskoett() -> None:

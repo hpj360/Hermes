@@ -80,7 +80,8 @@ def test_discover_skills_count_matches_manifest() -> None:
     # +6 media skills migrated from content-team (seedance2-video-gen, hyperframes,
     #   media-use, media-generation, remotion-video-toolkit, video-cut) → 50.
     # +1 content-extraction shared distillation engine → 51.
-    assert len(discover_skills()) == 51
+    # -1 skill-vetter removed (empty shell, no actionable methodology) → 50.
+    assert len(discover_skills()) == 50
 
 
 # ---------------------------------------------------------------------------
