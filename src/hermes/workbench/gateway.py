@@ -33,7 +33,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from hermes.workbench import server as wb_server
-from hermes.workbench.errors import WorkbenchError, status_code_for
+from hermes.workbench.errors import NotFoundError, WorkbenchError, status_code_for
 
 __all__ = ["create_app"]
 
@@ -144,7 +144,7 @@ def _dispatch(path: str, method: str, headers: dict[str, str], body: bytes) -> _
             capture.status = 500
             capture.body = json.dumps({"error": str(e), "type": type(e).__name__}).encode("utf-8")
         return capture
-    raise wb_server.NotFoundError(f"route not found: {method} {path}")
+    raise NotFoundError(f"route not found: {method} {path}")
 
 
 def _sse_jobs() -> Any:
