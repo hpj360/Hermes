@@ -1,0 +1,8 @@
+version: "1.0"
+provides:
+  - content-distillation
+  - report-rendering
+requires:
+  - python:beautifulsoup4
+  - python:requests
+test_command: "python -m pytest tests/test_content_extraction.py"
