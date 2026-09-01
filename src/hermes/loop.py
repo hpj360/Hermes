@@ -48,6 +48,7 @@ from hermes.loop_gepa import (  # noqa: F401
     GepaEvaluator,
     _GEPA_TRIGGER_STATUSES,
     _maybe_run_gepa,
+    ensure_default_gepa_evaluator,
     get_gepa_evaluator,
     set_gepa_evaluator,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "GepaEvaluator",
     "_GEPA_TRIGGER_STATUSES",
     "_maybe_run_gepa",
+    "ensure_default_gepa_evaluator",
     "get_gepa_evaluator",
     "set_gepa_evaluator",
     # 本文件（状态机层）
@@ -1371,7 +1373,9 @@ def record_round(
         else []
     )
 
-    # Stage 5: 终态时按需触发 GEPA 自进化周期（opt-in，失败不影响 record_round）
+    # Stage 5: 终态时按需触发 GEPA 自进化周期（opt-in，失败不影响 record_round）。
+    # 未显式注入 evaluator 时先尝试默认接线（skill-up 可用即开箱自跑）。
+    ensure_default_gepa_evaluator()
     gepa_result = _maybe_run_gepa(loop, round_data)
 
     # A2: 每轮结束落 checkpoint（快照 meta.json，供 rewind 回滚）。

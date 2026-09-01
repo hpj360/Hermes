@@ -442,7 +442,7 @@ def test_loop_gepa_run_no_evaluator_returns_1(tmp_loops, capsys) -> None:
     rc = main(["loop", "gepa", "ge-loop", "--run"])
     assert rc == 1
     out = capsys.readouterr().out
-    assert "No GEPA evaluator injected" in out
+    assert "No GEPA evaluator available" in out
 
 
 def test_loop_gepa_run_with_evaluator_succeeds(tmp_loops, capsys) -> None:

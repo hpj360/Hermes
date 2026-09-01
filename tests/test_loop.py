@@ -3975,6 +3975,57 @@ def test_set_get_gepa_evaluator():
         set_gepa_evaluator(original)  # 恢复全局状态
 
 
+def test_ensure_default_gepa_evaluator_prefers_injected():
+    """ensure_default_gepa_evaluator：显式注入优先，不覆盖。"""
+    from hermes.loop import ensure_default_gepa_evaluator, get_gepa_evaluator, set_gepa_evaluator
+
+    original = get_gepa_evaluator()
+    try:
+        def fake_eval(variant, task, ctx):
+            return {"success": True}
+        set_gepa_evaluator(fake_eval)
+        # 已注入时 ensure 直接返回已注入的，不会构建默认实现
+        assert ensure_default_gepa_evaluator() is fake_eval
+        assert get_gepa_evaluator() is fake_eval
+    finally:
+        set_gepa_evaluator(original)
+
+
+def test_ensure_default_gepa_evaluator_skill_up_unavailable(monkeypatch):
+    """ensure_default_gepa_evaluator：skill-up 不可用时返回 None 且不抛异常。"""
+    from hermes.loop import ensure_default_gepa_evaluator, get_gepa_evaluator, set_gepa_evaluator
+
+    original = get_gepa_evaluator()
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    set_gepa_evaluator(None)
+    try:
+        result = ensure_default_gepa_evaluator()
+        assert result is None
+        assert get_gepa_evaluator() is None
+    finally:
+        set_gepa_evaluator(original)
+
+
+def test_ensure_default_gepa_evaluator_wires_default(monkeypatch, tmp_path):
+    """ensure_default_gepa_evaluator：skill-up 可用时注入 gepa_bridge 默认实现。"""
+    from hermes.loop import ensure_default_gepa_evaluator, get_gepa_evaluator, set_gepa_evaluator
+
+    original = get_gepa_evaluator()
+    # 让 SkillUpClient.is_available() 返回 True（二进制视为存在）
+    monkeypatch.setattr(
+        "hermes.eval.client.SkillUpClient.is_available", lambda self: True
+    )
+    set_gepa_evaluator(None)
+    try:
+        result = ensure_default_gepa_evaluator()
+        assert result is not None
+        assert get_gepa_evaluator() is result
+        # 幂等：第二次调用返回同一实例
+        assert ensure_default_gepa_evaluator() is result
+    finally:
+        set_gepa_evaluator(original)
+
+
 def test_maybe_run_gepa_skips_non_terminal(tmp_path, monkeypatch):
     """_maybe_run_gepa: 非终态时跳过。"""
     from hermes import loop as loop_mod

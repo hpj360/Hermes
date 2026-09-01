@@ -367,7 +367,7 @@ def cmd_loop_gepa(args: argparse.Namespace) -> int:
     if args.run:
         # Manual trigger: call _maybe_run_gepa directly (bypasses terminal-state
         # check since user explicitly asked). But still needs variants + evaluator.
-        from hermes.loop import _maybe_run_gepa, _GEPA_TRIGGER_STATUSES, get_gepa_evaluator
+        from hermes.loop import _maybe_run_gepa, _GEPA_TRIGGER_STATUSES, ensure_default_gepa_evaluator
         from hermes.loop import LoopRound
 
         if not loop.gepa_variants:
@@ -375,9 +375,11 @@ def cmd_loop_gepa(args: argparse.Namespace) -> int:
             print("  Add variants to meta.json: gepa_variants: [{variant_id, agent_file}, ...]")
             return 1
 
-        if get_gepa_evaluator() is None:
-            print("No GEPA evaluator injected. Runner injects one when Gateway is available.")
-            print("  In guidance mode, GEPA cannot run (no agent execution backend).")
+        # 未显式注入时尝试默认接线（skill-up 可用即开箱自跑）
+        if ensure_default_gepa_evaluator() is None:
+            print("No GEPA evaluator available (neither injected nor default-wired).")
+            print("  Inject one via set_gepa_evaluator, or install the skill-up")
+            print("  binary so a default evaluator can be built from gepa_bridge.")
             return 1
 
         # Force terminal status for manual trigger (user explicitly asked to run)

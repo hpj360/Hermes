@@ -53,6 +53,41 @@ def get_gepa_evaluator() -> GepaEvaluator | None:
     return _gepa_evaluator
 
 
+def ensure_default_gepa_evaluator() -> GepaEvaluator | None:
+    """skill-up 可用时构建并注入默认 evaluator（自进化默认接线）。
+
+    优先级：显式 ``set_gepa_evaluator`` 注入的 evaluator 永远优先；
+    仅当未注入且 skill-up 二进制可用时，才用 ``eval.gepa_bridge`` 的
+    ``default_skill_dir_resolver`` 构建默认 evaluator（每个 variant 的
+    skill_dir 取自 variant["metadata"]["skill_dir"]）。
+
+    此前 GEPA 是"有引擎无燃料"——run_gepa_cycle/实验持久化都在，但
+    没有任何调用方注入 evaluator，自进化永远跳过。本函数由
+    record_round（终态自动触发）与 ``hermes loop gepa --run``（手动
+    触发）调用，让声明了 gepa_variants 的 loop 在 skill-up 可用的
+    环境下开箱即跑。
+
+    返回最终生效的 evaluator（skill-up 不可用或构建失败时为 None，
+    此时维持原有跳过行为，绝不抛异常阻断 record_round 主流程）。
+    """
+    global _gepa_evaluator
+    if _gepa_evaluator is not None:
+        return _gepa_evaluator
+    try:
+        from hermes.eval.client import SkillUpClient
+        from hermes.eval.gepa_bridge import default_skill_dir_resolver, make_evaluator
+
+        if not SkillUpClient().is_available():
+            logger.debug("GEPA 默认接线跳过：skill-up 二进制不可用")
+            return None
+        _gepa_evaluator = make_evaluator(default_skill_dir_resolver)
+        logger.info("GEPA 默认 evaluator 已接线（gepa_bridge + skill-up）")
+        return _gepa_evaluator
+    except Exception:  # noqa: BLE001 — 接线失败不阻断 loop 主流程
+        logger.exception("GEPA 默认 evaluator 构建失败，本次跳过自进化")
+        return None
+
+
 # 触发 GEPA 的终态集合（只在 loop 结束时跑一次，不在中间轮跑）
 _GEPA_TRIGGER_STATUSES = frozenset({
     LoopStatus.COMPLETED,
