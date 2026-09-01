@@ -1,3 +1,7 @@
 version: "1.0"
 provides:
   - wechat-content-reading
+requires:
+  - python:requests
+  - python:beautifulsoup4
+test_command: "python -m pytest tests/test_reader_skills.py"
