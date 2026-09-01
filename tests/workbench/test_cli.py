@@ -523,9 +523,11 @@ def test_make_runner_uses_skills_dir(monkeypatch: pytest.MonkeyPatch) -> None:
         def __init__(self, base_dir: Path) -> None:
             captured["base_dir"] = base_dir
 
-    monkeypatch.setattr(wb_cli, "SkillRunner", FakeSkillRunner)
+    from hermes.workbench import services as svc_mod
+
+    monkeypatch.setattr(svc_mod, "SkillRunner", FakeSkillRunner)
     expected = Path("/some/skills")
-    monkeypatch.setattr(wb_cli, "_hermes_skills_dir", lambda: expected)
+    monkeypatch.setattr(svc_mod, "_hermes_skills_dir", lambda: expected)
     wb_cli._make_runner()
     assert captured["base_dir"] == expected
 
@@ -533,7 +535,7 @@ def test_make_runner_uses_skills_dir(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_make_memory_uses_state_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(wb_cli, "_state_dir", lambda: tmp_path)
+    monkeypatch.setattr("hermes.workbench.services._state_dir", lambda: tmp_path)
     mem = wb_cli._make_memory()
     assert isinstance(mem, MemoryService)
     assert mem.state_dir == tmp_path
@@ -545,13 +547,13 @@ def test_make_memory_is_cached_per_state_dir(
     """M4: _make_memory returns a shared instance per state dir (no thread leak)."""
     wb_cli._reset_memory_cache()
     try:
-        monkeypatch.setattr(wb_cli, "_state_dir", lambda: tmp_path)
+        monkeypatch.setattr("hermes.workbench.services._state_dir", lambda: tmp_path)
         mem1 = wb_cli._make_memory()
         mem2 = wb_cli._make_memory()
         assert mem1 is mem2
 
         other = tmp_path / "other"
-        monkeypatch.setattr(wb_cli, "_state_dir", lambda: other)
+        monkeypatch.setattr("hermes.workbench.services._state_dir", lambda: other)
         assert wb_cli._make_memory() is not mem1
     finally:
         wb_cli._reset_memory_cache()
@@ -560,7 +562,7 @@ def test_make_memory_is_cached_per_state_dir(
 def test_make_store_uses_state_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(wb_cli, "_state_dir", lambda: tmp_path)
+    monkeypatch.setattr("hermes.workbench.services._state_dir", lambda: tmp_path)
     store = wb_cli._make_store()
     assert isinstance(store, TaskStore)
     assert store.state_dir == tmp_path
@@ -575,7 +577,7 @@ def test_make_registry_returns_empty() -> None:
 def test_make_scheduler_wires_components(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(wb_cli, "_state_dir", lambda: tmp_path)
+    monkeypatch.setattr("hermes.workbench.services._state_dir", lambda: tmp_path)
     sched = wb_cli._make_scheduler()
     assert isinstance(sched, TaskScheduler)
     assert isinstance(sched.store, TaskStore)
@@ -1151,7 +1153,7 @@ def _patch_scheduler_center(
 
     Returns the fresh center so tests can inspect its in-memory state.
     """
-    monkeypatch.setattr(wb_cli, "_state_dir", lambda: state_dir)
+    monkeypatch.setattr("hermes.workbench.services._state_dir", lambda: state_dir)
     wb_cli._reset_scheduler_center()
     return wb_cli._make_scheduler_center()
 

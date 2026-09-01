@@ -18,7 +18,7 @@ from hermes.workbench.gateway import create_app
 
 @pytest.fixture
 def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(wb_cli, "_state_dir", lambda: tmp_path)
+    monkeypatch.setattr("hermes.workbench.services._state_dir", lambda: tmp_path)
     monkeypatch.setattr(wb_cli, "_make_notes_dir", lambda: tmp_path / "notes")
     wb_cli._reset_scheduler_center()
     center = wb_cli._make_scheduler_center()

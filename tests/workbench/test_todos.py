@@ -76,7 +76,7 @@ def test_hand_off_creates_job_and_bridges(
     """U7 AC: handing off a todo creates a QUEUED job and marks HANDED_OFF."""
     from hermes.workbench import cli as wb_cli
 
-    monkeypatch.setattr(wb_cli, "_state_dir", lambda: tmp_path)
+    monkeypatch.setattr("hermes.workbench.services._state_dir", lambda: tmp_path)
     wb_cli._reset_scheduler_center()
     try:
         svc = TodoService(store)

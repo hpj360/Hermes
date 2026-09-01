@@ -22,7 +22,7 @@ from hermes.workbench.scheduler import JobStatus, ScheduledJob
 @pytest.fixture
 def center(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     """A scheduler center pointed at a tmp state dir, with a mocked router."""
-    monkeypatch.setattr(wb_cli, "_state_dir", lambda: tmp_path)
+    monkeypatch.setattr("hermes.workbench.services._state_dir", lambda: tmp_path)
     wb_cli._reset_scheduler_center()
     c = wb_cli._make_scheduler_center()
 

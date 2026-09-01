@@ -176,7 +176,7 @@ def test_get_scheduler_returns_same_singleton(
 ) -> None:
     """D2: get_scheduler 返回同一调度中心的同一组组件（门面语义）。"""
     monkeypatch.setattr(
-        "hermes.workbench.cli._state_dir", lambda: tmp_path / "state"
+        "hermes.workbench.services._state_dir", lambda: tmp_path / "state"
     )
 
     first = get_scheduler(state_dir=tmp_path)
@@ -195,7 +195,7 @@ def test_init_scheduler_on_startup_creates_all_components(
 ) -> None:
     """D2: init_scheduler_on_startup 返回共享中心组件并启动工作线程池。"""
     monkeypatch.setattr(
-        "hermes.workbench.cli._state_dir", lambda: tmp_path / "state"
+        "hermes.workbench.services._state_dir", lambda: tmp_path / "state"
     )
     # 预先用 tmp_path 构造中心，避免写入项目 data 目录
     get_scheduler(state_dir=tmp_path)
@@ -219,7 +219,7 @@ def test_env_var_disables_recovery(
 ) -> None:
     """HERMES_SCHEDULER_RECOVERY=off 时共享中心的 RecoveryManager 禁用恢复。"""
     monkeypatch.setattr(
-        "hermes.workbench.cli._state_dir", lambda: tmp_path / "state"
+        "hermes.workbench.services._state_dir", lambda: tmp_path / "state"
     )
     monkeypatch.setenv("HERMES_SCHEDULER_RECOVERY", "off")
     # 在构造单例前预置一个 QUEUED 作业

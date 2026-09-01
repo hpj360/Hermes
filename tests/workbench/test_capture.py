@@ -72,7 +72,7 @@ def test_capture_link_writes_note_and_summary_job(
     """U: a link capture writes a note AND submits an async summary job."""
     from hermes.workbench import cli as wb_cli
 
-    monkeypatch.setattr(wb_cli, "_state_dir", lambda: notes_dir.parent / "state")
+    monkeypatch.setattr("hermes.workbench.services._state_dir", lambda: notes_dir.parent / "state")
     wb_cli._reset_scheduler_center()
     try:
         svc = CaptureService(store, notes_dir)

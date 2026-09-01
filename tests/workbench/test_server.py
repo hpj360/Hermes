@@ -43,7 +43,7 @@ def patched_services(monkeypatch, skills_dir, tmp_path):
 
     state = tmp_path / "state"
     state.mkdir()
-    monkeypatch.setattr(cli_mod, "_state_dir", lambda: state)
+    monkeypatch.setattr("hermes.workbench.services._state_dir", lambda: state)
     runner = SkillRunner(base_dir=skills_dir)
     memory = MemoryService(state_dir=state)
     store = cli_mod.TaskStore(state_dir=state)
@@ -60,7 +60,7 @@ def patched_services(monkeypatch, skills_dir, tmp_path):
 
     # Phase 3 scheduler center: build a fresh center pointed at tmp state so
     # the new /jobs, /projects, /triggers, /sync, /health routes are isolated.
-    monkeypatch.setattr(cli_mod, "_state_dir", lambda: state)
+    monkeypatch.setattr("hermes.workbench.services._state_dir", lambda: state)
     cli_mod._reset_scheduler_center()
     center = cli_mod._SchedulerCenter()
     monkeypatch.setattr(cli_mod, "_make_scheduler_center", lambda: center)
