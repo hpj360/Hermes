@@ -28,7 +28,7 @@ import subprocess
 import threading
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger("hermes.mcp_client")
 
@@ -232,11 +232,12 @@ class HTTPTransport:
                 line = line.strip()
                 if line.startswith("data:"):
                     try:
-                        return json.loads(line[len("data:"):].strip())
+                        # json.loads 返回 Any，按 JSON-RPC 契约 cast 为 dict
+                        return cast(dict[str, Any], json.loads(line[len("data:"):].strip()))
                     except json.JSONDecodeError:
                         continue
         try:
-            return json.loads(body)
+            return cast(dict[str, Any], json.loads(body))
         except json.JSONDecodeError as e:
             raise RuntimeError(f"MCP server returned non-JSON body: {e}") from e
 
@@ -318,6 +319,9 @@ class MCPClient:
         if not norm.get("success"):
             raise RuntimeError(f"initialize failed: {norm.get('error')}")
         # 通知 server 初始化完成（fire-and-forget）。
+        # connect() 刚完成传输装配，_handshake 仅由 connect() 调用，
+        # 此处必非 None；与 _request 内的判 None 模式保持一致。
+        assert self._transport is not None
         self._transport.send(
             {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
         )

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 __all__ = ["ParsedTopic", "parse_topic_library"]
 
@@ -51,7 +52,7 @@ class ParsedTopic:
     content: list[str] = field(default_factory=list)  # 内容方向大纲
     keywords: list[str] = field(default_factory=list)
 
-    def to_topic_input(self, *, default_platform: str = "XIAOHONGSHU") -> dict:
+    def to_topic_input(self, *, default_platform: str = "XIAOHONGSHU") -> dict[str, Any]:
         """转换为 ``TopicCreate`` 兼容的输入字典。
 
         - title：取首个标题候选（去书名号）；无候选时用小节主题兜底。
@@ -111,7 +112,9 @@ def parse_topic_library(markdown: str) -> list[ParsedTopic]:
         if field_match:
             field_name = field_match.group(1)
             inline = field_match.group(2).strip()
-            if field_name == "关键词" and inline:
+            # current 可能仍为 None（字段行出现在首个小节标题之前）：
+            # 按"解析容忍、不抛异常"的模块约定跳过无归属字段。
+            if field_name == "关键词" and inline and current is not None:
                 current.keywords.extend(_split_keywords(inline))
             continue
 

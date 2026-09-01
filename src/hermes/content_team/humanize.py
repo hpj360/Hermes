@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import cast
 
 __all__ = ["DeaiResult", "deai_text"]
 
@@ -48,7 +49,8 @@ class DeaiResult:
 
     @property
     def total_changes(self) -> int:
-        return sum(int(c["count"]) for c in self.changes)
+        # changes 记录由 _apply 写入，count 恒为 int；object → int 需显式 cast
+        return sum(int(cast(int, c["count"])) for c in self.changes)
 
 
 def deai_text(text: str) -> DeaiResult:

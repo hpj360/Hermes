@@ -163,7 +163,7 @@ def cmd_mcp_call(args: argparse.Namespace) -> int:
     return 0
 
 
-def add_mcp_subparser(sub: argparse._SubParsersAction) -> None:
+def add_mcp_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     p_mcp = sub.add_parser("mcp", help="Query and call MCP servers (stdio/HTTP)")
     p_mcp.add_argument(
         "--config",

@@ -21,7 +21,7 @@ import urllib.request
 import urllib.parse
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 from hermes.content_team.auth.oauth_flow import (
     OAuthTokenManager,
@@ -117,7 +117,8 @@ def default_metrics_adapter_registry() -> MetricsAdapterRegistry:
 
 def _default_request_executor(req: Any) -> bytes:  # pragma: no cover - thin wrapper
     with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310
-        return resp.read()
+        # req 为 Any 导致 resp 推导为 Any；按 urlopen 契约 cast 为 bytes
+        return cast(bytes, resp.read())
 
 
 def _parse_msgid(external_ref: str | None) -> str | None:

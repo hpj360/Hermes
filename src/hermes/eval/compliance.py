@@ -278,7 +278,13 @@ def audit_compliance(actions: Sequence[Action], contract: AuditContract) -> Comp
 
     verdicts: list[RuleVerdict] = []
 
-    def judge(rule_id, severity, evidence, nv_reason="contract does not declare this redline"):
+    # 内部判定闭包：补齐参数/返回类型注解，消除 no-untyped-def / no-untyped-call
+    def judge(
+        rule_id: str,
+        severity: str,
+        evidence: list[str],
+        nv_reason: str = "contract does not declare this redline",
+    ) -> None:
         if evidence:
             verdicts.append(
                 RuleVerdict(rule_id=rule_id, severity=severity, verdict=VIOLATED,
@@ -289,7 +295,7 @@ def audit_compliance(actions: Sequence[Action], contract: AuditContract) -> Comp
                 RuleVerdict(rule_id=rule_id, severity=severity, verdict=PASSED)
             )
 
-    def judge_nv(rule_id, severity, nv_reason):
+    def judge_nv(rule_id: str, severity: str, nv_reason: str) -> None:
         verdicts.append(
             RuleVerdict(rule_id=rule_id, severity=severity, verdict=NOT_VERIFIABLE,
                         explanation=nv_reason)

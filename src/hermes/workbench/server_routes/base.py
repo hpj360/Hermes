@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from http.server import BaseHTTPRequestHandler
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -15,11 +16,12 @@ from hermes.workbench.errors import ValidationError
 __all__ = ["RouteBase"]
 
 
-class RouteBase:
+class RouteBase(BaseHTTPRequestHandler):
     """Helpers shared by every route-domain mixin.
 
-    Calls into ``self.send_response`` / ``self.wfile`` etc. — these exist at
-    runtime once the final handler class mixes in ``BaseHTTPRequestHandler``.
+    继承 ``BaseHTTPRequestHandler``：各路由域 mixin（system/skills/...）
+    继承本类，最终由 ``server.DashboardHandler`` 组合成完整 handler。
+    本类自身不覆写任何 do_* 方法，不会被直接实例化。
     """
 
     # CORS ---------------------------------------------------------------

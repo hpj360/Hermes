@@ -52,6 +52,42 @@ from hermes.loop_gepa import (  # noqa: F401
     set_gepa_evaluator,
 )
 
+# 显式 re-export（mypy strict 的 no_implicit_reexport 要求）：
+# 前缀标注真实归属模块（patterns/audit/gepa），其余定义于本文件。
+__all__ = [
+    # loop_patterns
+    "BUILDER_RED_LINES",
+    "BUILDER_REPORT_FORMAT",
+    "CHECKER_RED_LINES",
+    "CHECKER_REPORT_FORMAT",
+    "LOOP_PATTERNS",
+    "ORCHESTRATOR_RULES",
+    "STOP_RULES",
+    "LoopStage",
+    "LoopStatus",
+    # loop_audit
+    "audit_deliverables",
+    "audit_loop",
+    "knowledge_hygiene_scan",
+    # loop_gepa
+    "GepaEvaluator",
+    "_GEPA_TRIGGER_STATUSES",
+    "_maybe_run_gepa",
+    "get_gepa_evaluator",
+    "set_gepa_evaluator",
+    # 本文件（状态机层）
+    "LoopRound",
+    "LoopState",
+    "check_stop_rules",
+    "checkpoint_loop",
+    "get_loop",
+    "init_loop",
+    "list_loops",
+    "loops_dir",
+    "record_round",
+    "rewind_loop",
+]
+
 logger = logging.getLogger("hermes.loop")
 
 

@@ -53,6 +53,33 @@ from hermes.workbench.services import (  # noqa: F401
     _state_dir,
 )
 
+# 显式 re-export（mypy strict 的 no_implicit_reexport 要求；
+# 真实定义在 task_runtime / services，见模块 docstring）
+__all__ = [
+    "Task",
+    "TaskRegistry",
+    "TaskScheduler",
+    "TaskStore",
+    "_SchedulerCenter",
+    "_attach_memory_backend",
+    "_best_effort_memory",
+    "_make_dag",
+    "_make_llm",
+    "_make_loop",
+    "_make_memory",
+    "_make_notes_dir",
+    "_make_registry",
+    "_make_runner",
+    "_make_scheduler",
+    "_make_scheduler_center",
+    "_make_store",
+    "_make_todo_store",
+    "_recovery_enabled",
+    "_reset_memory_cache",
+    "_reset_scheduler_center",
+    "_state_dir",
+]
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------

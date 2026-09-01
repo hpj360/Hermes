@@ -18,7 +18,7 @@ from hermes.content_team.crypto import decrypt, encrypt
 from hermes.content_team.db import GUID, Base
 
 
-class EncryptedText(sa.TypeDecorator):
+class EncryptedText(sa.TypeDecorator[str]):
     """Symmetric at-rest encryption for token-like columns.
 
     Encrypts on bind (write) and decrypts on result (read) using
@@ -41,7 +41,7 @@ class EncryptedText(sa.TypeDecorator):
             return value
         return encrypt(secret, str(value))
 
-    def process_result_value(self, value: object, dialect: object) -> object:
+    def process_result_value(self, value: str | None, dialect: object) -> str | None:
         if value is None:
             return None
         from hermes.content_team.crypto import get_secret

@@ -25,7 +25,7 @@ DashboardHandler = BaseHTTPRequestHandler + 全部域 mixin；对外符号
 from __future__ import annotations
 
 import re
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 from hermes.workbench.errors import NotFoundError, WorkbenchError, status_code_for
@@ -127,8 +127,7 @@ _ROUTES: list[tuple[str, str, str]] = [
 _PUBLIC_ROUTES: set[str] = {"h_get_health", "h_get_root"}
 
 
-class DashboardHandler(  # type: ignore[misc]
-    BaseHTTPRequestHandler,
+class DashboardHandler(  # noqa: FIX001 — MRO: 各域 mixin → RouteBase → BaseHTTPRequestHandler
     SystemRoutes,
     SkillsRoutes,
     MemoryRoutes,

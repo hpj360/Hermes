@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from hermes.workbench.errors import UpstreamError
 
@@ -50,7 +50,8 @@ def _default_executor(req: Any) -> bytes:  # pragma: no cover - thin wrapper
     import urllib.request
 
     with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310
-        return resp.read()
+        # req 为 Any 导致 resp 推导为 Any；按 urlopen 契约 cast 为 bytes
+        return cast(bytes, resp.read())
 
 
 class FeishuClient:
@@ -87,7 +88,8 @@ class FeishuClient:
         for attempt in range(self._max_retries):
             try:
                 raw = self._executor(req)
-                obj = json.loads(raw)
+                # json.loads 返回 Any；按飞书 OpenAPI 契约声明为 dict[str, Any]
+                obj: dict[str, Any] = json.loads(raw)
                 if obj.get("code", 0) in (99991663, 99991664, 99991665, 99991666):
                     # token invalid/expired — refresh and retry once
                     self._refresh_token()

@@ -23,9 +23,10 @@ import io
 import json
 import re
 import secrets
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,7 +63,9 @@ class _BridgeHandler(wb_server.DashboardHandler):
 
     def __init__(self, path: str, headers: dict[str, str], body: bytes, capture: _Capture) -> None:
         self.path = path
-        self.headers = headers
+        # 基类声明的 headers 是 http.client.Message；桥接层用 dict 模拟其
+        # .get() 接口（duck-typing），运行时不变，仅以 cast 通过静态检查。
+        self.headers = cast(Any, headers)
         self.rfile = io.BytesIO(body)
         self.wfile = io.BytesIO()
         self.client_address = ("127.0.0.1", 0)
@@ -85,7 +88,7 @@ class _BridgeHandler(wb_server.DashboardHandler):
     def _send_cors_headers(self) -> None:
         pass
 
-    def send_response(self, status: int, message: str | None = None) -> None:  # type: ignore[override]
+    def send_response(self, status: int, message: str | None = None) -> None:
         self._capture.status = status
 
     def send_header(self, keyword: str, value: str) -> None:
@@ -150,7 +153,8 @@ def _dispatch(path: str, method: str, headers: dict[str, str], body: bytes) -> _
 def _sse_jobs() -> Any:
     """Native SSE for job status via the StatusBus (blocking read off thread)."""
 
-    def gen():
+    # 生成器补返回类型注解（SSE 事件流逐帧 yield str）
+    def gen() -> Iterator[str]:
         import queue as _queue
 
         from hermes.workbench.cli import _make_scheduler_center
@@ -175,7 +179,8 @@ def _sse_jobs() -> Any:
 def _sse_episodes() -> Any:
     """Native SSE polling episodes feed."""
 
-    def gen():
+    # 生成器补返回类型注解（SSE 事件流逐帧 yield str）
+    def gen() -> Iterator[str]:
         import time
 
         from hermes.workbench.cli import _make_memory
@@ -220,7 +225,7 @@ def create_app(state_dir: Path | None = None) -> FastAPI:
     """
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from hermes.workbench.cli import _make_scheduler_center
 
         center = _make_scheduler_center()

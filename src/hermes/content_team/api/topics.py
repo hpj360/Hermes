@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -140,7 +141,11 @@ async def import_topic_library(
     await db.commit()
     for topic in topics:
         await db.refresh(topic)
-    return TopicImportResult(imported=len(topics), topics=topics)
+    # Topic ORM 对象由 pydantic（from_attributes）在响应阶段校验为
+    # TopicResponse；list 不型变，故以 cast 通过静态检查，运行时不变。
+    return TopicImportResult(
+        imported=len(topics), topics=cast("list[TopicResponse]", topics)
+    )
 
 
 @router.get("", response_model=list[TopicResponse])
