@@ -6,7 +6,7 @@
 # Agent 误判"工作未完成/丢失"而重复执行已完成的工作。
 #
 # 本脚本不依赖 refspec，直接用 `git ls-remote` 比较本地与远程 SHA，
-# 并运行 pytest + ruff + 关键文件检查，输出明确的状态判定。
+# 并运行 pytest + ruff + mypy + 关键文件检查，输出明确的状态判定。
 #
 # 用法：bash scripts/verify-state.sh
 # 退出码：0 = 全部通过且已同步；1 = 有问题需要处理
@@ -96,6 +96,14 @@ if ruff check src/ tests/ 2>&1 | grep -q "All checks passed"; then
     ok "ruff: All checks passed"
 else
     fail "ruff 有错误（运行 `ruff check src/ tests/` 查看）"
+fi
+
+# mypy 门槛：strict 模式全量检查（pyproject.toml [tool.mypy] strict=true）。
+# 2026-08-31 起 0 错误基线，防类型回归。修复类型问题时同样必须保持 0。
+if mypy src/ 2>&1 | grep -q "no issues found"; then
+    ok "mypy: no issues found"
+else
+    fail "mypy 有类型错误（运行 `mypy src/` 查看；修复时不得放宽 strict 配置）"
 fi
 
 # ── 4. 关键文件存在性 ────────────────────────────────────────
