@@ -12,7 +12,6 @@ Key components:
 
 from __future__ import annotations
 
-import fnmatch
 import hashlib
 import http.client
 import json
@@ -23,10 +22,11 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 from hermes.config import get_settings
+from hermes.path_policy import matches_denylist
 from hermes.presets import apply_prompt_sections, merged_presets, resolve_preset
 from hermes.tool_recovery import analyze_failures, format_recovery_section
 from hermes.trajectory import TrajectoryDesyncError, TrajectoryLogger
@@ -731,36 +731,11 @@ class Orchestrator:
         - "CHANGELOG.md" → 精确文件名匹配
 
         返回命中的 pattern（便于审计日志），未命中返回 None。
-        """
-        if not path or not denylist:
-            return None
-        # 规范化：统一用 / 分隔，去除前导 ./（注意不能用 lstrip——它是字符类剥离，
-        # 会把 ".env" 错误地剥成 "env"）。只剥离字面量 "./" 前缀。
-        clean = path.replace("\\", "/")
-        if clean.startswith("./"):
-            clean = clean[2:]
-        pure = PurePosixPath(clean)
-        basename = pure.name
-        full = str(pure)
 
-        for pattern in denylist:
-            if not pattern:
-                continue
-            # 目录前缀：pattern 以 / 结尾（如 "auth/"）
-            if pattern.endswith("/"):
-                prefix = pattern.rstrip("/")
-                if full == prefix or full.startswith(prefix + "/") or f"/{prefix}/" in f"/{full}":
-                    return pattern
-                continue
-            # glob：pattern 含 * 或 ?（如 "*.key"）
-            if "*" in pattern or "?" in pattern:
-                if fnmatch.fnmatch(basename, pattern) or fnmatch.fnmatch(full, pattern):
-                    return pattern
-                continue
-            # 精确匹配：basename 或 full 等于 pattern（如 ".env", "CHANGELOG.md"）
-            if basename == pattern or full == pattern:
-                return pattern
-        return None
+        实现委托 :func:`hermes.path_policy.matches_denylist`（单一事实源），
+        与 gepa_redteam 红队回归共用同一实现，杜绝语义漂移。
+        """
+        return matches_denylist(path, denylist)
 
     @staticmethod
     def _audit_path_violations(task: AgentTask, messages: list[dict[str, Any]]) -> None:
