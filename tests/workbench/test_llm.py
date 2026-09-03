@@ -734,3 +734,53 @@ def test_chat_payload_sorted_keys_deterministic() -> None:
     first_payload = captured["body"]
     # keys sorted regardless of dict insertion order
     assert list(first_payload.keys()) == sorted(first_payload.keys())
+
+
+# ---------------------------------------------------------------------------
+# Tool masking (P1-6)
+# ---------------------------------------------------------------------------
+
+
+def _tool(name: str, desc: str = "") -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {"name": name, "description": desc, "parameters": {}},
+    }
+
+
+def test_mask_tool_schemas_masks_unauthorized() -> None:
+    from hermes.workbench.llm import mask_tool_schemas
+
+    tools = [_tool("github_get_pr", "read a pr"), _tool("github_create_pr", "write a pr")]
+    masked = mask_tool_schemas(tools, ["github_get_pr"])
+    # 长度与顺序保持不变（KV-cache 前缀稳定性）
+    assert len(masked) == 2
+    assert masked[0]["function"]["name"] == "github_get_pr"
+    assert masked[0]["function"]["description"] == "read a pr"
+    # 未授权工具：schema 保留但被遮蔽
+    assert masked[1]["function"]["name"] == "github_create_pr"
+    assert masked[1]["function"]["description"].startswith("[UNAVAILABLE")
+    assert masked[1].get("masked") is True
+    # 原列表不被就地修改
+    assert tools[1]["function"]["description"] == "write a pr"
+    assert "masked" not in tools[1]
+
+
+def test_mask_tool_schemas_none_allowed_noop() -> None:
+    from hermes.workbench.llm import mask_tool_schemas
+
+    tools = [_tool("a"), _tool("b")]
+    assert mask_tool_schemas(tools, None) is tools
+
+
+def test_chat_forwards_masked_tools_in_payload() -> None:
+    client, captured = _fake_client()
+    tools = [_tool("read", "read files"), _tool("write", "write files")]
+    client.chat(
+        [LlmMessage(role="user", content="hi")],
+        tools=tools,
+        allowed_tools=["read"],
+    )
+    body_tools = captured["body"]["tools"]
+    assert len(body_tools) == 2
+    assert body_tools[1].get("masked") is True

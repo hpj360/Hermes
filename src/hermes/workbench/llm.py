@@ -28,6 +28,7 @@ Error hierarchy:
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -56,6 +57,7 @@ __all__ = [
     "count_tokens",
     "kv_cache_stats",
     "make_llm_client",
+    "mask_tool_schemas",
     "reset_kv_cache_stats",
     "resolve_provider",
 ]
@@ -123,6 +125,53 @@ def _track_kv_prefix(stable_prefix: str | None, messages: list[LlmMessage]) -> N
         else:
             _KV_SEEN_PREFIXES.add(digest)
             _KV_MISSES += 1
+
+
+# ---------------------------------------------------------------------------
+# Tool masking (P1-6)
+# ---------------------------------------------------------------------------
+
+_MASKED_PREFIX = "[UNAVAILABLE: not authorized for this role]"
+
+
+def mask_tool_schemas(
+    tools: list[dict[str, Any]], allowed: list[str] | None
+) -> list[dict[str, Any]]:
+    """Mask unauthorized tool schemas instead of removing them (P1-6).
+
+    Removing a tool from the ``tools`` array changes the array's length and
+    byte layout between roles/turns, invalidating the provider-side KV-cache
+    prefix. Masking keeps every schema in place (same order, same length) and
+    signals unavailability at the prompt level instead:
+
+    - ``function.description`` is prefixed with ``[UNAVAILABLE: ...]``
+    - a boolean ``masked: true`` sibling field is added
+
+    *allowed* is a list of tool names; ``None`` (or an empty whitelist with no
+    *tools*) means "no restriction" and returns *tools* unchanged. Note that
+    masking is a prompt-level hint only — call-site audits (e.g. orchestrator
+    fan-in MCP whitelist checks) remain the enforcement backstop.
+    """
+    if allowed is None or not tools:
+        return tools
+    allowed_set = set(allowed)
+    out: list[dict[str, Any]] = []
+    for tool in tools:
+        fn = tool.get("function") or {}
+        name = str(fn.get("name") or tool.get("name") or "")
+        if not name or name in allowed_set:
+            out.append(tool)
+            continue
+        masked = copy.deepcopy(tool)
+        mfn = masked.get("function")
+        if not isinstance(mfn, dict):
+            mfn = {}
+            masked["function"] = mfn
+        desc = str(mfn.get("description") or "")
+        mfn["description"] = f"{_MASKED_PREFIX} {desc}".strip()
+        masked["masked"] = True
+        out.append(masked)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +383,7 @@ class LlmClient:
         max_tokens: int | None = None,
         timeout: float | None = None,
         tools: list[dict[str, Any]] | None = None,
+        allowed_tools: list[str] | None = None,
         trajectory: Any = None,
         stable_prefix: str | None = None,
     ) -> LlmResponse:
@@ -344,6 +394,13 @@ class LlmClient:
         When *tools* is given, it is forwarded as the OpenAI ``tools`` payload
         and any ``tool_calls`` the model returns are parsed into
         :attr:`LlmResponse.tool_calls` (each a :class:`LlmToolCall`).
+
+        *allowed_tools* (P1-6, opt-in) is a tool-name whitelist. When given
+        together with *tools*, unauthorized tool schemas are **masked** rather
+        than removed (see :func:`mask_tool_schemas`) so the tools array keeps
+        its length/order — keeping the request prefix byte-stable across
+        roles/turns for KV-cache. Masking is a prompt-level signal only;
+        call-site audits remain the enforcement backstop.
 
         *trajectory* (ADR-0017, opt-in) is an optional :class:`TrajectoryLogger`;
         when provided, a ``request/header`` and ``request/context`` event are
@@ -365,7 +422,7 @@ class LlmClient:
         if max_tokens is not None:
             body["max_tokens"] = max_tokens
         if tools:
-            body["tools"] = tools
+            body["tools"] = mask_tool_schemas(tools, allowed_tools)
         if trajectory is not None:
             _record_llm_trajectory(trajectory, body, max_tokens)
         # P0-1: deterministic serialization (sort_keys) keeps identical request

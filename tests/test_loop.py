@@ -4259,3 +4259,90 @@ def test_record_round_triggers_gepa_on_terminal_with_variants(tmp_path, monkeypa
     finally:
         set_gepa_evaluator(None)
 
+
+
+# ── P1-5: GEPA×记忆闭环 ─────────────────────────────────────────────
+
+
+def _memory_service(tmp_path):
+    from hermes.workbench.memory import MemoryService
+
+    return MemoryService(state_dir=tmp_path / "mem")
+
+
+def test_distill_failure_patterns_stores_error_pattern_episode(tmp_path, monkeypatch):
+    """失败轨迹蒸馏为错误模式 episode（kind=gepa_error_pattern）入记忆。"""
+    from hermes.gepa import GEPAExperiment, VariantResult
+    from hermes.loop_gepa import distill_failure_patterns
+    from hermes.workbench import services as svc
+
+    mem = _memory_service(tmp_path)
+    monkeypatch.setattr(svc, "_make_memory", lambda: mem)
+
+    exp = GEPAExperiment(
+        experiment_id="e1",
+        benchmark_task="loop:t pattern:p",
+        results=[
+            VariantResult(variant_id="win", success=True, tokens_used=10),
+            VariantResult(
+                variant_id="lose",
+                success=False,
+                failure_items=["checker: src/x.py|lint", "  "],
+                error="boom",
+            ),
+        ],
+        winner_id="win",
+    )
+    n = distill_failure_patterns("myloop", exp)
+    assert n == 2  # 1 条 failure_item（空行剔除）+ 1 条 error
+
+    eps = mem.list_episodes(kind="gepa_error_pattern")
+    assert len(eps) == 1
+    details = eps[0].details
+    assert details["loop"] == "myloop"
+    assert details["experiment_id"] == "e1"
+    assert details["winner_id"] == "win"
+    assert details["patterns"][0] == {
+        "variant_id": "lose", "pattern": "checker: src/x.py|lint"
+    }
+    assert any(p.get("is_error") for p in details["patterns"])
+
+
+def test_distill_failure_patterns_no_failures_no_write(tmp_path, monkeypatch):
+    """全部成功时不写任何 episode。"""
+    from hermes.gepa import GEPAExperiment, VariantResult
+    from hermes.loop_gepa import distill_failure_patterns
+    from hermes.workbench import services as svc
+
+    mem = _memory_service(tmp_path)
+    monkeypatch.setattr(svc, "_make_memory", lambda: mem)
+
+    exp = GEPAExperiment(
+        experiment_id="e2",
+        benchmark_task="t",
+        results=[VariantResult(variant_id="v", success=True)],
+        winner_id="v",
+    )
+    assert distill_failure_patterns("myloop", exp) == 0
+    assert mem.list_episodes() == []
+
+
+def test_distill_failure_patterns_memory_failure_never_raises(tmp_path, monkeypatch):
+    """记忆写入失败时静默返回 0，绝不阻断 GEPA 主流程。"""
+    from hermes.gepa import GEPAExperiment, VariantResult
+    from hermes.loop_gepa import distill_failure_patterns
+    from hermes.workbench import services as svc
+
+    def boom():
+        raise RuntimeError("memory down")
+
+    monkeypatch.setattr(svc, "_make_memory", boom)
+    exp = GEPAExperiment(
+        experiment_id="e3",
+        benchmark_task="t",
+        results=[
+            VariantResult(variant_id="v", success=False, failure_items=["x"])
+        ],
+        winner_id=None,
+    )
+    assert distill_failure_patterns("myloop", exp) == 0

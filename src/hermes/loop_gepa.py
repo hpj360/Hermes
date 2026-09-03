@@ -96,6 +96,62 @@ _GEPA_TRIGGER_STATUSES = frozenset({
 })
 
 
+def distill_failure_patterns(loop_name: str, experiment: Any) -> int:
+    """P1-5: 把 GEPA 失败轨迹蒸馏为错误模式 episode 写入记忆系统。
+
+    MemAPO 双记忆机制借鉴：失败轨迹本身昂贵且冗长，直接入记忆只会污染
+    检索。这里蒸馏为 (variant_id, 错误模式) 对，以 ``gepa_error_pattern``
+    episode 落盘——后续 GEPA 周期可用 ``search_episodes(kind=...)`` 取回
+    作为反思种子（哪些模式反复失败 → 进化方向）。
+
+    返回蒸馏出的模式数；无失败、记忆写入失败均返回 0 且绝不抛异常
+    （本函数在 record_round 的 best-effort 尾部调用，不能阻断主流程）。
+    """
+    patterns: list[dict[str, Any]] = []
+    for r in getattr(experiment, "results", []) or []:
+        if r.success and not r.error:
+            continue
+        for item in r.failure_items:
+            if str(item).strip():
+                patterns.append(
+                    {"variant_id": r.variant_id, "pattern": str(item).strip()}
+                )
+        if r.error:
+            patterns.append(
+                {"variant_id": r.variant_id, "pattern": f"error: {r.error}", "is_error": True}
+            )
+    if not patterns:
+        return 0
+
+    try:
+        from hermes.workbench.memory import make_episode
+        from hermes.workbench.services import _make_memory
+
+        episode = make_episode(
+            "gepa_error_pattern",
+            f"GEPA 失败模式 x{len(patterns)}: loop={loop_name} "
+            f"winner={experiment.winner_id}",
+            {
+                "loop": loop_name,
+                "experiment_id": experiment.experiment_id,
+                "benchmark_task": experiment.benchmark_task,
+                "winner_id": experiment.winner_id,
+                "patterns": patterns,
+            },
+        )
+        _make_memory().record_episode(episode)
+    except Exception:  # noqa: BLE001 — 记忆写入失败不影响 GEPA 主流程
+        logger.exception(
+            "Failed to distill GEPA failure patterns into memory for loop '%s'",
+            loop_name,
+        )
+        return 0
+    logger.info(
+        "GEPA 失败模式已入记忆: loop=%s patterns=%d", loop_name, len(patterns)
+    )
+    return len(patterns)
+
+
 def _maybe_run_gepa(loop: LoopState, round_data: LoopRound) -> dict[str, Any]:
     """在 record_round 终态时按需触发 GEPA 自进化周期。
 
@@ -184,10 +240,14 @@ def _maybe_run_gepa(loop: LoopState, round_data: LoopRound) -> dict[str, Any]:
         )
         return {"ran": False, "reason": f"gepa error: {type(exc).__name__}: {exc}"}
 
+    # P1-5: 失败轨迹蒸馏为错误模式入记忆（best-effort，不阻断返回）
+    patterns_stored = distill_failure_patterns(loop.name, experiment)
+
     return {
         "ran": True,
         "experiment_id": experiment.experiment_id,
         "winner_id": experiment.winner_id,
         "promotion_reason": experiment.promotion_reason,
         "variants_evaluated": len(experiment.results),
+        "failure_patterns_stored": patterns_stored,
     }
