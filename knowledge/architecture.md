@@ -1,18 +1,48 @@
 # Hermes 技术方案架构文档
 
-> 版本: 0.6.0 | 更新日期: 2026-07-11
+> 版本: 0.9.x（P3 阶段） | 更新日期: 2026-09-03
+
+## 〇、能力成熟度地图（2026-09 整体评估蒸馏）
+
+> 完整迭代轨迹见 [docs/roadmap/iter-v0.6-to-v1.0.md](file:///workspace/docs/roadmap/iter-v0.6-to-v1.0.md)；
+> 量化基线：src/ 33.6k LOC、98 个测试文件 2008 个测试函数（pytest 2080 passed）、
+> 50 个 skill、20 篇 ADR、15 篇 knowledge 文档、3 个抽取组件。
+
+| 能力域 | 核心实现 | 成熟度 | 说明 |
+|--------|---------|--------|------|
+| 多代理编排 | orchestrator.py（fan-out/fan-in、角色体系、聚合） | ✅ 生产可用 | builder/checker×3/synthesizer/perspective_*，Gateway 降级 guidance 模式 |
+| 安全强制（L1-L3） | MCP 白名单分舱 + path_policy 单一事实源 + fan-in 审计 | ✅ 生产可用 | denylist 代码层强制拦截（不再是声明性标记）；红队语料 19 条回归 |
+| Loop 状态机 | loop.py + 7 条停止规则 + 就绪度审计 | ✅ 生产可用 | 与 v0.6 一致，稳定 |
+| GEPA 自进化 | gepa.py + gepa_stats.py + loop_gepa.py | ✅ 可用（需 LLM） | 自动 variant + split-run t 检验 + 失败轨迹蒸馏入记忆；红队 variant 演练（P3-1） |
+| 上下文工程 | context.py + llm.py KV-cache 追踪 | ✅ 生产可用 | 稳定前缀契约 + env_summary 缓存 + AGENTS.md 层级加载 + sort_keys 确定性序列化 |
+| 记忆系统 | workbench/memory.py | ✅ 生产可用 | L1/L2/L3 + FTS5 + 向量 embedding + 5 路 RRF + 外部后端协议（ADR-0021） |
+| LLM 客户端 | workbench/llm.py | ✅ 生产可用 | 7+ provider、stream/retry/token 计数、工具遮蔽（保 KV-cache 前缀稳定） |
+| Skill 体系 | skills/ + skill_runner.py | ✅ 生产可用 | 50 skill、manifest 协议、env 白名单 + SIGKILL 强收、AST 静态门沙箱（ADR-0009）、marketplace（ADR-0010） |
+| Workbench 服务 | server.py + server_routes/ | ✅ 生产可用 | 38+ 路由（skills/memory/jobs/stream/metrics），SQLite JobStore（ADR-0006） |
+| 可观测性 | /metrics + audit.jsonl + otlp.py | ✅ 可用 | Prometheus 指标（含 KV-cache 命中率）+ OTLP exporter 骨架 |
+| 红队对抗 | gepa_redteam.py + path_policy.py | ✅ 可用 | 5 种攻击模板 variant + denylist 强度回归；live 演练需接真实 builder |
+| 配置/密钥治理 | config.py 指针式继承 + Vault backend | ⚙️ 骨架 | P2-4 完成，Vault 生产化待验证 |
+| 一键发布 | — | ⛔ 阻塞 | P3-3 需发布平台凭证（Render/Fly/Railway） |
+
+**蒸馏结论**：项目已从 v0.6 的"CLI 编排器"演进为**带自进化闭环的 Agent 基础设施**——
+编排/安全/记忆/上下文四大基座生产可用，GEPA×记忆形成"失败→蒸馏→反思种子"闭环，
+红队对抗为 L3 无人值守提供回归保障。主要短板集中在需要外部凭证的能力（发布、
+真实平台 API）与 live 红队演练的规模化。
+
+---
 
 ## 一、项目定位
 
-Hermes 是一个独立的 Agent 基础设施管理 CLI，定位为 **OpenClaw 的控制平面和方法论层**。
+Hermes 是一个独立的 Agent 基础设施管理 CLI + Workbench 服务，定位为 **OpenClaw 的控制平面和方法论层 + 自进化引擎**。
 
 | Hermes 是 | Hermes 不是 |
 |-----------|------------|
-| Skill 分发中心（类 Nacos 配置中心） | LLM 调用引擎 |
-| Loop Engineering 脚手架 + 执行编排器 | Agent 沙箱隔离运行时 |
-| 质量审计工具（0-100 评分门控） | Sub-Agent 生命周期管理器 |
-| 环境配置继承层 | 消息队列 / 事件总线 |
-| 方法论沉淀层（7 篇 knowledge 文档） | 数据库驱动系统 |
+| Skill 分发中心（类 Nacos 配置中心，50 skill + marketplace） | LLM 调用引擎（仅客户端封装，调用由 Gateway/各 provider 执行） |
+| Loop Engineering 脚手架 + 执行编排器 | Agent 沙箱隔离运行时（沙箱属 Gateway；skill 子进程沙箱属本仓） |
+| 质量审计工具（0-100 评分门控 + L3 路径强制拦截） | Sub-Agent 生命周期管理器 |
+| GEPA 自进化引擎（variant 进化 + 显著性检验 + 红队对抗） | 通用训练/微调框架 |
+| 三层记忆系统（FTS5 + 向量 + RRF + 外部后端协议） | 数据库驱动系统 |
+| 方法论沉淀层（15 篇 knowledge 文档 + 20 篇 ADR） | 消息队列 / 事件总线 |
 
 **核心原则**: 做项目经理，不做工人——Hermes 负责编排和质量门禁，OpenClaw 负责执行和隔离。
 
@@ -81,6 +111,26 @@ Hermes 是一个独立的 Agent 基础设施管理 CLI，定位为 **OpenClaw �
                               │   └────────────────────┘  │
                               └──────────────────────────┘
 ```
+
+---
+
+### 2.1 Workbench 服务平面（v0.6 后新增）
+
+CLI 之外，`hermes workbench serve` 起一个 stdlib HTTP 服务（`src/hermes/workbench/`），
+作为常驻执行平面，与 CLI 共享同一套配置/记忆/LLM 客户端：
+
+```
+workbench/server.py（38+ 路由）
+├── server_routes/skills    — skill 列表/详情/执行（走 skill_runner 沙箱）
+├── server_routes/memory    — /memory/search(RRF/FTS/semantic)、learn/cleanup/compact
+├── server_routes/jobs      — SQLite JobStore（WAL，ADR-0006）+ CronScheduler
+├── server_routes/stream    — LLM 流式代理
+├── server_routes/system    — /metrics Prometheus（含 KV-cache 命中率）
+└── audit.jsonl 持久化 + otlp.py OTLP 导出
+```
+
+三个已抽取的独立组件（`components/`）：agent-budget-guard、agent-evolve（GEPA）、
+traj-verify（轨迹验证），各自可脱离本仓复用。
 
 ---
 
@@ -465,11 +515,12 @@ hermes
 | CLI | argparse | 标准库，零额外依赖 |
 | HTTP | urllib | 标准库，Gateway 通信 |
 | Lint | ruff | line-length=100, target=py310 |
-| 测试 | pytest + pytest-asyncio | 132 个测试 |
+| 测试 | pytest + pytest-asyncio | 98 文件 / 2008 测试函数（含 tests/security 安全回归） |
+| 持久化 | stdlib sqlite3 | JobStore WAL 分锁（ADR-0006）、FTS5 记忆检索 |
 | 构建 | setuptools | src/ 布局 |
 | 运行时依赖 | 仅 3 个 | pydantic, pydantic-settings, python-dotenv |
 
-**零外部运行时依赖原则**: Hermes 仅依赖 3 个包，HTTP 通信使用标准库 urllib，不引入 httpx/requests/aiohttp。
+**零外部运行时依赖原则**: Hermes 仅依赖 3 个包，HTTP 通信使用标准库 urllib，不引入 httpx/requests/aiohttp；sqlite3/tiktoken（dev-only）等新依赖均经 ADR 论证。
 
 ---
 
@@ -508,12 +559,12 @@ Checker Agent 的 tools 字段物理上没有 Write/Edit，不是提示词约束
 以下是 Hermes 当前的已知限制，使用前请知悉：
 
 1. **PRD 完整度强相关** — 一句话需求会让需求分析阶段反复打回，整体效率下降。Hermes 不替代需求澄清
-2. **测试规模影响基线对比效果** — 当前 132 个测试，失败集合通常为空。基线对比在测试规模超 200 时效果更显著
+2. **测试规模影响基线对比效果** — 当前 2008 个测试函数，基线对比信号充分；但跨需求的大规模回归基线仍依赖 loop 历史累积
 3. **无 IDE 弹窗交互** — Hermes 是 CLI 工具，不提供 GUI 审批界面。--gated 模式通过 NEEDS_HUMAN 状态暂停
 4. **MCP 仅接 GitHub** — 不支持 TAPD/iWiki/工蜂等内部系统。需要其他系统时通过 Skill 脚本接入
 5. **双源交叉验证当前预留** — MCP 读方法返回 `_sources` 字段标记数据来源，但当前仅 GitHub 单源，audit_loop 单源产生 warning 不阻断。未来扩展多 MCP 后同一字段从两个独立 API 取数即可达成双源验证
 6. **产物抽检为声明性标记** — `audit_deliverables` 校验 `<!-- claim: -->` 标记存在性，不校验内容真假（后者需用户自验）。依赖 agent 自觉写标记，无强制机制
-7. **L3 无人值守需谨慎** — 自动提 PR 需要 denylist 完整。当前 denylist 是路径列表，代码层未强制拦截
+7. **L3 无人值守的残余风险** — denylist 已在代码层强制拦截（fan-in 审计 + `path_policy` 单一事实源 + 红队 19 条语料回归，见 [gepa_redteam.py](file:///workspace/src/hermes/gepa_redteam.py)），但无扩展名私钥（`id_rsa`）是已知缺口（语料显式记录）；live 红队演练（真实 builder 自由发挥的混淆）尚未规模化运行
 8. **单机场景** — 无跨需求任务看板、无多人协作锁。适合单人或小团队使用
 9. **演进日志从 v0.4.0 开始** — 之前的决策靠 git log 和代码注释追溯
 10. **estimate_cost 小样本回退** — 有效样本 < 3 轮时 estimate_cost 回退固定 50k（非历史平均），估算精度有限。loop 跑满 3 轮后自动切换历史平均
