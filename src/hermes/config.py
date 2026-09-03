@@ -274,6 +274,15 @@ class Settings(BaseSettings):
     hermes_llm_model: str = Field(default="llama3.2", alias="HERMES_LLM_MODEL")
     hermes_llm_timeout: float = Field(default=60.0, alias="HERMES_LLM_TIMEOUT")
     hermes_llm_temperature: float = Field(default=0.2, alias="HERMES_LLM_TEMPERATURE")
+    # P0-3: 按角色路由模型（差异化资源分配）。空字符串 = 回退到
+    # hermes_llm_model（与既有行为一致）。builder 可配大模型，checker/
+    # synthesizer 可配小模型降本。优先级：显式 task.model > preset.model >
+    # 角色映射 > hermes_llm_model。
+    hermes_llm_model_builder: str = Field(default="", alias="HERMES_LLM_MODEL_BUILDER")
+    hermes_llm_model_checker: str = Field(default="", alias="HERMES_LLM_MODEL_CHECKER")
+    hermes_llm_model_synthesizer: str = Field(
+        default="", alias="HERMES_LLM_MODEL_SYNTHESIZER"
+    )
 
     # ADR-0018: 用户自定义 Agent Preset 目录。None = 使用 hermes_state_dir/presets。
     hermes_presets_dir: str | None = Field(default=None, alias="HERMES_PRESETS_DIR")

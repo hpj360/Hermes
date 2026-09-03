@@ -106,3 +106,50 @@ def test_llm_chat_stable_prefix_prepended():
     assert body["messages"][0]["role"] == "system"
     assert body["messages"][0]["content"] == "STABLE"
     assert body["messages"][1]["role"] == "user"
+
+
+# ── P0-2: hierarchical AGENTS.md loading ─────────────────────────────
+
+
+def test_dir_level_agents_md_loaded(repo):
+    (repo / "src" / "AGENTS.md").write_text("# src rules\nsrc-level", encoding="utf-8")
+    text = ctx._conventions_text(repo)
+    assert "keep it simple" in text  # root still first
+    assert "src-level" in text
+    assert text.index("keep it simple") < text.index("src-level")
+
+
+def test_dir_level_ordering_shallow_to_deep(repo):
+    (repo / "src" / "AGENTS.md").write_text("L1", encoding="utf-8")
+    deep = repo / "src" / "pkg"
+    deep.mkdir()
+    (deep / "AGENTS.md").write_text("L2", encoding="utf-8")
+    text = ctx._conventions_text(repo)
+    assert text.index("L1") < text.index("L2")
+
+
+def test_dir_level_skips_venv_and_git(repo):
+    venv = repo / ".venv" / "lib"
+    venv.mkdir(parents=True)
+    (venv / "AGENTS.md").write_text("vendored", encoding="utf-8")
+    text = ctx._conventions_text(repo)
+    assert "vendored" not in text
+
+
+def test_dir_level_deterministic(repo):
+    for d in ("b", "a"):
+        (repo / d).mkdir()
+        (repo / d / "AGENTS.md").write_text(f"rule-{d}", encoding="utf-8")
+    assert ctx._conventions_text(repo) == ctx._conventions_text(repo)
+    # sorted by relative path within the same depth
+    text = ctx._conventions_text(repo)
+    assert text.index("rule-a") < text.index("rule-b")
+
+
+def test_env_summary_version_changes_on_dir_level_file(repo, tmp_path, monkeypatch):
+    _summary_dir_to(tmp_path, monkeypatch)
+    v1 = ctx.env_summary(repo)
+    (repo / "src" / "AGENTS.md").write_text("# new\nnew rules", encoding="utf-8")
+    v2 = ctx.env_summary(repo)
+    assert v1["version"] != v2["version"]
+    assert "new rules" in v2["conventions"]

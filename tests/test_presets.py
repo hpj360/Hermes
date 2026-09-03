@@ -364,3 +364,98 @@ def test_agent_task_to_dict_includes_new_fields():
     assert d["tool_violations"] == []
     # transient 轨迹字段不进 to_dict
     assert "trajectory_request_seq" not in d
+
+
+# ── P0-3: role→model routing ────────────────────────────────────────
+
+
+class _FakeRoleModelSettings:
+    """Stub settings exposing only the role-model routing fields."""
+
+    def __init__(self, builder: str = "", checker: str = "", synthesizer: str = "") -> None:
+        self.hermes_llm_model_builder = builder
+        self.hermes_llm_model_checker = checker
+        self.hermes_llm_model_synthesizer = synthesizer
+
+
+def test_role_model_routing_mapping(monkeypatch):
+    from hermes import orchestrator as orch
+
+    fake = _FakeRoleModelSettings(
+        builder="big-model", checker="small-model", synthesizer="sum-model"
+    )
+    monkeypatch.setattr(orch, "get_settings", lambda: fake)
+    assert orch._role_model("builder") == "big-model"
+    assert orch._role_model("perspective_arch") == "big-model"
+    assert orch._role_model("checker") == "small-model"
+    assert orch._role_model("checker_lint") == "small-model"
+    assert orch._role_model("synthesizer") == "sum-model"
+    assert orch._role_model("legacy") is None
+
+
+def test_role_model_routing_empty_falls_back(monkeypatch):
+    from hermes import orchestrator as orch
+
+    fake = _FakeRoleModelSettings()
+    monkeypatch.setattr(orch, "get_settings", lambda: fake)
+    assert orch._role_model("builder") is None
+    assert orch._role_model("checker") is None
+
+
+def test_prepare_and_spawn_applies_role_model(monkeypatch):
+    """task.model 为空且 preset 无 model 时，按角色映射填充（P0-3）。"""
+    from hermes import orchestrator as orch
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    fake = _FakeRoleModelSettings(builder="big-model", checker="small-model")
+    monkeypatch.setattr(orch, "get_settings", lambda: fake)
+
+    spawned: dict = {}
+
+    class _FakeClient:
+        def spawn_payload(self, payload):  # noqa: ANN001
+            spawned["payload"] = payload
+            return "sess-1"
+
+    orch_obj = Orchestrator(client=_FakeClient())
+    task = AgentTask(role="checker", task_description="lint")
+    orch_obj._prepare_and_spawn(task)
+    assert task.model == "small-model"
+    assert spawned["payload"]["model"] == "small-model"
+    assert task.status == "running"
+
+
+def test_prepare_and_spawn_model_precedence_explicit_wins(monkeypatch):
+    """显式 task.model 优先于角色映射。"""
+    from hermes import orchestrator as orch
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    fake = _FakeRoleModelSettings(builder="big-model")
+    monkeypatch.setattr(orch, "get_settings", lambda: fake)
+
+    class _FakeClient:
+        def spawn_payload(self, payload):  # noqa: ANN001
+            return "sess-1"
+
+    orch_obj = Orchestrator(client=_FakeClient())
+    task = AgentTask(role="builder", model="explicit-model")
+    orch_obj._prepare_and_spawn(task)
+    assert task.model == "explicit-model"
+
+
+def test_prepare_and_spawn_role_model_empty_no_override(monkeypatch):
+    """角色映射为空（默认配置）时不覆盖 model —— 与既有行为一致。"""
+    from hermes import orchestrator as orch
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    fake = _FakeRoleModelSettings()
+    monkeypatch.setattr(orch, "get_settings", lambda: fake)
+
+    class _FakeClient:
+        def spawn_payload(self, payload):  # noqa: ANN001
+            return "sess-1"
+
+    orch_obj = Orchestrator(client=_FakeClient())
+    task = AgentTask(role="builder")
+    orch_obj._prepare_and_spawn(task)
+    assert task.model is None

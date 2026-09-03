@@ -28,9 +28,11 @@ Error hierarchy:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -52,9 +54,75 @@ __all__ = [
     "LlmRetryPolicy",
     "LlmStreamChunk",
     "count_tokens",
+    "kv_cache_stats",
     "make_llm_client",
+    "reset_kv_cache_stats",
     "resolve_provider",
 ]
+
+
+# ---------------------------------------------------------------------------
+# KV-cache prefix tracking (P0-1)
+# ---------------------------------------------------------------------------
+# Approximate client-side KV-cache hit-rate instrumentation: the cacheable
+# region of a request is its leading stable prefix (the ``stable_prefix``
+# argument, or the first system message when absent). We hash that region and
+# count repeat observations as "hits". A rising hit rate means the stable
+# prefix discipline (see hermes.context) is actually holding; a falling rate
+# means volatile content is leaking into the cacheable region.
+
+_KV_LOCK = threading.Lock()
+_KV_SEEN_PREFIXES: set[str] = set()
+_KV_HITS = 0
+_KV_MISSES = 0
+
+
+def kv_cache_stats() -> dict[str, Any]:
+    """Return cumulative KV-cache prefix statistics.
+
+    ``{"hits", "misses", "total", "hit_rate", "unique_prefixes"}`` —
+    ``hit_rate`` is ``0.0`` when no requests have been observed.
+    """
+    with _KV_LOCK:
+        total = _KV_HITS + _KV_MISSES
+        return {
+            "hits": _KV_HITS,
+            "misses": _KV_MISSES,
+            "total": total,
+            "hit_rate": (_KV_HITS / total) if total else 0.0,
+            "unique_prefixes": len(_KV_SEEN_PREFIXES),
+        }
+
+
+def reset_kv_cache_stats() -> None:
+    """Reset cumulative KV-cache statistics (mainly for tests)."""
+    global _KV_HITS, _KV_MISSES
+    with _KV_LOCK:
+        _KV_SEEN_PREFIXES.clear()
+        _KV_HITS = 0
+        _KV_MISSES = 0
+
+
+def _track_kv_prefix(stable_prefix: str | None, messages: list[LlmMessage]) -> None:
+    """Record one request's cacheable prefix: hit if seen before, else miss.
+
+    The prefix region is ``stable_prefix`` when provided; otherwise the first
+    system message (the conventional location of the stable agent definition).
+    Requests with no identifiable prefix are not counted at all.
+    """
+    global _KV_HITS, _KV_MISSES
+    prefix = stable_prefix
+    if prefix is None and messages and messages[0].role == "system":
+        prefix = messages[0].content
+    if not prefix:
+        return
+    digest = hashlib.sha256(prefix.encode("utf-8")).hexdigest()
+    with _KV_LOCK:
+        if digest in _KV_SEEN_PREFIXES:
+            _KV_HITS += 1
+        else:
+            _KV_SEEN_PREFIXES.add(digest)
+            _KV_MISSES += 1
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +368,11 @@ class LlmClient:
             body["tools"] = tools
         if trajectory is not None:
             _record_llm_trajectory(trajectory, body, max_tokens)
-        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        # P0-1: deterministic serialization (sort_keys) keeps identical request
+        # bodies byte-identical, and the prefix tracker observes the cacheable
+        # region of this request.
+        _track_kv_prefix(stable_prefix, messages)
+        payload = json.dumps(body, ensure_ascii=False, sort_keys=True).encode("utf-8")
 
         last_exc: _RetryableError | None = None
         for attempt in range(self.retry_policy.max_retries + 1):
@@ -343,7 +415,9 @@ class LlmClient:
         }
         if max_tokens is not None:
             body["max_tokens"] = max_tokens
-        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        # P0-1: deterministic serialization + prefix tracking (see chat()).
+        _track_kv_prefix(None, messages)
+        payload = json.dumps(body, ensure_ascii=False, sort_keys=True).encode("utf-8")
 
         last_exc: _RetryableError | None = None
         streamed = False

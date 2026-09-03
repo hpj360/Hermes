@@ -89,6 +89,24 @@ class SystemRoutes(RouteBase):
         except Exception:  # noqa: BLE001 — metrics must never break the scrape
             pass
 
+        # LLM KV-cache prefix metrics (P0-1). Client-side approximation of the
+        # provider-side KV-cache hit rate for the stable prompt prefix.
+        try:
+            from hermes.workbench.llm import kv_cache_stats
+
+            kv = kv_cache_stats()
+            lines.append("# HELP hermes_llm_kv_cache_hit_rate Fraction of LLM requests whose stable prefix was seen before.")
+            lines.append("# TYPE hermes_llm_kv_cache_hit_rate gauge")
+            lines.append(f"hermes_llm_kv_cache_hit_rate {kv['hit_rate']}")
+            lines.append("# HELP hermes_llm_kv_cache_requests_total LLM requests observed for KV-cache tracking.")
+            lines.append("# TYPE hermes_llm_kv_cache_requests_total counter")
+            lines.append(f"hermes_llm_kv_cache_requests_total {kv['total']}")
+            lines.append("# HELP hermes_llm_kv_cache_unique_prefixes Distinct stable prefixes observed.")
+            lines.append("# TYPE hermes_llm_kv_cache_unique_prefixes gauge")
+            lines.append(f"hermes_llm_kv_cache_unique_prefixes {kv['unique_prefixes']}")
+        except Exception:  # noqa: BLE001 — metrics must never break the scrape
+            pass
+
         self._send_text(
             200,
             "\n".join(lines) + "\n",

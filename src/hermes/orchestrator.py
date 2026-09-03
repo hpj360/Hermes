@@ -99,6 +99,22 @@ ROLE_MCP_WHITELIST: dict[str, list[str]] = {
 }
 
 
+def _role_model(role: str) -> str | None:
+    """P0-3: 按 role 映射差异化模型（配置化，空 = 回退默认模型）。
+
+    checker* 前缀匹配；builder 与 perspective_*（对抗性审查角色，能力
+    需求与 builder 相当）走 builder 模型；其余未知角色不覆盖。
+    """
+    s = get_settings()
+    if role.startswith("checker"):
+        return s.hermes_llm_model_checker or None
+    if role == "builder" or role.startswith("perspective"):
+        return s.hermes_llm_model_builder or None
+    if role == "synthesizer":
+        return s.hermes_llm_model_synthesizer or None
+    return None
+
+
 def _get_role_whitelist(role: str) -> list[str] | None:
     """获取角色默认 MCP 白名单。未匹配的角色返回 None（不限制）。"""
     if role in ROLE_MCP_WHITELIST:
@@ -485,6 +501,11 @@ class Orchestrator:
         # 白名单仍未指定时，按角色填充默认值
         if task.allowed_mcp_tools is None:
             task.allowed_mcp_tools = _get_role_whitelist(task.role)
+
+        # P0-3: preset 也未指定 model 时，按角色映射差异化模型。
+        # 优先级：显式 task.model > preset.model > 角色映射（> 网关默认）。
+        if task.model is None:
+            task.model = _role_model(task.role)
 
         task.started_at = datetime.now(timezone.utc).isoformat()
         task.status = "running"

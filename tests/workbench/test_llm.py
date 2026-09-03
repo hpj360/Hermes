@@ -666,3 +666,71 @@ def test_tool_call_to_dict_roundtrip() -> None:
     assert d["type"] == "function"
     assert d["function"]["name"] == "get_weather"
     assert json.loads(d["function"]["arguments"]) == {"city": "Beijing"}
+
+
+# ---------------------------------------------------------------------------
+# KV-cache prefix tracking (P0-1)
+# ---------------------------------------------------------------------------
+
+
+def _fake_client() -> tuple[LlmClient, dict[str, Any]]:
+    client = LlmClient(base_url="http://127.0.0.1:1", api_key=None, model="m")
+    captured: dict[str, Any] = {}
+
+    def fake_post(url, payload, timeout):  # noqa: ANN001
+        captured["body"] = json.loads(payload.decode("utf-8"))
+        return LlmResponse(content="ok")
+
+    client._post_once = fake_post  # type: ignore[assignment]
+    return client, captured
+
+
+def test_kv_cache_stats_hit_and_miss() -> None:
+    """Same stable prefix twice → 1 miss + 1 hit; hit_rate = 0.5."""
+    from hermes.workbench.llm import kv_cache_stats, reset_kv_cache_stats
+
+    reset_kv_cache_stats()
+    client, _ = _fake_client()
+    client.chat([LlmMessage(role="user", content="a")], stable_prefix="SP")
+    client.chat([LlmMessage(role="user", content="b")], stable_prefix="SP")
+    stats = kv_cache_stats()
+    assert stats["misses"] == 1
+    assert stats["hits"] == 1
+    assert stats["total"] == 2
+    assert stats["hit_rate"] == pytest.approx(0.5)
+    assert stats["unique_prefixes"] == 1
+
+
+def test_kv_cache_tracks_first_system_message_fallback() -> None:
+    """Without stable_prefix, the leading system message is the tracked prefix."""
+    from hermes.workbench.llm import kv_cache_stats, reset_kv_cache_stats
+
+    reset_kv_cache_stats()
+    client, _ = _fake_client()
+    sysmsg = LlmMessage(role="system", content="AGENT DEF")
+    client.chat([sysmsg, LlmMessage(role="user", content="a")])
+    client.chat([sysmsg, LlmMessage(role="user", content="b")])
+    stats = kv_cache_stats()
+    assert stats["hits"] == 1
+    assert stats["misses"] == 1
+
+
+def test_kv_cache_no_prefix_not_counted() -> None:
+    from hermes.workbench.llm import kv_cache_stats, reset_kv_cache_stats
+
+    reset_kv_cache_stats()
+    client, _ = _fake_client()
+    client.chat([LlmMessage(role="user", content="hi")])
+    stats = kv_cache_stats()
+    assert stats["total"] == 0
+    assert stats["hit_rate"] == 0.0
+
+
+def test_chat_payload_sorted_keys_deterministic() -> None:
+    """Identical request content must serialize to identical bytes (P0-1)."""
+    client, captured = _fake_client()
+    msgs = [LlmMessage(role="user", content="hi")]
+    client.chat(msgs, stable_prefix="SP")
+    first_payload = captured["body"]
+    # keys sorted regardless of dict insertion order
+    assert list(first_payload.keys()) == sorted(first_payload.keys())

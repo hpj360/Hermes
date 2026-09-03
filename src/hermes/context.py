@@ -20,6 +20,7 @@ Three concerns:
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 from typing import Any
 
@@ -42,13 +43,70 @@ def _summary_dir() -> Path:
     return s.hermes_cache_dir
 
 
+# Directories never scanned for directory-level convention files (P0-2).
+# Keeps the scan fast and the summary stable in repos with huge dependency
+# trees, and avoids picking up vendored/third-party AGENTS.md files.
+_SKIP_DIRS = {
+    ".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__",
+    ".cache", ".state", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    "dist", "build", ".trae-html-share-packages",
+}
+
+# Convention file names recognized at every level (P0-2).
+_CONVENTION_NAMES = ("AGENTS.md", "CLAUDE.md")
+
+# Maximum directory depth for hierarchical AGENTS.md loading. Depth 1 = top
+# level only (the historical behavior); deeper levels load in shallow→deep
+# order so deeper (more specific) instructions appear later, i.e. closer to
+# the task, mirroring Codex's deepest-wins precedence.
+_MAX_DEPTH = 3
+
+
+def _dir_level_conventions(repo_root: Path) -> list[str]:
+    """Collect directory-level convention files, shallow→deep, deterministic.
+
+    Root-level files are excluded here (the caller loads them first). Order is
+    (depth, relative-path) sorted so the output is byte-stable across runs —
+    a prerequisite for the env-summary cache and the stable prompt prefix.
+    The walk prunes ``_SKIP_DIRS`` so dependency trees are never descended
+    into (performance: this runs on every env-summary rebuild).
+    """
+    found: list[tuple[int, str, str]] = []  # (depth, rel_dir, text)
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
+        rel_dir = Path(dirpath).relative_to(repo_root)
+        depth = len(rel_dir.parts) if str(rel_dir) != "." else 0
+        if depth > _MAX_DEPTH:
+            dirnames[:] = []
+            continue
+        if depth < 1:
+            continue  # root level handled by the caller
+        for name in _CONVENTION_NAMES:
+            if name not in filenames:
+                continue
+            try:
+                text = (Path(dirpath) / name).read_text(encoding="utf-8")
+            except OSError:
+                continue
+            found.append((depth, str(rel_dir), f"# {rel_dir / name}\n{text}"))
+    found.sort(key=lambda t: (t[0], t[1]))
+    return [t[2] for t in found]
+
+
 def _conventions_text(repo_root: Path) -> str:
-    """Read the repo's convention files (AGENTS.md / CLAUDE.md) into one string."""
+    """Read the repo's convention files (AGENTS.md / CLAUDE.md) into one string.
+
+    P0-2: hierarchical loading — root files first, then directory-level
+    ``AGENTS.md``/``CLAUDE.md`` in shallow→deep order (deeper files are more
+    specific and land closer to the task in the assembled prompt). Only the
+    root ``CONTEXT.md`` is kept for backward compatibility.
+    """
     parts: list[str] = []
     for name in ("AGENTS.md", "CLAUDE.md", "CONTEXT.md"):
         p = repo_root / name
         if p.is_file():
             parts.append(f"# {name}\n{p.read_text(encoding='utf-8')}")
+    parts.extend(_dir_level_conventions(repo_root))
     return "\n\n".join(parts)
 
 
