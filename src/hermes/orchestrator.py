@@ -28,57 +28,15 @@ from typing import Any
 from hermes.config import get_settings
 from hermes.path_policy import matches_denylist
 from hermes.presets import apply_prompt_sections, merged_presets, resolve_preset
+# Structured failure protocol 解析已下沉到 hermes.rubric（单一事实源）：
+# fan-in 审计与 Rubric 评分共用同一实现，语义漂移结构性杜绝。
+from hermes.rubric import parse_structured_failures as _parse_structured_failures
+from hermes.rubric import score_reports as _score_reports
 from hermes.tool_recovery import analyze_failures, format_recovery_section
 from hermes.trajectory import TrajectoryDesyncError, TrajectoryLogger
 from hermes.workbench.errors import ValidationError
 
 logger = logging.getLogger("hermes.orchestrator")
-
-# Structured failure protocol markers emitted by checker.md templates.
-# Checkers are asked to append a JSON block so the orchestrator can extract
-# normalized (file, type) failure keys instead of guessing from free text.
-_FAILURES_BLOCK_RE = re.compile(
-    r"<!--\s*failures:json\s*-->\s*(\{.*?\})\s*<!--\s*/failures\s*-->",
-    re.DOTALL,
-)
-
-
-def _parse_structured_failures(checker_result: str, role: str) -> list[str]:
-    """Extract failure items from a checker report.
-
-    Prefers the structured ``<!-- failures:json -->`` protocol block: returns
-    normalized ``"file|type"`` keys (without line numbers) so stop-rule set
-    comparison survives line-number drift when a builder edits earlier lines.
-
-    Falls back to a single verbatim item ``"<role>: <first non-empty line>"``
-    when no structured block is present — this never guesses which lines are
-    failures (the old ``"file:"/".py:"`` heuristic is removed).
-    """
-    match = _FAILURES_BLOCK_RE.search(checker_result)
-    if match:
-        try:
-            data = json.loads(match.group(1))
-        except json.JSONDecodeError:
-            data = {}
-        failures = data.get("failures") or []
-        items: list[str] = []
-        for f in failures:
-            if not isinstance(f, dict):
-                continue
-            file = str(f.get("file", "")).strip()
-            ftype = str(f.get("type", "")).strip()
-            # Normalize to "file|type" — drop line numbers deliberately.
-            key = f"{file}|{ftype}" if file or ftype else ""
-            if key:
-                items.append(f"{role}: {key}")
-        if items:
-            return items
-    # Fallback: verbatim first meaningful line, prefixed with role. No guessing.
-    for line in checker_result.splitlines():
-        stripped = line.strip()
-        if stripped and "ALL GREEN" not in stripped.upper():
-            return [f"{role}: {stripped}"]
-    return [f"{role}: [UNPARSEABLE FAILURE]"]
 
 
 # MCP 工具按角色分舱白名单（P0 安全提升）。
@@ -224,6 +182,10 @@ class RoundResult:
     #   roles_completed: int - 本轮 status=completed 的 role 数
     #   roles_failed: int - 本轮 status=failed 的 role 数
     collaboration_metrics: dict[str, Any] = field(default_factory=dict)
+    # P1-A 评估资产化：本轮 checker 报告按版本化 Rubric 的加权评分
+    # （final_score ∈ [0,1] + per-metric 证据 + rubric 版本）。
+    # None 表示本轮无 checker 报告可评。
+    rubric_score: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -236,6 +198,7 @@ class RoundResult:
             "checker_report": self.checker_report,
             "role_violation_count": self.role_violation_count,
             "collaboration_metrics": self.collaboration_metrics,
+            "rubric_score": self.rubric_score,
         }
 
 
@@ -842,6 +805,9 @@ class Orchestrator:
 
         # Collect checker reports (verbatim, no filtering)
         checker_reports: list[str] = []
+        # P1-A: role → raw report，供 Rubric 加权评分（评分用原始文本，
+        # 不含 fan-in 拼接的 "### role" 头，避免污染结构化协议解析）
+        reports_by_role: dict[str, str] = {}
         failure_items: list[str] = []
         all_passed = True
 
@@ -872,6 +838,7 @@ class Orchestrator:
                     failure_items.append(f"{task.role}: [NO OUTPUT]")
                     continue
                 checker_reports.append(f"### {task.role}\n{task.result}")
+                reports_by_role[task.role] = task.result
                 result_upper = task.result.upper()
                 if "ALL GREEN" in result_upper:
                     # Explicit success signal from this checker (protocol, not interpretation).
@@ -944,6 +911,12 @@ class Orchestrator:
             if recovery_section:
                 summary = f"{summary}\n{recovery_section}"
 
+        # P1-A 评估资产化：对本轮 checker 报告按版本化 Rubric 加权评分。
+        # 有 checker 报告才评分（无 checker 的 round 维持 None，不伪造分数）。
+        rubric_score_dict: dict[str, Any] | None = None
+        if reports_by_role:
+            rubric_score_dict = _score_reports(reports_by_role).to_dict()
+
         return RoundResult(
             round_num=round_num,
             tasks=tasks,
@@ -954,6 +927,7 @@ class Orchestrator:
             checker_report=checker_report,
             role_violation_count=role_violation_count,
             collaboration_metrics=collaboration_metrics,
+            rubric_score=rubric_score_dict,
         )
 
     @staticmethod

@@ -473,6 +473,48 @@ def cmd_loop_gepa(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_loop_dashboard(args: argparse.Namespace) -> int:
+    """Show the GEPA experiment dashboard (cross-experiment score comparison).
+
+    Aggregates all persisted experiments in .gepa/ into a single view:
+    per-experiment success rate, winner, best weighted score, and score
+    trend by benchmark task. Read-only — never re-runs evaluations.
+    """
+    from hermes.gepa import list_experiments
+    from hermes.gepa_dashboard import (
+        build_rows,
+        dashboard_payload,
+        render_table,
+        render_trend,
+    )
+
+    experiments = list_experiments()
+
+    # Optional loop-name filter (same convention as cmd_loop_gepa).
+    if args.name:
+        experiments = [e for e in experiments if f"loop:{args.name}" in e.benchmark_task]
+
+    rows = build_rows(experiments)
+
+    if args.json:
+        payload = dashboard_payload(rows)
+        if args.trend:
+            payload["trend"] = render_trend(rows)
+        _print_json(payload)
+        return 0
+
+    if not rows:
+        print("No GEPA experiments recorded yet.")
+        print("  Run `hermes loop gepa <name> --run` to trigger an experiment.")
+        return 0
+
+    print(render_table(rows, limit=args.limit))
+    if args.trend:
+        print()
+        print(render_trend(rows))
+    return 0
+
+
 def cmd_loop_trajectory(args: argparse.Namespace) -> int:
     """Show or verify the dispatch trajectory for a loop (ADR-0017)."""
     from hermes.loop import loops_dir
@@ -676,6 +718,19 @@ def add_loop_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser])
     p_gepa.add_argument("--run", action="store_true", help="Manually trigger a GEPA cycle")
     p_gepa.add_argument("--json", action="store_true", help="Output JSON")
     p_gepa.set_defaults(func=cmd_loop_gepa)
+
+    # dashboard (P1-B: cross-experiment score dashboard)
+    p_dash = loop_sub.add_parser(
+        "dashboard", help="Show GEPA experiment dashboard (cross-experiment scores)"
+    )
+    p_dash.add_argument(
+        "name", nargs="?", default=None,
+        help="Optional loop name to filter experiments by",
+    )
+    p_dash.add_argument("--limit", type=int, default=20, help="Max experiments to show")
+    p_dash.add_argument("--trend", action="store_true", help="Show score trend by benchmark")
+    p_dash.add_argument("--json", action="store_true", help="Output JSON")
+    p_dash.set_defaults(func=cmd_loop_dashboard)
 
     # trajectory (ADR-0017: dispatch trajectory log)
     p_traj = loop_sub.add_parser("trajectory", help="Show/verify dispatch trajectory")

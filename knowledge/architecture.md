@@ -14,6 +14,8 @@
 | 安全强制（L1-L3） | MCP 白名单分舱 + path_policy 单一事实源 + fan-in 审计 | ✅ 生产可用 | denylist 代码层强制拦截（不再是声明性标记）；红队语料 19 条回归 |
 | Loop 状态机 | loop.py + 7 条停止规则 + 就绪度审计 | ✅ 生产可用 | 与 v0.6 一致，稳定 |
 | GEPA 自进化 | gepa.py + gepa_stats.py + loop_gepa.py | ✅ 可用（需 LLM） | 自动 variant + split-run t 检验 + 失败轨迹蒸馏入记忆；红队 variant 演练（P3-1） |
+| 评估体系（Rubric） | rubric.py（版本化 Rubric + 加权评分 + 证据） | ✅ 生产可用 | P1-A：fan-in 每轮产出 rubric_score（可解释、带版本）；结构化失败协议解析单一事实源 |
+| 实验可观测 | gepa_dashboard.py + `loop dashboard` CLI | ✅ 生产可用 | P1-B：跨实验分数大盘（成功率/Winner/最佳分）+ 按 benchmark 分数趋势；只读零副作用 |
 | 上下文工程 | context.py + llm.py KV-cache 追踪 | ✅ 生产可用 | 稳定前缀契约 + env_summary 缓存 + AGENTS.md 层级加载 + sort_keys 确定性序列化 |
 | 记忆系统 | workbench/memory.py | ✅ 生产可用 | L1/L2/L3 + FTS5 + 向量 embedding + 5 路 RRF + 外部后端协议（ADR-0021） |
 | LLM 客户端 | workbench/llm.py | ✅ 生产可用 | 7+ provider、stream/retry/token 计数、工具遮蔽（保 KV-cache 前缀稳定） |
@@ -500,6 +502,8 @@ hermes
     ├── logs <name>                #   查看执行历史（含持久化 escalation_info 诊断）
     ├── status <name>              #   查看状态+预算
     ├── metrics <name>             #   指标看板（轮次/令牌/通过率聚合统计）
+    ├── gepa <name> [--run]        #   查看/手动触发 GEPA 自进化实验
+    ├── dashboard [name] [--trend] #   GEPA 实验大盘（跨版本分数对比，P1-B）
     └── stop-rules                 #   显示七条停止规则
 ```
 
