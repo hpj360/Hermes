@@ -208,6 +208,7 @@ class _SchedulerCenter:
     """
 
     __slots__ = (
+        "cron_continuity",
         "cron_scheduler",
         "dag",
         "job_queue",
@@ -221,6 +222,7 @@ class _SchedulerCenter:
     )
 
     def __init__(self) -> None:
+        from hermes.workbench.cron_memory import CronContinuity
         from hermes.workbench.dag import DependencyGraph
         from hermes.workbench.projects import ProjectRegistry, Router
         from hermes.workbench.recovery import RecoveryManager
@@ -242,7 +244,13 @@ class _SchedulerCenter:
             self.job_queue.put(job)
             self.status_bus.emit(job)
 
-        self.cron_scheduler = CronScheduler(self.trigger_store, _submit_fired_job)
+        # P4-1：continuity 触发器派发时注入跨运行记忆（notepad + 上次摘要）。
+        self.cron_continuity = CronContinuity(
+            state_dir=_state_dir(), memory=_best_effort_memory()
+        )
+        self.cron_scheduler = CronScheduler(
+            self.trigger_store, _submit_fired_job, continuity=self.cron_continuity
+        )
         self.dag = DependencyGraph(
             self.job_store, self.job_queue, self.status_bus
         )

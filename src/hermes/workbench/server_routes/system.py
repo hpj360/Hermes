@@ -13,6 +13,82 @@ from typing import Any
 
 
 class SystemRoutes(RouteBase):
+    # ------------------------------------------------------------------
+    # P3 MCP 治理面板（借鉴 NousResearch v0.21 MCP Console）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _mcp_panel_data(days: int = 30, store: Any | None = None) -> dict[str, Any]:
+        """聚合 MCP 治理面板数据：审计用量 + 分舱配置。
+
+        数据源：``.state/audit.jsonl``（AuditStore，MCP 调用的单一事实源）
+        + ``ROLE_MCP_WHITELIST`` 分舱表。窗口内按 server 聚合
+        calls/failures/success_rate/last_error/last_activity。
+        ``store`` 可注入（测试用），缺省用全局 default_audit_store()。
+        """
+        from hermes.workbench.audit import default_audit_store
+
+        audit = store if store is not None else default_audit_store()
+        cutoff = time.time() - max(0, days) * 86400
+
+        def _ts_epoch(ts: str) -> float:
+            try:
+                return time.mktime(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))
+            except (ValueError, TypeError):
+                return 0.0
+
+        servers: dict[str, dict[str, Any]] = {}
+        for rec in audit.list(limit=5000):
+            if _ts_epoch(rec.timestamp) < cutoff:
+                continue
+            entry = servers.setdefault(
+                rec.server,
+                {
+                    "calls": 0,
+                    "failures": 0,
+                    "last_activity": "",
+                    "last_error": "",
+                },
+            )
+            entry["calls"] += 1
+            if not rec.success:
+                entry["failures"] += 1
+                entry["last_error"] = rec.error or rec.method
+            if rec.timestamp > entry["last_activity"]:
+                entry["last_activity"] = rec.timestamp
+        for entry in servers.values():
+            entry["success_rate"] = (
+                round((entry["calls"] - entry["failures"]) / entry["calls"], 4)
+                if entry["calls"]
+                else 1.0
+            )
+
+        try:
+            from hermes.orchestrator import ROLE_MCP_WHITELIST
+
+            compartments = {
+                role: list(tools) for role, tools in ROLE_MCP_WHITELIST.items()
+            }
+        except Exception:  # noqa: BLE001 — 分舱表缺失不阻断面板
+            compartments = {}
+
+        return {
+            "window_days": days,
+            "servers": servers,
+            "compartments": compartments,
+        }
+
+    def h_get_mcp_panel(self) -> None:
+        """MCP 治理面板：?days=30（默认）窗口内按 server 的用量/健康。
+
+        JSON 结构：{window_days, servers: {name: {calls, failures,
+        success_rate, last_activity, last_error}}, compartments: {role:
+        [allowed tools]}}。servers 为空表示窗口内无 MCP 调用记录。
+        """
+        params = self._query_params()
+        days = self._parse_int(params.get("days"), 30)
+        self._send_json(200, self._mcp_panel_data(days=days))
+
     def h_get_health(self) -> None:
         from hermes.workbench.cli import _make_scheduler_center
 
@@ -104,6 +180,25 @@ class SystemRoutes(RouteBase):
             lines.append("# HELP hermes_llm_kv_cache_unique_prefixes Distinct stable prefixes observed.")
             lines.append("# TYPE hermes_llm_kv_cache_unique_prefixes gauge")
             lines.append(f"hermes_llm_kv_cache_unique_prefixes {kv['unique_prefixes']}")
+        except Exception:  # noqa: BLE001 — metrics must never break the scrape
+            pass
+
+        # P3 MCP 治理指标：30 天窗口内按 server 的调用量/失败量。
+        # 数据源与 /mcp/panel 相同（audit.jsonl 单一事实源）。
+        try:
+            panel = self._mcp_panel_data(days=30)
+            lines.append("# HELP hermes_mcp_calls_total MCP calls per server in the last 30 days.")
+            lines.append("# TYPE hermes_mcp_calls_total counter")
+            for name in sorted(panel["servers"]):
+                lines.append(
+                    f'hermes_mcp_calls_total{{server="{name}"}} {panel["servers"][name]["calls"]}'
+                )
+            lines.append("# HELP hermes_mcp_failures_total Failed MCP calls per server in the last 30 days.")
+            lines.append("# TYPE hermes_mcp_failures_total counter")
+            for name in sorted(panel["servers"]):
+                lines.append(
+                    f'hermes_mcp_failures_total{{server="{name}"}} {panel["servers"][name]["failures"]}'
+                )
         except Exception:  # noqa: BLE001 — metrics must never break the scrape
             pass
 

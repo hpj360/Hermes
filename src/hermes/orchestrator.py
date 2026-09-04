@@ -371,6 +371,15 @@ class OpenClawClient:
             return messages
         return []
 
+    def check_session(self, session_id: str) -> dict[str, Any] | None:
+        """Single non-blocking status probe for a session.
+
+        steering 轮询路径（P2 轮内 steering）使用：每次只发一次 GET，
+        把"等待"拆成可插入指令的小片段。返回原始 session 状态 dict，
+        网关不可达返回 None（与 wait_for_completion 的失败语义一致）。
+        """
+        return self._request("GET", f"/api/sessions/{session_id}", timeout=10.0)
+
     def wait_for_completion(
         self,
         session_id: str,
@@ -404,6 +413,85 @@ class OpenClawClient:
             data={"message": message},
         )
         return result is not None and result.get("ok", False)
+
+
+# ---------------------------------------------------------------------------
+# P2 轮内 steering（借鉴 NousResearch hermes-agent v0.21 live steering）
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SteeringCommand:
+    """一条下达给运行中子 Agent 的指令。
+
+    action 语义：
+    - ``message``：中途纠偏——把 text 注入运行中的 session（不影响状态机）
+    - ``stop``：提前止损——中断等待，保留部分结果（task.status="stopped"）
+    """
+
+    action: str  # "message" | "stop"
+    text: str = ""
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        if self.action not in ("message", "stop"):
+            raise ValueError(f"invalid steering action: {self.action!r}")
+
+
+# steering 轮询间隔（秒）。测试可 monkeypatch 缩短。
+STEERING_POLL_INTERVAL = 2.0
+
+
+class SteeringController:
+    """fan_out 之后、fan_in 等待期间的中途指挥通道。
+
+    外部（CLI / 路由 / 人）在另一个线程调用 steer()/stop() 下达指令；
+    fan_in 的 steering 轮询在每个 poll 间隙 pop 并执行。
+
+    key 寻址：指令按 key 排队。fan_out 之后 task.session_id 已知，
+    精确寻址用 session_id；派发前（session_id 未知）可用
+    ``role:<role>`` 广播键——fan_in 会先查 session_id 队列，再查
+    role 队列。线程安全。
+    """
+
+    def __init__(self) -> None:
+        import threading
+
+        self._lock = threading.Lock()
+        self._commands: dict[str, list[SteeringCommand]] = {}
+
+    @staticmethod
+    def role_key(role: str) -> str:
+        """派发前寻址用的 role 广播键（session_id 未知时）。"""
+        return f"role:{role}"
+
+    def steer(self, key: str, text: str, reason: str = "") -> None:
+        """对运行中的子 Agent 注入中途纠偏消息。"""
+        self._enqueue(key, SteeringCommand("message", text=text, reason=reason))
+
+    def stop(self, key: str, reason: str = "") -> None:
+        """提前停止子 Agent，保留部分结果。"""
+        self._enqueue(key, SteeringCommand("stop", reason=reason))
+
+    def _enqueue(self, key: str, cmd: SteeringCommand) -> None:
+        with self._lock:
+            self._commands.setdefault(key, []).append(cmd)
+
+    def pop(self, *keys: str) -> SteeringCommand | None:
+        """按优先级取出第一条指令（FIFO），无指令返回 None。
+
+        多个 key（如 session_id 精确键 + role 广播键）按顺序探测，
+        先到先得。
+        """
+        with self._lock:
+            for key in keys:
+                queue = self._commands.get(key)
+                if queue:
+                    cmd = queue.pop(0)
+                    if not queue:
+                        del self._commands[key]
+                    return cmd
+            return None
 
 
 class Orchestrator:
@@ -536,51 +624,146 @@ class Orchestrator:
         except OSError:
             logger.warning("Failed to record dispatch/result for role=%s", task.role)
 
-    def fan_in(self, tasks: list[AgentTask], timeout: float = 300.0) -> list[AgentTask]:
+    def fan_in(
+        self,
+        tasks: list[AgentTask],
+        timeout: float = 300.0,
+        steering: SteeringController | None = None,
+    ) -> list[AgentTask]:
         """Wait for all spawned tasks to complete and collect results.
 
         Updates each task's result, status, and tokens_used.
         P0: 完成后审计 MCP 工具调用，检测角色越权。
         ADR-0017: 完成后补记 dispatch/result 轨迹事件。
+        P2 轮内 steering：steering 非空时改用分片轮询等待，poll 间隙
+        消费 SteeringController 指令（message 中途纠偏 / stop 提前止损
+        保留部分结果）。默认 None 走原阻塞等待路径，行为不变。
         """
         for task in tasks:
             if task.status == "failed" or task.session_id is None:
                 continue
 
-            result = self.client.wait_for_completion(task.session_id, timeout=timeout)
-            task.completed_at = datetime.now(timezone.utc).isoformat()
-
-            if result is None:
-                task.status = "failed"
-                task.result = "Timeout or gateway error"
-                self._record_dispatch_result(task, task.session_id, "failed", 0)
-            else:
-                task.status = "completed" if result.get("status") == "completed" else "failed"
-                messages = self.client.get_session_messages(task.session_id)
-                # Extract the last assistant message as the result
-                assistant_msgs = [
-                    m for m in messages if m.get("role") == "assistant"
-                ]
-                if assistant_msgs:
-                    task.result = assistant_msgs[-1].get("content", "")
-                else:
-                    task.result = result.get("output", "")
-                task.tokens_used = result.get("tokens_used", 0)
-                # P1: token 上限熔断检查
-                # token_limit > 0 时启用；超限即标记 failed，防止单 agent 烧光预算。
-                # 由 _check_token_limit 集中处理，便于复用与测试覆盖。
-                self._check_token_limit(task)
-                # P0: 审计 MCP 工具调用违规
-                self._audit_mcp_violations(task, messages)
-                # Stage 2: 审计内置工具越权（ADR-0018 兜底审计）
-                self._audit_builtin_tool_violations(task, messages)
-                # Stage 6: 审计 denylist 路径违规（L3 安全强制执行）
-                self._audit_path_violations(task, messages)
-                self._record_dispatch_result(
-                    task, task.session_id, task.status, task.tokens_used
+            if steering is None:
+                result = self.client.wait_for_completion(
+                    task.session_id, timeout=timeout
                 )
+                self._collect_task_result(task, result)
+            else:
+                self._fan_in_with_steering(task, timeout, steering)
 
         return tasks
+
+    def _fan_in_with_steering(
+        self,
+        task: AgentTask,
+        timeout: float,
+        steering: SteeringController,
+    ) -> None:
+        """分片轮询等待单个 task，poll 间隙消费 steering 指令。
+
+        与 wait_for_completion 的差异：单次探测失败（网关瞬断）不立即
+        放弃，而是继续轮询到 deadline——中途指令的送达窗口因此更长。
+        """
+        import time
+
+        assert task.session_id is not None  # fan_in 已过滤 None
+        deadline = time.monotonic() + timeout
+        stop_reason = ""
+        result: dict[str, Any] | None = None
+        while True:
+            result = self.client.check_session(task.session_id)
+            if (
+                result is not None
+                and result.get("status") in ("completed", "failed", "error")
+            ):
+                break
+            cmd = steering.pop(
+                task.session_id, SteeringController.role_key(task.role)
+            )
+            if cmd is not None:
+                if cmd.action == "stop":
+                    stop_reason = cmd.reason or "no reason given"
+                    logger.info(
+                        "Steering stop: role=%s session=%s reason=%s",
+                        task.role, task.session_id, stop_reason,
+                    )
+                    break
+                if self.client.send_message(task.session_id, cmd.text):
+                    logger.info(
+                        "Steering message delivered: role=%s session=%s",
+                        task.role, task.session_id,
+                    )
+                else:
+                    logger.warning(
+                        "Steering message delivery failed: role=%s session=%s",
+                        task.role, task.session_id,
+                    )
+            if time.monotonic() >= deadline:
+                result = None
+                break
+            time.sleep(STEERING_POLL_INTERVAL)
+        self._collect_task_result(task, result, stop_reason=stop_reason)
+
+    def _collect_task_result(
+        self,
+        task: AgentTask,
+        result: dict[str, Any] | None,
+        stop_reason: str = "",
+    ) -> None:
+        """从网关终态收集单个 task 的结果（含 steering 停止路径）。
+
+        stop_reason 非空表示被 steering 提前停止：保留部分结果（最后的
+        assistant 消息）+ 停止原因，status 标记为 "stopped"。部分消息
+        同样过 L3 三重审计——部分结果不等于免检。
+        """
+        assert task.session_id is not None  # fan_in 已过滤 None
+        task.completed_at = datetime.now(timezone.utc).isoformat()
+
+        if stop_reason:
+            task.status = "stopped"
+            messages = self.client.get_session_messages(task.session_id)
+            assistant_msgs = [m for m in messages if m.get("role") == "assistant"]
+            partial = (
+                assistant_msgs[-1].get("content", "") if assistant_msgs else ""
+            )
+            task.result = f"[STOPPED BY STEERING: {stop_reason}]\n{partial}"
+            task.tokens_used = 0
+            self._audit_mcp_violations(task, messages)
+            self._audit_builtin_tool_violations(task, messages)
+            self._audit_path_violations(task, messages)
+            self._record_dispatch_result(task, task.session_id, "stopped", 0)
+            return
+
+        if result is None:
+            task.status = "failed"
+            task.result = "Timeout or gateway error"
+            self._record_dispatch_result(task, task.session_id, "failed", 0)
+            return
+
+        task.status = "completed" if result.get("status") == "completed" else "failed"
+        messages = self.client.get_session_messages(task.session_id)
+        # Extract the last assistant message as the result
+        assistant_msgs = [
+            m for m in messages if m.get("role") == "assistant"
+        ]
+        if assistant_msgs:
+            task.result = assistant_msgs[-1].get("content", "")
+        else:
+            task.result = result.get("output", "")
+        task.tokens_used = result.get("tokens_used", 0)
+        # P1: token 上限熔断检查
+        # token_limit > 0 时启用；超限即标记 failed，防止单 agent 烧光预算。
+        # 由 _check_token_limit 集中处理，便于复用与测试覆盖。
+        self._check_token_limit(task)
+        # P0: 审计 MCP 工具调用违规
+        self._audit_mcp_violations(task, messages)
+        # Stage 2: 审计内置工具越权（ADR-0018 兜底审计）
+        self._audit_builtin_tool_violations(task, messages)
+        # Stage 6: 审计 denylist 路径违规（L3 安全强制执行）
+        self._audit_path_violations(task, messages)
+        self._record_dispatch_result(
+            task, task.session_id, task.status, task.tokens_used
+        )
 
     @staticmethod
     def _check_token_limit(task: AgentTask) -> None:
@@ -980,6 +1163,16 @@ class Orchestrator:
             "role_violation_count": role_violation_count,
         }
 
+    def steer(self, task: AgentTask, message: str) -> bool:
+        """对运行中的子 Agent 注入中途纠偏消息（直达网关，不经队列）。
+
+        适用于 fan_in(steering=...) 轮询路径之外的即时纠偏——队列化
+        指令由 fan_in 消费；本方法立即送达。网关不可达返回 False。
+        """
+        if task.session_id is None:
+            return False
+        return self.client.send_message(task.session_id, message)
+
     def run_builder_checker_round(
         self,
         loop_dir: Path,
@@ -988,6 +1181,7 @@ class Orchestrator:
         checker_context: str = "",
         parallel_checks: bool = True,
         denylist: list[str] | None = None,
+        steering: SteeringController | None = None,
     ) -> RoundResult:
         """Execute one builder-checker round.
 
@@ -1016,9 +1210,11 @@ class Orchestrator:
 
         tasks = [builder]
         self.fan_out(tasks)
-        self.fan_in(tasks, timeout=600.0)
+        self.fan_in(tasks, timeout=600.0, steering=steering)
 
-        if builder.status == "failed":
+        # steering 止损（"stopped"）与失败同样跳过 checker——用户已主动
+        # 放弃本轮，继续 spawn checker 只会烧预算。
+        if builder.status in ("failed", "stopped"):
             return self.aggregate_results(tasks, round_num)
 
         # Phase 2: Checker(s)
@@ -1065,7 +1261,7 @@ class Orchestrator:
             ]
 
         self.fan_out(checker_tasks)
-        self.fan_in(checker_tasks, timeout=300.0)
+        self.fan_in(checker_tasks, timeout=300.0, steering=steering)
 
         all_tasks = [builder] + checker_tasks
         return self.aggregate_results(all_tasks, round_num)

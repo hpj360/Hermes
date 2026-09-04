@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import threading
 import time
+import typing
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -23,6 +24,9 @@ from typing import Any, Callable, List
 from hermes.workbench.errors import ValidationError
 from hermes.workbench.persistence import atomic_write_json, safe_read_json
 from hermes.workbench.scheduler import ScheduledJob
+
+if typing.TYPE_CHECKING:  # pragma: no cover
+    from hermes.workbench.cron_memory import CronContinuity
 
 
 __all__ = [
@@ -230,10 +234,12 @@ class CronScheduler:
         store: TriggerStore,
         submit_callback: Callable[[ScheduledJob], None],
         scan_interval: float = 60.0,
+        continuity: "CronContinuity | None" = None,
     ) -> None:
         self._store = store
         self._submit = submit_callback
         self._scan_interval = scan_interval
+        self._continuity = continuity
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -345,8 +351,13 @@ class CronScheduler:
                 self._instantiate_and_submit(trigger)
 
     def _instantiate_and_submit(self, trigger: Trigger) -> bool:
+        template = trigger.job_template
+        # P4-1 continuity：config["continuity"]=true 的触发器，派发前注入
+        # 持久 notepad + 上次运行摘要（loop 模式 goal.description 携带记忆）。
+        if self._continuity is not None and trigger.config.get("continuity"):
+            template = self._continuity.inject_context(trigger, template)
         try:
-            job = ScheduledJob.from_template(trigger.job_template, submitted_by="cron")
+            job = ScheduledJob.from_template(template, submitted_by="cron")
         except Exception:  # noqa: BLE001 - bad template
             return False
         try:
