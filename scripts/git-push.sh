@@ -5,8 +5,8 @@
 # 做法：把 push + ls-remote 校验绑成原子操作，SHA 不一致就非零退出。
 #
 # 用法:
-#   bash scripts/git-push.sh                # push 当前分支并校验
-#   bash scripts/git-push.sh --branch xxx   # 指定分支（默认 trae/agent-glOxQF）
+#   bash scripts/git-push.sh                # push 当前分支并校验（自动检测）
+#   bash scripts/git-push.sh --branch xxx   # 指定分支
 #
 # 退出码:
 #   0 = 推送成功且本地与远端 SHA 一致
@@ -14,7 +14,18 @@
 
 set -uo pipefail
 
-BRANCH="trae/agent-glOxQF"
+# 默认分支 = 当前分支（git branch --show-current）。
+# 旧版硬编码 trae/agent-glOxQF，该分支在 main-only 工作流中不存在，
+# 导致每次都要走手动备用路径。自动检测让脚本与实际工作流解耦。
+# detached HEAD 时 show-current 输出空，回退到 rev-parse --abbrev-ref。
+BRANCH="$(git branch --show-current 2>/dev/null)"
+if [ -z "$BRANCH" ]; then
+    BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+fi
+if [ -z "$BRANCH" ] || [ "$BRANCH" = "HEAD" ]; then
+    echo "✗ 无法确定当前分支（detached HEAD？），请用 --branch 显式指定" >&2
+    exit 1
+fi
 REMOTE="origin"
 
 # 解析参数
@@ -34,6 +45,14 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+# ── 0. 凭证：环境有 GH_TOKEN 时自动注入（CI/sandbox 标准方式）──
+# 不写任何持久 git config；仅本次脚本进程内生效。
+if [ -n "${GH_TOKEN:-}" ] && [ -z "${GIT_ASKPASS:-}" ]; then
+    export GIT_CONFIG_COUNT=1
+    export GIT_CONFIG_KEY_0=credential.helper
+    export GIT_CONFIG_VALUE_0='!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f'
+fi
 
 # ── 1. 推送 ──────────────────────────────────────────────────
 echo "→ Pushing to $REMOTE/$BRANCH..."
