@@ -21,6 +21,11 @@ Design principles (第一性原理):
 This is a 雏形: variant generation is manual (caller supplies variants).
 Future iterations can add LLM-driven variant generation and cross-project
 promotion.
+
+改进（来源《Agent优化之GEPA》方法论落地，详见 hermes/gepa_mutation.py）:
+- P1 反思式变异：上一轮失败证据 → 归因反馈注入变体生成 prompt
+- P2 帕累托候选池：保留 quality-vs-cost 权衡面（select_pareto_frontier）
+- P3 冻结区分区：agent 定义 frozen/mutable 拆分，冻结块结构性不可删
 """
 
 from __future__ import annotations
@@ -32,6 +37,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+
+from hermes.gepa_mutation import (
+    build_reflection_feedback,
+    frozen_intact,
+    has_frozen_zone,
+    reassemble_with_frozen,
+    split_frozen_mutable,
+)
 
 logger = logging.getLogger("hermes.gepa")
 
@@ -167,6 +180,10 @@ class GEPAExperiment:
     promotion_reason: str = ""
     created_at: str = ""
     completed_at: str | None = None
+    # P2 帕累托候选池：quality-vs-cost 权衡面上的全部 variant_id。
+    # 保留整个权衡面（而非只留 winner）作为下一轮变异的候选池，
+    # 防止搜索坍缩到单点、丢失 quality/cost 的多样性。
+    pareto_frontier: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -179,6 +196,7 @@ class GEPAExperiment:
             "promotion_reason": self.promotion_reason,
             "created_at": self.created_at,
             "completed_at": self.completed_at,
+            "pareto_frontier": list(self.pareto_frontier),
         }
 
     @classmethod
@@ -193,10 +211,22 @@ class GEPAExperiment:
             promotion_reason=str(data.get("promotion_reason", "")),
             created_at=str(data.get("created_at", "")),
             completed_at=data.get("completed_at"),
+            pareto_frontier=list(data.get("pareto_frontier") or []),
         )
 
 
 # ── Scoring ──────────────────────────────────────────────────────────
+
+
+def _effective_quality(result: VariantResult) -> float:
+    """Effective completion quality in [0, 1].
+
+    ``quality`` (when not None) carries outcome partial credit + compliance
+    caps; ``quality=None`` (legacy) degrades to the binary success level.
+    """
+    if result.quality is not None:
+        return max(0.0, min(1.0, float(result.quality)))
+    return 1.0 if result.success else 0.0
 
 
 def score_variant(result: VariantResult) -> float:
@@ -215,10 +245,7 @@ def score_variant(result: VariantResult) -> float:
     The weights are module-level constants (SCORE_WEIGHT_*) so they can be
     tuned without code changes to the scoring function.
     """
-    if result.quality is not None:
-        effective = max(0.0, min(1.0, float(result.quality)))
-    else:
-        effective = 1.0 if result.success else 0.0
+    effective = _effective_quality(result)
     score = SCORE_WEIGHT_SUCCESS * effective
     # Clamp tokens/rounds so an unbounded (malicious or buggy) evaluation
     # cannot inflate the penalty past the budget that guards quality gaps.
@@ -227,6 +254,34 @@ def score_variant(result: VariantResult) -> float:
     penalty = SCORE_WEIGHT_TOKENS * tokens + SCORE_WEIGHT_ROUNDS * rounds
     score += max(penalty, -PENALTY_BUDGET)
     return score
+
+
+def select_pareto_frontier(results: list[VariantResult]) -> list[str]:
+    """P2 帕累托候选池：返回 quality-vs-cost 权衡面上的 variant_id 列表。
+
+    双目标：max(_effective_quality)、min(tokens_used)。一个 variant 被
+    支配当且仅当存在另一个在两个目标上都不劣且至少一个严格更优。
+
+    保留整个权衡面（而非只留单一 winner）作为下一轮变异的候选池：
+    高质量高成本与次优低成本的策略各有价值，坍缩到单点会让后续
+    反思式变异失去多样化的起点。O(n^2)，n 是 variant 数（个位数级）。
+    """
+    frontier: list[str] = []
+    for cand in results:
+        cq = _effective_quality(cand)
+        ct = cand.tokens_used
+        dominated = False
+        for other in results:
+            if other is cand:
+                continue
+            oq = _effective_quality(other)
+            ot = other.tokens_used
+            if oq >= cq and ot <= ct and (oq > cq or ot < ct):
+                dominated = True
+                break
+        if not dominated:
+            frontier.append(cand.variant_id)
+    return frontier
 
 
 # ── Variant generation (LLM-driven) ──────────────────────────────────
@@ -269,8 +324,16 @@ def _build_variant_generation_prompt(
     benchmark_context: str,
     n_variants: int,
     base_agent_file: str | None,
+    reflection_feedback: str = "",
+    mutable_base: str | None = None,
 ) -> str:
-    """Compose the LLM prompt that asks for N distinct agent strategies."""
+    """Compose the LLM prompt that asks for N distinct agent strategies.
+
+    - *reflection_feedback*（P1 反思式变异）：上一轮失败证据的归因反馈块，
+      非空时注入——把"自由探索"变为"针对失败模式的定向改写"。
+    - *mutable_base*（P3 冻结区）：incumbent 的可变区文本。非空时 LLM 只
+      需产出新的可变区，冻结块由调用方结构性回填（LLM 无法触碰）。
+    """
     lines = [
         "You are designing agent-definition variants for a self-improvement (GEPA) cycle.",
         f"Benchmark task the agents must solve: {benchmark_task}",
@@ -282,6 +345,19 @@ def _build_variant_generation_prompt(
             f"An incumbent baseline definition exists at: {base_agent_file}. "
             "Your variants should be meaningfully different strategies, not copies."
         )
+    if mutable_base:
+        lines += [
+            "",
+            "The incumbent definition has IMMUTABLE frozen sections (hard constraints,",
+            "tool protocols) that will be re-attached automatically after your rewrite.",
+            "You produce ONLY the mutable section. Do NOT include or mimic the frozen",
+            "sections. The incumbent's current mutable section is:",
+            "",
+            mutable_base,
+        ]
+    if reflection_feedback:
+        lines.append("")
+        lines.append(reflection_feedback)
     lines.append(
         f"Produce exactly {n_variants} variants. Each variant is a distinct strategy "
         "for solving the benchmark (e.g. diagnose-first, minimal-change, aggressive-rewrite, "
@@ -301,6 +377,7 @@ def auto_generate_variants(
     n_variants: int = 3,
     output_dir: Path | None = None,
     benchmark_context: str = "",
+    previous_results: list[VariantResult] | None = None,
 ) -> list[Variant]:
     """Generate candidate agent-definition variants via the LLM.
 
@@ -308,6 +385,16 @@ def auto_generate_variants(
     The LLM is asked to return a JSON list of ``{description, agent_prompt}``;
     each is written to a ``.md`` file under *output_dir* (default
     ``.gepa/variants/``) and wrapped in a :class:`Variant`.
+
+    改进（来源《Agent优化之GEPA》方法论落地）:
+
+    - **P1 反思式变异**: *previous_results* 非空时，从中提取结构化失败
+      条目构建归因反馈，注入生成 prompt——变体必须针对失败模式做
+      定向改写，而非随机探索。
+    - **P3 冻结区**: 当 *base_agent_file* 含冻结块（``GEPA:FROZEN`` 标记）
+      时，LLM 只生成可变区，冻结块由 :func:`reassemble_with_frozen`
+      结构性回填——事后扣分防不住 reward hacking（删约束往往能提分），
+      结构上不可删才是硬保证。
 
     Degrades gracefully: returns ``[]`` when the LLM is unavailable, the
     response is unparseable, or *n_variants* <= 0 — callers must handle the
@@ -321,8 +408,30 @@ def auto_generate_variants(
 
     from hermes.workbench.llm import LlmMessage
 
+    # P1: 上一轮失败证据 → 归因反馈块（无失败数据则为空串，退化为自由探索）
+    reflection_feedback = ""
+    if previous_results:
+        reflection_feedback = build_reflection_feedback(
+            previous_results, benchmark_task
+        )
+
+    # P3: incumbent 含冻结区时，LLM 只重写可变区，冻结块结构性保留
+    base_text = ""
+    mutable_base: str | None = None
+    if base_agent_file:
+        base_path = Path(base_agent_file)
+        if base_path.exists():
+            base_text = base_path.read_text(encoding="utf-8")
+            if has_frozen_zone(base_text):
+                _, mutable_base = split_frozen_mutable(base_text)
+
     prompt = _build_variant_generation_prompt(
-        benchmark_task, benchmark_context, n_variants, base_agent_file
+        benchmark_task,
+        benchmark_context,
+        n_variants,
+        base_agent_file,
+        reflection_feedback=reflection_feedback,
+        mutable_base=mutable_base,
     )
     try:
         resp = llm.chat_json([LlmMessage(role="user", content=prompt)])
@@ -351,18 +460,33 @@ def auto_generate_variants(
                 "auto_generate_variants: rejected unsafe variant %r", description
             )
             continue
+        # P3: 冻结块结构性回填 + 双保险校验（任何路径产出的候选都必须
+        # 通过 frozen_intact，否则拒绝——不能依赖 LLM 自觉）
+        if base_text and has_frozen_zone(base_text):
+            agent_prompt = reassemble_with_frozen(base_text, agent_prompt)
+            if not frozen_intact(base_text, agent_prompt):  # pragma: no cover
+                logger.warning(
+                    "auto_generate_variants: frozen zone violated, rejected %r",
+                    description,
+                )
+                continue
         variant_id = f"auto-{uuid.uuid4().hex[:8]}"
         agent_file = out_dir / f"{variant_id}.md"
         agent_file.write_text(agent_prompt, encoding="utf-8")
+        metadata: dict[str, Any] = {
+            "generated_by": "llm",
+            "benchmark_task": benchmark_task,
+        }
+        if reflection_feedback:
+            metadata["reflection_guided"] = True
+        if mutable_base is not None:
+            metadata["frozen_zone_preserved"] = True
         variants.append(
             Variant(
                 variant_id=variant_id,
                 agent_file=str(agent_file),
                 description=description,
-                metadata={
-                    "generated_by": "llm",
-                    "benchmark_task": benchmark_task,
-                },
+                metadata=metadata,
             )
         )
     if variants:
@@ -438,6 +562,9 @@ def run_gepa_cycle(
                 error=f"{type(exc).__name__}: {exc}",
             )
         experiment.results.append(result)
+
+    # P2 帕累托候选池：记录 quality-vs-cost 权衡面（下一轮变异的起点池）
+    experiment.pareto_frontier = select_pareto_frontier(experiment.results)
 
     # Pick winner by score (only successful variants are eligible)
     successful = [r for r in experiment.results if r.success]
@@ -568,6 +695,9 @@ def run_gepa_split_run(
             f"no challenger significantly beat baseline out of {len(challengers)} "
             f"(min_repeats={min_repeats}, alpha={alpha}, bonferroni={alpha_adj:.4g})"
         )
+
+    # P2 帕累托候选池（基于全部重复运行结果的均值面）
+    experiment.pareto_frontier = select_pareto_frontier(experiment.results)
 
     experiment.completed_at = datetime.now(timezone.utc).isoformat()
     return experiment

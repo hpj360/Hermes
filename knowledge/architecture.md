@@ -13,7 +13,7 @@
 | 多代理编排 | orchestrator.py（fan-out/fan-in、角色体系、聚合） | ✅ 生产可用 | builder/checker×3/synthesizer/perspective_*，Gateway 降级 guidance 模式 |
 | 安全强制（L1-L3） | MCP 白名单分舱 + path_policy 单一事实源 + fan-in 审计 | ✅ 生产可用 | denylist 代码层强制拦截（不再是声明性标记）；红队语料 19 条回归 |
 | Loop 状态机 | loop.py + 7 条停止规则 + 就绪度审计 | ✅ 生产可用 | 与 v0.6 一致，稳定 |
-| GEPA 自进化 | gepa.py + gepa_stats.py + loop_gepa.py | ✅ 可用（需 LLM） | 自动 variant + split-run t 检验 + 失败轨迹蒸馏入记忆；红队 variant 演练（P3-1） |
+| GEPA 自进化 | gepa.py + gepa_mutation.py + gepa_stats.py + loop_gepa.py | ✅ 可用（需 LLM） | 自动 variant + split-run t 检验 + 失败轨迹蒸馏入记忆；红队 variant 演练（P3-1）；反思式变异 + 帕累托候选池 + 冻结区（P5，《Agent优化之GEPA》方法论落地） |
 | 评估体系（Rubric） | rubric.py（版本化 Rubric + 加权评分 + 证据） | ✅ 生产可用 | P1-A：fan-in 每轮产出 rubric_score（可解释、带版本）；结构化失败协议解析单一事实源 |
 | 实验可观测 | gepa_dashboard.py + `loop dashboard` CLI | ✅ 生产可用 | P1-B：跨实验分数大盘（成功率/Winner/最佳分）+ 按 benchmark 分数趋势；只读零副作用 |
 | 上下文工程 | context.py + llm.py KV-cache 追踪 | ✅ 生产可用 | 稳定前缀契约 + env_summary 缓存 + AGENTS.md 层级加载 + sort_keys 确定性序列化 |
