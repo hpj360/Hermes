@@ -274,6 +274,10 @@ class Settings(BaseSettings):
     hermes_llm_model: str = Field(default="llama3.2", alias="HERMES_LLM_MODEL")
     hermes_llm_timeout: float = Field(default=60.0, alias="HERMES_LLM_TIMEOUT")
     hermes_llm_temperature: float = Field(default=0.2, alias="HERMES_LLM_TEMPERATURE")
+    # 可选：稳定会话 ID，作为 ``x-opencode-session`` 头发送。OpenCode Go 等
+    # 网关要求该头以做路由/提示缓存优化（缺失会返回 400 MissingSessionID）。
+    # None = 由客户端按 base_url 自动生成（见 ``make_llm_client``）。
+    hermes_llm_session_id: str | None = Field(default=None, alias="HERMES_LLM_SESSION_ID")
 
     # ADR-0018: 用户自定义 Agent Preset 目录。None = 使用 hermes_state_dir/presets。
     hermes_presets_dir: str | None = Field(default=None, alias="HERMES_PRESETS_DIR")
