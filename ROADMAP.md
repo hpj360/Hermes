@@ -16,6 +16,42 @@
 > 发布/数据仍是 `random` 模拟，真实平台 API 接入是产品规划的**阶段 2（生死线）**，
 > 详见 `docs/roadmap/product-plan.md`。
 
+---
+
+## 个人工作台线（PRD v4）
+
+> 依据 [`docs/prd/PERSONAL-WORKBENCH-PRD.md`](docs/prd/PERSONAL-WORKBENCH-PRD.md)（v4）
+> 与验收报告 [`docs/review/workbench-implementation-acceptance.md`](docs/review/workbench-implementation-acceptance.md)。
+> 本仓只做 hermes 主运行底座；`Hermes-workbench/`、`content-team/` 冻结为资产源。
+
+### 已交付
+
+| 阶段 | 范围 | 状态 |
+|---|---|---|
+| P0 | U1a 调度修复 / U1b FastAPI 网关 / U2 鉴权 / U3 Windows 常驻 / U4-U6 前端 / U7 待办 / U8 捕获 / U9 飞书通知 / U10 技能中心 | ✅ |
+| P0.5 | 捕获落 notes（markdown+frontmatter）+ 摘要 job + 驾驶舱简报本地化 | ✅ |
+| P1-C3 | 飞书 bot 入箱（webhook + lark-cli 长连接双通道） | ✅ |
+
+### 地基修复（本轮）
+
+- [x] **O1 单树运行时**：venv editable 重指向 `D:\Hermes\hermes`（原指向 `D:\Hermes-release` 运行时副本），消除手工双树同步的脆弱性（曾被 release 侧 git reset 清空过一次）。
+- [x] **O5 测试隔离**：新增全局 autouse fixture，将 `HERMES_STATE_DIR/CACHE_DIR/PROFILE_PATH` 指向 per-test tmp 并重置调度/记忆/审计单例；全量跑批不再污染真实 `.state`（此前 audit/episodes/facts/tasks 被改写、顺序敏感）。
+
+### 待办（P1 剩余）
+
+- [ ] **C1 自动周报 + 数据回采** —— 业务闭环关键项，采用"半自动人工导出优先"（平台无官方接口）
+- [ ] C2 GitHub 双向同步（依赖 GitHub token）
+- [ ] C4 全局日 token 预算（用量采集已就位，前置熔断待接）
+- [ ] C5 Gated 发布流（飞书确认卡）—— C1 下游
+- [ ] C6 Obsidian vault 索引 + 创作台知识卡
+
+> **主线判断**：过去阶段以"横向扩能力"（加模块/skill/测试）为主，边际收益递减；
+> 建议下一阶段转向"**纵向打穿一条真实业务闭环**"——去掉所有 mock，走通一次
+> 真实 LLM → 真实发布 → 真实数据回流 → 真实复盘。判断标准只有一个：真的能用。
+> 优先级：C1 → C5 → C6；C2/C4 按需。
+
+---
+
 ## P0 稳基
 
 - [x] P0-1 memory 搜索能力补齐 + 修复既有失败（FTS5 线程/契约/编码/排序/symlink）
