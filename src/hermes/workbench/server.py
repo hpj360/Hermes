@@ -59,6 +59,9 @@ _ROUTES: list[tuple[str, str, str]] = [
     ("DELETE", r"^/todos/(?P<todo_id>[^/]+)$", "h_delete_todo"),
     ("POST", r"^/inbox$", "h_post_inbox"),
     ("GET", r"^/notes/summary$", "h_get_notes_summary"),
+    ("GET", r"^/notes$", "h_get_notes"),
+    ("GET", r"^/notes/search$", "h_get_notes_search"),
+    ("POST", r"^/knowledge-card$", "h_post_knowledge_card"),
     ("GET", r"^/traces/(?P<trace_id>[^/]+)$", "h_get_trace"),
     ("POST", r"^/tasks$", "h_post_tasks"),
     ("GET", r"^/tasks$", "h_get_tasks"),
@@ -752,6 +755,59 @@ class DashboardHandler(BaseHTTPRequestHandler):
         notes = NotesStore(_make_notes_dir())
         todos = _make_todo_store().list()
         self._send_json(200, {"notes": notes.summary(), "inbox_todos": len(todos)})
+
+    def h_get_notes(self) -> None:
+        """Return the parsed vault index (C6). Query: ?limit=50."""
+        from hermes.workbench.cli import _make_notes_dir
+        from hermes.workbench.notes import NotesStore
+
+        params = self._query_params()
+        raw_limit = params.get("limit")
+        limit = int(raw_limit) if raw_limit else None
+        store = NotesStore(_make_notes_dir())
+        entries = store.index(limit=limit)
+        self._send_json(
+            200,
+            {
+                "notes_dir": str(store.notes_dir),
+                "note_count": len(entries),
+                "entries": [e.to_dict() for e in entries],
+            },
+        )
+
+    def h_get_notes_search(self) -> None:
+        """Keyword-search the vault (C6). Query: ?q=...&limit=20."""
+        from hermes.workbench.cli import _make_notes_dir
+        from hermes.workbench.notes import NotesStore
+
+        params = self._query_params()
+        q = params.get("q", "").strip()
+        if not q:
+            raise ValidationError("query param 'q' is required")
+        limit = int(params.get("limit", "20"))
+        store = NotesStore(_make_notes_dir())
+        entries = store.search(q, limit=limit)
+        self._send_json(
+            200, {"query": q, "count": len(entries), "entries": [e.to_dict() for e in entries]}
+        )
+
+    def h_post_knowledge_card(self) -> None:
+        """Build a knowledge card from keywords (C6).
+
+        Body: {"keywords": ["家庭酒吧", "调酒"], "limit": 5}
+        """
+        from hermes.workbench.cli import _make_notes_dir
+        from hermes.workbench.notes import NotesStore
+
+        body = self._read_json_body()
+        if not isinstance(body, dict):
+            raise ValidationError("body must be a JSON object")
+        keywords = body.get("keywords")
+        if not isinstance(keywords, list):
+            raise ValidationError("body field 'keywords' must be an array")
+        limit = int(body.get("limit", 5))
+        store = NotesStore(_make_notes_dir())
+        self._send_json(200, store.knowledge_card(keywords, limit=limit))
 
     # tasks --------------------------------------------------------------
 
