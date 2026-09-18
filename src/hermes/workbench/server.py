@@ -47,6 +47,7 @@ __all__ = ["DashboardHandler", "NotFoundError", "make_server", "run_server"]
 _ROUTES: list[tuple[str, str, str]] = [
     ("GET", r"^/health$", "h_get_health"),
     ("GET", r"^/llm/usage$", "h_get_llm_usage"),
+    ("POST", r"^/llm/draft$", "h_post_llm_draft"),
     ("GET", r"^/metrics$", "h_get_metrics"),
     ("GET", r"^/mcp/panel$", "h_get_mcp_panel"),
     ("GET", r"^/$", "h_get_root"),

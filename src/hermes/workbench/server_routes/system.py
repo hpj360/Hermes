@@ -138,6 +138,30 @@ class SystemRoutes(RouteBase):
             },
         )
 
+    def h_post_llm_draft(self) -> None:
+        """Generate a platform-optimized draft via the LLM (generic capability).
+
+        Body: {"title": "...", "description": "...", "keywords": [...],
+        "platform": "XIAOHONGSHU"}. Falls back to a deterministic template when
+        the LLM is unavailable (``source`` reports which path was used).
+        """
+        from hermes.workbench.draft import generate_draft
+        from hermes.workbench.errors import ValidationError
+
+        body = self._read_json_body()
+        if not isinstance(body, dict):
+            raise ValidationError("body must be a JSON object")
+        title = body.get("title")
+        if not title or not isinstance(title, str):
+            raise ValidationError("body field 'title' is required")
+        draft = generate_draft(
+            title,
+            description=body.get("description") or "",
+            keywords=body.get("keywords") or [],
+            platform=body.get("platform") or "XIAOHONGSHU",
+        )
+        self._send_json(200, draft.to_dict())
+
     def h_get_metrics(self) -> None:
         """Prometheus text exposition for the scheduler (scrape endpoint).
 
