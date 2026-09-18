@@ -37,6 +37,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -61,6 +62,21 @@ __all__ = [
     "reset_kv_cache_stats",
     "resolve_provider",
 ]
+
+
+def _default_user_agent() -> str:
+    """Return an identifying User-Agent for outbound LLM requests.
+
+    A dedicated UA (rather than the default ``Python-urllib/x.y``) is
+    required by some OpenAI-compatible gateways that sit behind a WAF
+    (e.g. OpenCode Go), which otherwise answer ``403``/error ``1010``.
+    """
+    try:
+        from hermes import __version__
+
+        return f"hermes/{__version__}"
+    except Exception:  # noqa: BLE001 — UA must never break a request
+        return "hermes"
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +378,8 @@ class LlmClient:
         timeout: float = 60.0,
         temperature: float = 0.2,
         retry_policy: LlmRetryPolicy | None = None,
+        user_agent: str | None = None,
+        session_id: str | None = None,
     ) -> None:
         # Normalize: ensure base_url has no trailing slash so we can append
         # the path safely.
@@ -371,6 +389,25 @@ class LlmClient:
         self.timeout = timeout
         self.temperature = temperature
         self.retry_policy = retry_policy or LlmRetryPolicy()
+        # Identify the client explicitly instead of the default
+        # ``Python-urllib/x.y`` UA. Some OpenAI-compatible gateways (e.g.
+        # OpenCode Go, behind Cloudflare) reject generic library UAs with
+        # HTTP 403 / error 1010.
+        self.user_agent = user_agent or _default_user_agent()
+        # Optional stable session id, sent as ``x-opencode-session``. OpenCode
+        # Go requires it (missing → HTTP 400 MissingSessionID).
+        self.session_id = session_id
+
+    def _apply_headers(self, req: urllib.request.Request, *, stream: bool = False) -> None:
+        """Attach standard headers (content-type / UA / auth / session)."""
+        req.add_header("Content-Type", "application/json; charset=utf-8")
+        req.add_header("User-Agent", self.user_agent)
+        if stream:
+            req.add_header("Accept", "text/event-stream")
+        if self.session_id:
+            req.add_header("x-opencode-session", self.session_id)
+        if self.api_key:
+            req.add_header("Authorization", f"Bearer {self.api_key}")
 
     # ---- public API ---------------------------------------------------
 
@@ -514,9 +551,7 @@ class LlmClient:
         self, url: str, payload: bytes, timeout: float | None
     ) -> LlmResponse:
         req = urllib.request.Request(url, data=payload, method="POST")
-        req.add_header("Content-Type", "application/json; charset=utf-8")
-        if self.api_key:
-            req.add_header("Authorization", f"Bearer {self.api_key}")
+        self._apply_headers(req)
 
         try:
             with urllib.request.urlopen(
@@ -554,10 +589,7 @@ class LlmClient:
         self, url: str, payload: bytes, timeout: float | None
     ) -> Iterator[LlmStreamChunk]:
         req = urllib.request.Request(url, data=payload, method="POST")
-        req.add_header("Content-Type", "application/json; charset=utf-8")
-        req.add_header("Accept", "text/event-stream")
-        if self.api_key:
-            req.add_header("Authorization", f"Bearer {self.api_key}")
+        self._apply_headers(req, stream=True)
 
         try:
             resp = urllib.request.urlopen(
@@ -685,7 +717,23 @@ def make_llm_client(
         timeout=s.hermes_llm_timeout,
         temperature=s.hermes_llm_temperature,
         retry_policy=retry_policy,
+        session_id=_resolve_session_id(s, base_url),
     )
+
+
+def _resolve_session_id(settings: Settings, base_url: str) -> str | None:
+    """Resolve the ``x-opencode-session`` value for *base_url*.
+
+    Explicit ``Settings.hermes_llm_session_id`` always wins. Otherwise, an
+    OpenCode gateway (Go/Zen) requires a session id; synthesize a stable one
+    so requests are routable and prompt caching can kick in.
+    """
+    explicit = getattr(settings, "hermes_llm_session_id", None)
+    if explicit:
+        return explicit
+    if "opencode.ai" in (base_url or "").lower():
+        return f"hermes-{uuid.uuid4().hex}"
+    return None
 
 
 # ---------------------------------------------------------------------------

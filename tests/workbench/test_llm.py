@@ -43,6 +43,7 @@ class _FakeSettings:
         hermes_llm_model: str = "gpt-3.5-turbo",
         hermes_llm_timeout: float = 30.0,
         hermes_llm_temperature: float = 0.1,
+        hermes_llm_session_id: str | None = None,
     ) -> None:
         self.ollama_base_url = ollama_base_url
         self.openai_base_url = openai_base_url
@@ -53,6 +54,7 @@ class _FakeSettings:
         self.hermes_llm_model = hermes_llm_model
         self.hermes_llm_timeout = hermes_llm_timeout
         self.hermes_llm_temperature = hermes_llm_temperature
+        self.hermes_llm_session_id = hermes_llm_session_id
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +124,40 @@ def test_make_llm_client_override_provider() -> None:
     client = make_llm_client(provider="openai", model="gpt-4o", settings=s)  # type: ignore[arg-type]
     assert client.model == "gpt-4o"
     assert client.api_key == "sk-xxx"
+
+
+def test_make_llm_client_synthesizes_session_for_opencode() -> None:
+    """An OpenCode gateway requires x-opencode-session → client auto-sets one."""
+    s = _FakeSettings(
+        hermes_llm_provider="openai",
+        openai_base_url="https://opencode.ai/zen/go/v1",
+        openai_api_key="sk-xxx",
+    )
+    client = make_llm_client(settings=s)  # type: ignore[arg-type]
+    assert client.session_id and client.session_id.startswith("hermes-")
+
+
+def test_make_llm_client_explicit_session_wins() -> None:
+    """Settings.hermes_llm_session_id overrides the synthesized value."""
+    s = _FakeSettings(
+        hermes_llm_provider="openai",
+        openai_base_url="https://opencode.ai/zen/go/v1",
+        openai_api_key="sk-xxx",
+        hermes_llm_session_id="fixed-session",
+    )
+    client = make_llm_client(settings=s)  # type: ignore[arg-type]
+    assert client.session_id == "fixed-session"
+
+
+def test_make_llm_client_no_session_for_non_opencode() -> None:
+    """Non-OpenCode providers must not receive an x-opencode-session header."""
+    s = _FakeSettings(
+        hermes_llm_provider="openai",
+        openai_base_url="https://api.openai.com/v1",
+        openai_api_key="sk-xxx",
+    )
+    client = make_llm_client(settings=s)  # type: ignore[arg-type]
+    assert client.session_id is None
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +246,55 @@ def test_llm_client_chat_omits_auth_when_no_key() -> None:
         with patch("urllib.request.urlopen", return_value=_mock_urlopen_response(fake_data)):
             client.chat([LlmMessage(role="user", content="hi")])
     assert "Authorization" not in captured.get("headers", {})
+
+
+def test_llm_client_chat_sends_user_agent_and_session() -> None:
+    """chat should send an identifying UA and x-opencode-session when set."""
+    client = LlmClient(
+        base_url="https://opencode.ai/zen/go/v1",
+        api_key="sk-xxx",
+        model="deepseek-v4.1-flash",
+        session_id="sess-123",
+    )
+    captured: dict[str, Any] = {}
+
+    class FakeRequest:
+        def __init__(self, url: str, data: bytes, method: str) -> None:
+            captured["url"] = url
+
+        def add_header(self, k: str, v: str) -> None:
+            captured.setdefault("headers", {})[k] = v
+
+    fake_data = {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+    with patch("urllib.request.Request", FakeRequest):
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen_response(fake_data)):
+            client.chat([LlmMessage(role="user", content="hi")])
+    headers = captured["headers"]
+    assert headers["User-Agent"].startswith("hermes")
+    assert "urllib" not in headers["User-Agent"].lower()
+    assert headers["x-opencode-session"] == "sess-123"
+
+
+def test_llm_client_chat_omits_session_when_unset() -> None:
+    """No session header when session_id is None (generic OpenAI-compatible)."""
+    client = LlmClient(
+        base_url="https://api.example.com/v1", api_key="k", model="m"
+    )
+    captured: dict[str, Any] = {}
+
+    class FakeRequest:
+        def __init__(self, url: str, data: bytes, method: str) -> None:
+            captured["url"] = url
+
+        def add_header(self, k: str, v: str) -> None:
+            captured.setdefault("headers", {})[k] = v
+
+    fake_data = {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+    with patch("urllib.request.Request", FakeRequest):
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen_response(fake_data)):
+            client.chat([LlmMessage(role="user", content="hi")])
+    assert "x-opencode-session" not in captured.get("headers", {})
+    assert "User-Agent" in captured.get("headers", {})
 
 
 def test_llm_client_chat_http_error_raises_api_error() -> None:
