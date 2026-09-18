@@ -246,6 +246,10 @@ class SyncLedger:
     TERMINAL_STATES = {"DONE", "CANCELLED", "CLOSED"}
 
     def __init__(self, store: TodoStore) -> None:
+        # Keep a reference to the owning store: holding only ``_conn`` lets the
+        # store be garbage-collected, whose ``__del__`` closes the sqlite
+        # connection out from under us ("Cannot operate on a closed database").
+        self._store = store
         self._conn = store._conn
 
     def upsert(self, external_ref: str, local_id: str, kind: str, state: str | None = None) -> None:

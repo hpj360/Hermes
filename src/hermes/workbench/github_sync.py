@@ -177,11 +177,13 @@ class GitHubSyncService:
         scheduler: Any,  # cli.TaskScheduler
         store: Any,  # cli.TaskStore
         registry: Any,  # cli.TaskRegistry
+        ledger: Any | None = None,  # todos.SyncLedger
     ) -> None:
         self.client = client
         self.scheduler = scheduler
         self.store = store
         self.registry = registry
+        self.ledger = ledger
 
     @classmethod
     def from_env(cls, repo: str, token: str | None = None) -> GitHubSyncService:
@@ -190,7 +192,13 @@ class GitHubSyncService:
         if not token:
             raise ValidationError("GITHUB_TOKEN (or GH_TOKEN) env var is required")
         # Import here to avoid circular import at module load.
-        from hermes.workbench.cli import _make_registry, _make_scheduler, _make_store
+        from hermes.workbench.cli import (
+            _make_registry,
+            _make_scheduler,
+            _make_store,
+            _make_todo_store,
+        )
+        from hermes.workbench.todos import SyncLedger
 
         client = GitHubClient(token=token, repo=repo)
         return cls(
@@ -198,13 +206,26 @@ class GitHubSyncService:
             scheduler=_make_scheduler(),
             store=_make_store(),
             registry=_make_registry(),
+            ledger=SyncLedger(_make_todo_store()),
         )
 
-    def pull_issues(self, label: str = "workbench") -> list[dict[str, Any]]:
+    @staticmethod
+    def _issue_ref(issue_number: int) -> str:
+        """Canonical external reference for a GitHub issue."""
+        return f"gh#{issue_number}"
+
+    def pull_issues(
+        self, label: str = "workbench", skipped: list[int] | None = None
+    ) -> list[dict[str, Any]]:
         """Fetch tagged issues and create+register tasks from their bodies.
 
         Returns a list of {"issue_number", "task_id", "plan"} dicts.
         Issues without a valid JSON plan are skipped.
+
+        Conflict policy (PRD 4.3): if an issue is already recorded in the
+        :class:`SyncLedger`, it is skipped — a locally-terminal item is never
+        reverted, and a repeated sync never creates duplicate tasks. Skipped
+        issue numbers are appended to *skipped* when provided.
         """
         from hermes.workbench.cli import Task
 
@@ -215,6 +236,12 @@ class GitHubSyncService:
             body = issue.get("body") or ""
             plan_data = _extract_plan_from_body(body)
             if plan_data is None or "plan" not in plan_data:
+                continue
+            ref = self._issue_ref(number)
+            if self.ledger is not None and self.ledger.get(ref) is not None:
+                # Already linked (locally terminal or in-flight) → do not re-pull.
+                if skipped is not None:
+                    skipped.append(number)
                 continue
             import uuid
 
@@ -229,13 +256,19 @@ class GitHubSyncService:
             )
             self.registry.register(task)
             self.store.save(task)
+            if self.ledger is not None:
+                self.ledger.upsert(ref, task_id, kind="task", state="open")
             created.append(
                 {"issue_number": number, "task_id": task_id, "plan": plan_data["plan"]}
             )
         return created
 
     def push_result(self, task_id: str, issue_number: int) -> dict[str, Any]:
-        """Post the task's latest round result as a comment on the issue."""
+        """Post the task's latest round result as a comment on the issue.
+
+        Also records the terminal state in the :class:`SyncLedger` so a later
+        pull never reverts a completed local item (PRD 4.3).
+        """
         task = self.store.get(task_id)
         if task is None:
             raise ValidationError(f"task not found: {task_id}")
@@ -253,7 +286,15 @@ class GitHubSyncService:
         if last.get("error"):
             comment += f"- **Error:** {last['error']}\n"
         comment += "\n_Synced by Hermes Workbench_"
-        return self.client.create_comment(issue_number, comment)
+        response = self.client.create_comment(issue_number, comment)
+        if self.ledger is not None:
+            self.ledger.upsert(
+                self._issue_ref(issue_number),
+                task_id,
+                kind="task",
+                state=str(status),
+            )
+        return response
 
     def sync(self, label: str = "workbench") -> dict[str, Any]:
         """Full cycle: pull issues → run tasks → push results.
@@ -261,13 +302,15 @@ class GitHubSyncService:
         Returns a SyncResult dict.
         """
         result = SyncResult()
+        skipped: list[int] = []
         try:
-            created = self.pull_issues(label=label)
+            created = self.pull_issues(label=label, skipped=skipped)
         except Exception as e:  # noqa: BLE001
             result.errors.append(f"pull failed: {e}")
             return result.to_dict()
 
         result.pulled = len(created)
+        result.skipped = len(skipped)
         for item in created:
             task_id = item["task_id"]
             issue_number = item["issue_number"]
