@@ -263,6 +263,7 @@ class LlmClient:
         retry_policy: LlmRetryPolicy | None = None,
         user_agent: str | None = None,
         session_id: str | None = None,
+        budget: Any | None = None,
     ) -> None:
         # Normalize: ensure base_url has no trailing slash so we can append
         # the path safely.
@@ -280,6 +281,9 @@ class LlmClient:
         # Optional stable session id, sent as ``x-opencode-session``. OpenCode
         # Go requires it (missing → HTTP 400 MissingSessionID).
         self.session_id = session_id
+        # C4: optional daily token budget (duck-typed DailyTokenBudget). When
+        # set, every call preflights the budget and records usage afterwards.
+        self.budget = budget
 
     def _apply_headers(self, req: urllib.request.Request, *, stream: bool = False) -> None:
         """Attach standard headers (content-type / UA / auth / session)."""
@@ -324,6 +328,9 @@ class LlmClient:
 
         Raises :class:`LlmApiError` on HTTP failure or malformed payload.
         """
+        if self.budget is not None:
+            # Preflight may raise TokenBudgetExceeded (C4 circuit-breaker).
+            self.budget.preflight()
         url = f"{self.base_url}/chat/completions"
         msgs = [LlmMessage(role="system", content=stable_prefix), *messages] if stable_prefix else messages
         body: dict[str, Any] = {
@@ -344,13 +351,32 @@ class LlmClient:
             if attempt > 0:
                 time.sleep(self.retry_policy.delay_for(attempt - 1))
             try:
-                return self._post_once(url, payload, timeout=timeout)
+                resp = self._post_once(url, payload, timeout=timeout)
+                self._record_usage(resp)
+                return resp
             except _RetryableError as exc:
                 last_exc = exc
                 if attempt >= self.retry_policy.max_retries:
                     raise exc.api_error from exc
         assert last_exc is not None
         raise last_exc.api_error
+
+    def _record_usage(self, resp: LlmResponse) -> None:
+        """Record token usage from a response into the budget ledger (C4).
+
+        Best-effort: usage may be absent (some providers/stream paths) and
+        accounting must never fail a successful request.
+        """
+        if self.budget is None:
+            return
+        try:
+            prompt_tokens, completion_tokens = self.budget.usage_from_payload(
+                resp.raw
+            )
+            if prompt_tokens or completion_tokens:
+                self.budget.record(prompt_tokens, completion_tokens)
+        except Exception:  # noqa: BLE001 — accounting must not break requests
+            pass
 
     def stream(
         self,
@@ -380,6 +406,11 @@ class LlmClient:
         }
         if max_tokens is not None:
             body["max_tokens"] = max_tokens
+        if self.budget is not None:
+            # C4: opt into usage reporting only when a budget is enforced, so
+            # default streaming behavior stays unchanged for other callers.
+            self.budget.preflight()
+            body["stream_options"] = {"include_usage": True}
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
         last_exc: _RetryableError | None = None
@@ -388,9 +419,13 @@ class LlmClient:
             if attempt > 0:
                 time.sleep(self.retry_policy.delay_for(attempt - 1))
             try:
+                last_chunk: Any = None
                 for chunk in self._stream_once(url, payload, timeout=timeout):
                     streamed = True
+                    last_chunk = chunk
                     yield chunk
+                if last_chunk is not None:
+                    self._record_usage(last_chunk)
                 return
             except _RetryableError as exc:
                 last_exc = exc
@@ -587,7 +622,23 @@ def make_llm_client(
         temperature=s.hermes_llm_temperature,
         retry_policy=retry_policy,
         session_id=_resolve_session_id(s, base_url),
+        budget=_build_token_budget(s),
     )
+
+
+def _build_token_budget(settings: Settings) -> Any | None:
+    """Build a :class:`DailyTokenBudget` when a positive limit is configured.
+
+    Returns ``None`` (no enforcement) when the budget is disabled, so the
+    default runtime behavior is unchanged.
+    """
+    limit = int(getattr(settings, "hermes_llm_daily_token_budget", 0) or 0)
+    if limit <= 0:
+        return None
+    from hermes.workbench.token_budget import DailyTokenBudget, TokenUsageStore
+
+    store = TokenUsageStore(settings.hermes_state_dir)
+    return DailyTokenBudget(store, limit)
 
 
 def _resolve_session_id(settings: Settings, base_url: str) -> str | None:

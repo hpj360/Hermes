@@ -278,6 +278,11 @@ class Settings(BaseSettings):
     # 网关要求该头以做路由/提示缓存优化（缺失会返回 400 MissingSessionID）。
     # None = 由客户端按 base_url 自动生成（见 ``make_llm_client``）。
     hermes_llm_session_id: str | None = Field(default=None, alias="HERMES_LLM_SESSION_ID")
+    # C4：全局每日 token 预算。<=0 表示不限制。达到后 LLM 调用前置熔断
+    # （抛 TokenBudgetExceeded），避免成本失控；用量按日累计落 state 目录。
+    hermes_llm_daily_token_budget: int = Field(
+        default=0, alias="HERMES_LLM_DAILY_TOKEN_BUDGET"
+    )
 
     # ADR-0018: 用户自定义 Agent Preset 目录。None = 使用 hermes_state_dir/presets。
     hermes_presets_dir: str | None = Field(default=None, alias="HERMES_PRESETS_DIR")
