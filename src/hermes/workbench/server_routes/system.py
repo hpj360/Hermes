@@ -115,6 +115,29 @@ class SystemRoutes(RouteBase):
             },
         )
 
+    def h_get_llm_usage(self) -> None:
+        """Daily LLM token usage vs budget (C4 observability)."""
+        from hermes.config import get_settings
+        from hermes.workbench.token_budget import TokenUsageStore
+
+        s = get_settings()
+        limit = int(getattr(s, "hermes_llm_daily_token_budget", 0) or 0)
+        snap = TokenUsageStore(s.hermes_state_dir).snapshot()
+        remaining = max(0, limit - snap.total_tokens) if limit > 0 else None
+        self._send_json(
+            200,
+            {
+                "enabled": limit > 0,
+                "limit": limit,
+                "date": snap.day,
+                "prompt_tokens": snap.prompt_tokens,
+                "completion_tokens": snap.completion_tokens,
+                "total_tokens": snap.total_tokens,
+                "calls": snap.calls,
+                "remaining": remaining,
+            },
+        )
+
     def h_get_metrics(self) -> None:
         """Prometheus text exposition for the scheduler (scrape endpoint).
 
