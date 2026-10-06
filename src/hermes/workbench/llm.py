@@ -781,7 +781,7 @@ def _resolve_session_id(settings: Settings, base_url: str) -> str | None:
     """
     explicit = getattr(settings, "hermes_llm_session_id", None)
     if explicit:
-        return explicit
+        return str(explicit)
     if "opencode.ai" in (base_url or "").lower():
         return f"hermes-{uuid.uuid4().hex}"
     return None

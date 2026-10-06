@@ -233,6 +233,9 @@ class GitHubSyncService:
         created: list[dict[str, Any]] = []
         for issue in issues:
             number = issue.get("number")
+            if number is None:
+                # 无 number 的 issue 无法建立账本引用，跳过。
+                continue
             body = issue.get("body") or ""
             plan_data = _extract_plan_from_body(body)
             if plan_data is None or "plan" not in plan_data:

@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,6 +18,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
+from typing_extensions import TypeVarTuple, Unpack
 
 from hermes.content_team.analytics.collector import MetricsCollector
 from hermes.content_team.db import get_db
@@ -93,13 +93,18 @@ class MetricsFilter(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# SQLAlchemy 的 Select 是变长泛型（列类型元组），过滤器不应改变列结构，
+# 因此用 TypeVarTuple 原样透传，而不是把结果窄化成单一 Select[Any]。
+_Ts = TypeVarTuple("_Ts")
+
+
 def _apply_filters(
-    stmt: Select[Any],
+    stmt: Select[Unpack[_Ts]],
     content_id: UUID | None,
     platform: Platform | None,
     start_date: date | None,
     end_date: date | None,
-) -> Select[Any]:
+) -> Select[Unpack[_Ts]]:
     """在查询语句上叠加过滤条件。"""
     if content_id is not None:
         stmt = stmt.where(ContentMetric.content_id == content_id)
