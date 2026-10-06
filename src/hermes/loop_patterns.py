@@ -30,6 +30,25 @@ class LoopStatus(str, Enum):
     ERROR = "error"
 
 
+# pattern 注册表。
+#
+# 关于 `denylist` 字段（两种语义，不要混为一谈）：
+# 1. **路径强制**：pattern 真的会 spawn 写权限 agent 时使用。这类 pattern 的
+#    名单必须包含完整的安全基线 `path_policy.L3_BASE_DENYLIST`（密钥/凭据/
+#    敏感目录），且由 runner 注入 AgentTask 后经 fan-in 审计强制 failed。
+# 2. **领域守卫**：给执行者的领域级禁令，与文件路径无关（如 issue 的
+#    `label:security`、changelog 的 `CHANGELOG.md`）。
+#
+# 不变量（由 tests/test_gepa_redteam.py 的阶段守卫测试强制）：
+#   sub_agents 中出现 role == "builder"（唯一被授予 Write/Edit 的角色，
+#   见 loop._generate_builder_md 生成的 tools 行）
+#   ⟹ denylist 必须逐条等于 L3_BASE_DENYLIST。
+#
+# 为何以"是否含 builder"而非 `l3_capability` 文案为判据：能力描述是意图，
+# 子 agent 角色才是运行时真会写盘的证据。判定依据必须落在可执行事实上。
+# 一旦某 pattern 加了 builder 子 agent，测试立刻要求它补齐基线——保护在
+# 能力引入的那一刻生效，而非事后靠人记得。历史上正是"声明能写代码却只写
+# 2 条规则"的漂移（ci-sweeper）制造过真实缺口。
 LOOP_PATTERNS: dict[str, dict[str, Any]] = {
     "daily-triage": {
         "name": "Daily Triage",
@@ -69,7 +88,11 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
         "l1_capability": "报告CI失败列表",
         "l2_capability": "尝试修复明显问题，跑测试验证",
         "l3_capability": "自动提交修复PR",
-        "denylist": ["auth/", "payment/"],
+        # 该 pattern 声明了 write 权限的 builder 子 agent，因此必须携带完整
+        # L3 安全基线（单一事实源：path_policy.L3_BASE_DENYLIST）。此前只写
+        # ["auth/", "payment/"]，被阶段守卫测试判为漂移：声明能写代码却漏了
+        # security/ 与全部密钥/凭据规则。
+        "denylist": list(L3_BASE_DENYLIST),
         "max_rounds": 3,
         "sub_agents": [
             {"role": "ci_monitor", "agent_file": None, "parallel": False},

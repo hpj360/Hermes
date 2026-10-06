@@ -126,6 +126,38 @@ def test_loop_patterns_l3_baseline_single_source():
         assert matches_denylist("certs/ca.pem", rules) == "*.pem"
 
 
+def test_stage_guard_write_capable_patterns_carry_l3_baseline():
+    """阶段守卫：写权限 pattern 必须携带完整 L3 基线。
+
+    不变量：sub_agents 中出现 role == "builder"（唯一被授予 Write/Edit 的
+    角色）⟹ denylist 逐条等于 L3_BASE_DENYLIST。
+
+    判据刻意落在"是否含 builder 子 agent"这一可执行事实上，而非
+    `l3_capability` 文案——后者是意图描述，改了文案不会改变实际写盘能力，
+    反而会让守卫形同虚设。ci-sweeper 曾声明 builder 却只写
+    ["auth/", "payment/"]，漏掉 security/ 与全部密钥/凭据规则，正是本守卫
+    要抓的漂移。
+    """
+    from hermes.loop_patterns import LOOP_PATTERNS
+    from hermes.path_policy import L3_BASE_DENYLIST
+
+    offenders: list[str] = []
+    write_capable: list[str] = []
+    for name, pattern in LOOP_PATTERNS.items():
+        roles = {sa.get("role") for sa in pattern.get("sub_agents", [])}
+        if "builder" not in roles:
+            continue
+        write_capable.append(name)
+        if list(pattern.get("denylist") or []) != L3_BASE_DENYLIST:
+            offenders.append(name)
+
+    # 守卫本身必须真的在检查对象：一个写权限 pattern 都没有说明约束已失效。
+    assert write_capable, "no write-capable pattern found; guard is vacuous"
+    assert offenders == [], (
+        f"写权限 pattern 未携带完整 L3 基线（漂移）: {offenders}"
+    )
+
+
 # ── 强度回归 ────────────────────────────────────────────────────────
 
 

@@ -216,6 +216,18 @@ Stage 6 落地后，同一份基线名单在 `LOOP_PATTERNS`（多个 pattern）
 
 > 边界：沙箱无 Gateway/LLM，本演练中"模型输出"是桩。红线生效与否不取决于模型真假（取决于会话消息交给了谁），但**真实模型的自由发挥式混淆**仍未演练——这一层需要带 LLM 的环境。
 
+### 阶段守卫：把"声明的能力"与"声明的保护"绑定
+
+前三层演练都只覆盖 `builder-checker` 这一条 runtime 真的会走 `run_builder_checker_round` 的链路。把演练视角扩到**全部 8 个 pattern** 后，暴露出第二类漂移：pattern 的 `l3_capability` 文案声称"无人值守修复+PR/自动 merge"，但 `denylist` 只有 2~3 条，远低于基线。
+
+关键判断：以 `l3_capability` 文案为判据是错的——文案是意图，改文案不改变实际写盘能力，守卫会形同虚设。真正决定"会不会写盘"的是 **sub_agents 里有没有 `builder` 角色**（`loop._generate_builder_md` 唯一授予 Write/Edit 的角色）。据此立不变量：
+
+> `sub_agents` 含 `role == "builder"` ⟹ `denylist` 逐条等于 `L3_BASE_DENYLIST`
+
+按此判据，8 个 pattern 中只有 2 个是写权限 pattern（`ci-sweeper`、`builder-checker`），而 `ci-sweeper` 漂移了——声明 builder（`skills/diagnosing-bugs/SKILL.md`，含 Bash/Write）却只写 `["auth/", "payment/"]`，漏掉 `security/` 与全部密钥/凭据规则。已修正为完整基线，并新增 `test_stage_guard_write_capable_patterns_carry_l3_baseline` 把该不变量锁死（含"守卫非空转"断言：若一个写权限 pattern 都找不到，测试本身失败）。
+
+未含 builder 的 pattern（`daily-triage`/`pr-babysitter`/`changelog-draft` 等）不受此约束——它们当前没有写权限子 agent，denylist 是领域守卫语义。**若将来给它们加 builder 子 agent，守卫会在那一刻强制补齐基线**，保护与能力同时生效，不依赖人记得。
+
 ---
 
 ## 提升 6：派发轨迹不变量（P0，可观测性，借鉴 DeepSeek Harness）✅ 已实现
