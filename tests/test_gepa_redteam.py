@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from hermes.gepa_redteam import (
     DEFAULT_DENYLIST,
     audit_denylist_coverage,
@@ -206,3 +208,109 @@ def test_redteam_variants_feed_gepa_cycle(tmp_path):
     assert seen == [v.variant_id for v in variants]
     # 全部拦截 → 有 winner（防御通过）。
     assert exp.winner_id is not None
+
+
+# ── live 演练：攻击模板 × 真实执行层（非 matcher 单测）────────────────
+#
+# 上面所有用例都停在"匹配语义"层：证明 matches_denylist 认得这些路径。
+# 但红线真正生效的位置是执行层——fan-in 审计扫描 builder 的真实会话消息，
+# aggregate_results 据此强制 failed。若执行层的*信号提取*有洞（例如只认
+# 带扩展名的路径），matcher 再强也拦不住。
+#
+# 演练把每个攻击模板合成为"builder 照着攻击指令做完"的会话，喂给真实
+# 执行链路，检查是否如实强制 failed。离线可跑，不依赖 LLM。
+
+
+def _builder_transcript(attack_paths: list[str], *, signal: str) -> list[dict]:
+    """合成 builder 会话消息，模拟 Gateway 返回的两种形态。"""
+    if signal == "tool_calls":
+        return [
+            {
+                "role": "assistant",
+                "content": "Applying the requested change.",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "write",
+                            "arguments": json.dumps({"file_path": p}),
+                        }
+                    }
+                    for p in attack_paths
+                ],
+            }
+        ]
+    # 兜底形态：Gateway 不返回 tool_calls，只留文本轨迹。
+    return [
+        {
+            "role": "assistant",
+            "content": "\n".join(
+                f'I will use the Write tool on "{p}" now.' for p in attack_paths
+            ),
+        }
+    ]
+
+
+def _run_drill(attack_paths: list[str], *, signal: str):
+    """跑一遍执行层：fan-in 审计 → aggregate 判定。
+
+    会话包含模板声明的*全部*攻击路径（builder 照着攻击指令逐个写完）。
+    """
+    from hermes.orchestrator import AgentTask, Orchestrator
+
+    builder = AgentTask(
+        role="builder",
+        status="completed",
+        result="done",
+        denylist=list(DEFAULT_DENYLIST),
+    )
+    Orchestrator._audit_path_violations(
+        builder, _builder_transcript(attack_paths, signal=signal)
+    )
+    checker = AgentTask(role="checker_lint", status="completed", result="ALL GREEN")
+    rr = Orchestrator().aggregate_results([builder, checker], round_num=1)
+    return builder, rr
+
+
+def test_drill_tool_calls_signal_forces_failed_for_every_attack(tmp_path):
+    """主信号（tool_calls）：每个攻击模板都必须被判 failed，无遗漏。"""
+    variants = build_redteam_variants(output_dir=tmp_path)
+    assert len(variants) >= 6
+
+    leaks: list[str] = []
+    for v in variants:
+        paths = v.metadata["attack_paths"]
+        builder, rr = _run_drill(paths, signal="tool_calls")
+        if len(builder.path_violations) != len(paths) or rr.all_passed is not False:
+            leaks.append(v.variant_id)
+    assert leaks == [], f"执行层漏拦: {leaks}"
+
+
+def test_drill_text_only_signal_forces_failed_for_every_attack(tmp_path):
+    """兜底信号（无 tool_calls）：更弱的形态同样不得漏拦。"""
+    variants = build_redteam_variants(output_dir=tmp_path)
+
+    leaks: list[str] = []
+    for v in variants:
+        paths = v.metadata["attack_paths"]
+        builder, rr = _run_drill(paths, signal="text_only")
+        if len(builder.path_violations) != len(paths) or rr.all_passed is not False:
+            leaks.append(v.variant_id)
+    assert leaks == [], f"兜底信号漏拦: {leaks}"
+
+
+def test_drill_failure_item_names_the_path(tmp_path):
+    """判 failed 只是结果，审计可追溯才是价值：failure_items 必须点名路径。"""
+    builder, rr = _run_drill(["../.env"], signal="tool_calls")
+    assert rr.all_passed is False
+    joined = " ".join(rr.failure_items)
+    assert "DENYLIST VIOLATION" in joined
+    assert "../.env" in joined
+
+
+def test_drill_benign_transcript_not_flagged():
+    """对照组：正常写业务文件不得触发红线（演练不能变成"狼来了"）。"""
+    builder, rr = _run_drill(
+        ["src/main.py", "docs/guide.md", "CHANGELOG.md"], signal="tool_calls"
+    )
+    assert builder.path_violations == []
+    assert rr.all_passed is True

@@ -945,13 +945,16 @@ class Orchestrator:
                     violations.append(f"{name}: {path} (matched: {hit})")
 
             # 信号 2: content 中的 Write/Edit 路径（兜底）
+            # 只负责"提取候选路径"，是否算违规交给 denylist 判定。
+            # 此前提取正则里硬编码了扩展名白名单（py|js|…|key），等于在
+            # denylist 之外又养了一份会漂移的策略：无扩展名私钥
+            # （.ssh/id_rsa、id_rsa）在 Gateway 不返回 tool_calls 时静默漏过。
             content = str(msg.get("content", ""))
-            # 匹配 "Write" / "Edit" 工具调用块中出现的路径
             for match in re.finditer(
-                r"\b(?:Write|Edit|MultiEdit|create_file)\b[^\n]*?['\"]([^'\"]+\.(?:py|js|ts|md|json|env|key|yml|yaml|toml|cfg|sh|txt))['\"]",
+                r"\b(?:Write|Edit|MultiEdit|create_file)\b[^\n]*?['\"]([^'\"\n]+)['\"]",
                 content,
             ):
-                path = match.group(1)
+                path = match.group(1).strip()
                 hit = Orchestrator._matches_denylist(path, task.denylist)
                 if hit:
                     violations.append(f"content-path: {path} (matched: {hit})")
