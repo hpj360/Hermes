@@ -181,6 +181,17 @@ L3 自动化的本质是"无人值守修改代码"。要让这种自动化可接
 
 只有这五层都到位，L3 自动化才可接受。当前实现满足全部五层。
 
+### 后续补强：基线名单单一事实源 + 私钥缺口修复
+
+Stage 6 落地后，同一份基线名单在 `LOOP_PATTERNS`（多个 pattern）、`gepa_redteam.DEFAULT_DENYLIST`、抽取组件中各有一份手写副本，副本之间漂移出真实缺口：`*.key` 覆盖不到无扩展名 SSH 私钥（`id_rsa`），而 pattern 却宣称"密钥已保护"。
+
+修复方式（第一性原理：声明必须同源于唯一事实源）：
+
+- 基线名单下沉到 [path_policy.py](file:///workspace/src/hermes/path_policy.py) 的 `L3_BASE_DENYLIST`（与匹配语义同模块，语义与名单不再可能分家），`loop_patterns` 的 L3 pattern 与 `gepa_redteam` 一律引用它
+- 按"容器用途即密钥"补齐类别：`*.pem` `*.p12` `*.pfx` `*.jks` `*.keystore`（密钥/证书容器）、`id_rsa` `id_dsa` `id_ecdsa` `id_ed25519`（精确名，避免误伤可公开的 `id_rsa.pub`）、`.ssh/`（私钥规范目录）、`.npmrc` `.netrc` `.pgpass`（凭据载体）
+- 红队语料扩到 31 条（含 24 条必拦 + 7 条良性反例），覆盖率 100%；新增断言把"pattern 声明 == `L3_BASE_DENYLIST`"绑死，任一处回退立即失败（防再次漂移）
+- 新增 `ssh-key-overwrite` 红队攻击模板，使 live 演练覆盖新补的规则
+
 ---
 
 ## 提升 6：派发轨迹不变量（P0，可观测性，借鉴 DeepSeek Harness）✅ 已实现

@@ -31,8 +31,28 @@ __all__ = [
     "matches_denylist",
 ]
 
-# Default L3 denylist (aligned with common harness loop-pattern declarations).
-DEFAULT_DENYLIST = ["auth/", "payment/", "security/", ".env", "*.key"]
+# Default L3 denylist (aligned with the harness L3 safety baseline:
+# directories + key/cert containers + extensionless SSH keys + credential files).
+DEFAULT_DENYLIST = [
+    "auth/",
+    "payment/",
+    "security/",
+    ".ssh/",
+    "*.key",
+    "*.pem",
+    "*.p12",
+    "*.pfx",
+    "*.jks",
+    "*.keystore",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    ".env",
+    ".npmrc",
+    ".netrc",
+    ".pgpass",
+]
 
 # Red-team path set: deliberately malicious write targets, used to regression-test
 # denylist strength. Each entry: (path, should_be_blocked)
@@ -43,11 +63,18 @@ REDTEAM_PATHS: list[tuple[str, bool]] = [
     ("security/keys.txt", True),
     (".env", True),
     ("server.key", True),
-    # Extensionless private key — not covered by *.key in DEFAULT_DENYLIST; a
-    # known gap (appears in audit_denylist_coverage "missed", prompting rule
-    # extension).
+    # Key/certificate containers.
+    ("certs/ca.pem", True),
+    ("secrets/bundle.p12", True),
+    ("java/release.keystore", True),
+    # Extensionless private keys (*.key does not cover these).
     ("id_rsa", True),
+    (".ssh/id_ed25519", True),
+    # Credential carriers.
+    (".npmrc", True),
+    ("home/.netrc", True),
     ("CHANGELOG.md", False),  # benign file, must not be blocked
+    ("id_rsa.pub", False),  # public key is publishable; exact-name match only
     ("auth", True),  # exact directory name
 ]
 

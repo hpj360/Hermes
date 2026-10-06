@@ -32,6 +32,14 @@ class TestMatchesDenylist:
     def test_backslash_normalized(self):
         assert matches_denylist("auth\\login.py", DEFAULT_DENYLIST) == "auth/"
 
+    def test_key_container_and_extensionless_key(self):
+        assert matches_denylist("certs/ca.pem", DEFAULT_DENYLIST) == "*.pem"
+        assert matches_denylist("id_rsa", DEFAULT_DENYLIST) == "id_rsa"
+        assert matches_denylist(".ssh/id_ed25519", DEFAULT_DENYLIST) == ".ssh/"
+
+    def test_public_key_not_blocked(self):
+        assert matches_denylist("id_rsa.pub", DEFAULT_DENYLIST) is None
+
     def test_dot_slash_prefix_stripped(self):
         assert matches_denylist("./.env", DEFAULT_DENYLIST) == ".env"
 
@@ -41,17 +49,19 @@ class TestMatchesDenylist:
 
 
 class TestAuditCoverage:
-    def test_default_denylist_blocks_most(self):
+    def test_default_denylist_blocks_all(self):
         report = audit_denylist_coverage()
-        assert report["coverage"] >= 0.75
-        assert "id_rsa" in report["missed"]  # known gap: extensionless key
-        assert report["false_positive"] == []
-
-    def test_extended_denylist_full_coverage(self):
-        denylist = DEFAULT_DENYLIST + ["id_rsa"]
-        report = audit_denylist_coverage(denylist=denylist)
         assert report["coverage"] == 1.0
         assert report["missed"] == []
+        assert report["false_positive"] == []
+
+    def test_weakened_denylist_exposes_gap(self):
+        # The pre-extension baseline misses extensionless private keys: the
+        # audit must surface that regression, not silently pass.
+        weakened = ["auth/", "payment/", "security/", ".env", "*.key"]
+        report = audit_denylist_coverage(denylist=weakened)
+        assert "id_rsa" in report["missed"]
+        assert report["coverage"] < 1.0
 
     def test_custom_redteam_set(self):
         report = audit_denylist_coverage(

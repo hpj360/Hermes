@@ -11,7 +11,7 @@
 | 能力域 | 核心实现 | 成熟度 | 说明 |
 |--------|---------|--------|------|
 | 多代理编排 | orchestrator.py（fan-out/fan-in、角色体系、聚合） | ✅ 生产可用 | builder/checker×3/synthesizer/perspective_*，Gateway 降级 guidance 模式 |
-| 安全强制（L1-L3） | MCP 白名单分舱 + path_policy 单一事实源 + fan-in 审计 | ✅ 生产可用 | denylist 代码层强制拦截（不再是声明性标记）；红队语料 19 条回归 |
+| 安全强制（L1-L3） | MCP 白名单分舱 + path_policy 单一事实源 + fan-in 审计 | ✅ 生产可用 | denylist 代码层强制拦截（不再是声明性标记）；基线名单下沉为 `L3_BASE_DENYLIST` 单一事实源；红队语料 31 条回归（私钥/凭据类缺口已补齐，覆盖率 100%） |
 | Loop 状态机 | loop.py + 7 条停止规则 + 就绪度审计 | ✅ 生产可用 | 与 v0.6 一致，稳定 |
 | GEPA 自进化 | gepa.py + gepa_mutation.py + gepa_stats.py + loop_gepa.py | ✅ 可用（需 LLM） | 自动 variant + split-run t 检验 + 失败轨迹蒸馏入记忆；红队 variant 演练（P3-1）；反思式变异 + 帕累托候选池 + 冻结区（P5，《Agent优化之GEPA》方法论落地） |
 | 评估体系（Rubric） | rubric.py（版本化 Rubric + 加权评分 + 证据） | ✅ 生产可用 | P1-A：fan-in 每轮产出 rubric_score（可解释、带版本）；结构化失败协议解析单一事实源 |
@@ -571,7 +571,7 @@ Checker Agent 的 tools 字段物理上没有 Write/Edit，不是提示词约束
 4. **MCP 仅接 GitHub** — 不支持 TAPD/iWiki/工蜂等内部系统。需要其他系统时通过 Skill 脚本接入
 5. **双源交叉验证当前预留** — MCP 读方法返回 `_sources` 字段标记数据来源，但当前仅 GitHub 单源，audit_loop 单源产生 warning 不阻断。未来扩展多 MCP 后同一字段从两个独立 API 取数即可达成双源验证
 6. **产物抽检为声明性标记** — `audit_deliverables` 校验 `<!-- claim: -->` 标记存在性，不校验内容真假（后者需用户自验）。依赖 agent 自觉写标记，无强制机制
-7. **L3 无人值守的残余风险** — denylist 已在代码层强制拦截（fan-in 审计 + `path_policy` 单一事实源 + 红队 19 条语料回归，见 [gepa_redteam.py](file:///workspace/src/hermes/gepa_redteam.py)），但无扩展名私钥（`id_rsa`）是已知缺口（语料显式记录）；live 红队演练（真实 builder 自由发挥的混淆）尚未规模化运行
+7. **L3 无人值守的残余风险** — denylist 已在代码层强制拦截（fan-in 审计 + `path_policy` 单一事实源 + 红队 31 条语料回归，见 [gepa_redteam.py](file:///workspace/src/hermes/gepa_redteam.py)）；基线名单已下沉为 [path_policy.py](file:///workspace/src/hermes/path_policy.py) 的 `L3_BASE_DENYLIST`，无扩展名私钥缺口（`id_rsa` 等）已补齐、红队覆盖率达 100%；live 红队演练（真实 builder 自由发挥的混淆）尚未规模化运行
 8. **单机场景** — 无跨需求任务看板、无多人协作锁。适合单人或小团队使用
 9. **演进日志从 v0.4.0 开始** — 之前的决策靠 git log 和代码注释追溯
 10. **estimate_cost 小样本回退** — 有效样本 < 3 轮时 estimate_cost 回退固定 50k（非历史平均），估算精度有限。loop 跑满 3 轮后自动切换历史平均

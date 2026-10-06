@@ -104,7 +104,7 @@ Loop Engineering 不止是脚手架——L3 无人值守模式必须有代码级
 | **P2 协作指标** | `orchestrator.py` `_compute_collaboration_metrics` | 互斥 `failure_attribution`（builder/checker/mixed/none）+ `checker_builder_agreement` 三态 + `token_by_role` 归因 | 5 个测试（attribution 各分支 + 指标填充） |
 | **P3 GEPA 自进化** | `gepa.py` + `loop.py:_maybe_run_gepa` | Generate-Evaluate-Promote-Apply 周期；loop 到终态自动触发，evaluator 通过 `set_gepa_evaluator` 注入；实验持久化到 `.gepa/` | 26 个测试（评分/cycle/持久化/崩溃隔离/record_round 钩子） |
 | **Stage 5 钩子接入** | `loop.py:_maybe_run_gepa` + `cli_loop.py:cmd_loop_gepa` | GEPA 周期在 `record_round` 终态（COMPLETED/NEEDS_HUMAN/BUDGET_EXCEEDED）自动触发；新增 `hermes loop gepa [--run] [--json]` 子命令 | 11 个测试（终态触发/非终态跳过/无 evaluator 跳过/CLI 子命令） |
-| **Stage 6 L3 denylist** | `orchestrator.py:_matches_denylist` + `_audit_path_violations` + `runner._run_builder_checker` | builder 写代码受路径黑名单约束（`auth/` `payment/` `security/` `.env` `*.key`）；fan_in 审计 Write/Edit 工具调用路径，命中受保护路径强制 builder `failed`；spawn payload 前向兼容 Gateway 强制执行 | 18 个测试（pattern 三种语义 + 审计 skip 逻辑 + tool_calls/content 两条信号 + aggregate 强制 failed + runner 注入链路） |
+| **Stage 6 L3 denylist** | `path_policy.L3_BASE_DENYLIST` + `orchestrator.py:_matches_denylist` + `_audit_path_violations` + `runner._run_builder_checker` | builder 写代码受路径黑名单约束（基线名单单一事实源，覆盖业务敏感目录 / 密钥证书容器 / 无扩展名 SSH 私钥 / 凭据载体）；fan_in 审计 Write/Edit 工具调用路径，命中受保护路径强制 builder `failed`；spawn payload 前向兼容 Gateway 强制执行 | 18 个测试（pattern 三种语义 + 审计 skip 逻辑 + tool_calls/content 两条信号 + aggregate 强制 failed + runner 注入链路）+ 红队强度回归（31 条语料，覆盖率 100%） |
 
 **安全设计哲学**（第一性原理）：
 - **L3 自动化 = 事前拦截 + 事后审计双重保障**：spawn_agent 把 denylist 传入 Gateway payload（事前），fan_in 再扫描 messages 兜底（事后）。任一信号命中即强制 failed。

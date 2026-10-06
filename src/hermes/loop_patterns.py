@@ -12,6 +12,8 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
+from hermes.path_policy import L3_BASE_DENYLIST
+
 
 class LoopStage(str, Enum):
     L1_REPORT = "l1_report"
@@ -138,7 +140,9 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
         "l1_capability": "各视角只读分析，汇总报告（不修改代码）",
         "l2_capability": "各视角并行分析 + synthesizer 综合结论（含明确评级）",
         "l3_capability": "无人值守并行分析 + 自动归档（需 denylist 保护敏感路径）",
-        "denylist": ["auth/", "payment/", "security/", ".env", "*.key"],
+        # 完整 L3 安全基线（单一事实源：path_policy.L3_BASE_DENYLIST）。
+        # list() 复制避免跨 pattern 共享同一 list 对象而被就地修改污染。
+        "denylist": list(L3_BASE_DENYLIST),
         "max_rounds": 2,  # 分析类任务通常 1 轮即出报告，2 轮兜底
         "generates_agents": True,  # 生成 perspective.md + summary.md 模板
         "sub_agents": [
@@ -156,7 +160,7 @@ LOOP_PATTERNS: dict[str, dict[str, Any]] = {
         "l1_capability": "builder只读分析，checker只报告（不修改）",
         "l2_capability": "builder写代码，checker跑检查，循环到ALL GREEN或停止条件触发",
         "l3_capability": "无人值守循环+自动提PR（需denylist和严格停止规则）",
-        "denylist": ["auth/", "payment/", "security/", ".env", "*.key"],
+        "denylist": list(L3_BASE_DENYLIST),  # 完整 L3 安全基线（单一事实源）
         "max_rounds": 5,
         "generates_agents": True,
         "sub_agents": [

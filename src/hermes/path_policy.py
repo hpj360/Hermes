@@ -17,7 +17,44 @@ from __future__ import annotations
 import fnmatch
 from pathlib import PurePosixPath
 
-__all__ = ["matches_denylist"]
+__all__ = ["L3_BASE_DENYLIST", "matches_denylist"]
+
+
+# L3 安全基线 denylist（单一事实源）。
+#
+# 调用方（loop_patterns 的 L3 pattern 声明、gepa_redteam 的红队回归）
+# 一律引用本常量而不再各自手写字面量——此前的多份副本已经漂移出真实
+# 缺口：无扩展名私钥（id_rsa）不被 *.key 覆盖，却有 pattern 声称"密钥已
+# 保护"。
+#
+# 三类 pattern（与 matches_denylist 的语义一一对应）：
+# - 目录前缀：业务敏感代码目录
+# - glob 后缀：密钥/证书容器（二进制/文本容器，标准用途即存放密钥）
+# - 精确文件名：SSH 私钥（无扩展名，*.key 覆盖不到）与凭据载体
+L3_BASE_DENYLIST: list[str] = [
+    # 业务敏感目录
+    "auth/",
+    "payment/",
+    "security/",
+    ".ssh/",  # 私钥/known_hosts 的规范存放目录
+    # 密钥/证书容器
+    "*.key",
+    "*.pem",
+    "*.p12",
+    "*.pfx",
+    "*.jks",
+    "*.keystore",
+    # SSH 私钥（精确名：不用 glob，避免把可公开的 id_rsa.pub 一并拦下）
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    # 凭据载体
+    ".env",
+    ".npmrc",
+    ".netrc",
+    ".pgpass",
+]
 
 
 def matches_denylist(path: str, denylist: list[str]) -> str | None:
