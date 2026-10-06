@@ -207,6 +207,15 @@ Stage 6 落地后，同一份基线名单在 `LOOP_PATTERNS`（多个 pattern）
 
 两者的共同根因是**兜底提取器自带了第二份扩展名策略**——与 denylist 平行、会漂移。修复方式与基线名单同源：提取器只负责"取候选路径"，是否违规交给 `matches_denylist` 判定（fail-closed）。
 
+演练再推一层：**生产装配链路演练**。上面两轮仍是在直接调用审计函数，没验证"装配是否把 denylist 送到了该送的地方"。做法是用一个最小 Gateway 桩替掉"模型输出"（只假造 builder 会话消息），其余全走生产代码——`LOOP_PATTERNS` 的真实 denylist 取值 → `run_builder_checker_round` → payload 构造 → fan_out/fan_in → 三重审计 → aggregate。除模型之外的每一步都是真的。
+
+它额外锁住两个生产不变量：
+
+- **事前拦截确实前向传递**：`payload["denylist"]` 必须等于 pattern 声明的基线（含新补的 `id_rsa`/`.ssh/`），Gateway 才有机会在执行侧拦截
+- **checker 不注入 denylist**：checker 无 Write 权限，注入了只是白烧审计开销
+
+> 边界：沙箱无 Gateway/LLM，本演练中"模型输出"是桩。红线生效与否不取决于模型真假（取决于会话消息交给了谁），但**真实模型的自由发挥式混淆**仍未演练——这一层需要带 LLM 的环境。
+
 ---
 
 ## 提升 6：派发轨迹不变量（P0，可观测性，借鉴 DeepSeek Harness）✅ 已实现
