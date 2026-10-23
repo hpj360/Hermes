@@ -26,6 +26,11 @@ promotion.
 - P1 反思式变异：上一轮失败证据 → 归因反馈注入变体生成 prompt
 - P2 帕累托候选池：保留 quality-vs-cost 权衡面（select_pareto_frontier）
 - P3 冻结区分区：agent 定义 frozen/mutable 拆分，冻结块结构性不可删
+
+P4 前沿产品化（来源 HarnessPro, arXiv 2610.26770）:
+帕累托前沿只"算出来"没有部署价值——要落成**可选择的运营档位**
+（lite 省钱 / medium 均衡 / heavy 性能），见 select_tier_representatives。
+Hermes 的 L1/L2/L3 分级自治与这三档天然同构。
 """
 
 from __future__ import annotations
@@ -184,6 +189,9 @@ class GEPAExperiment:
     # 保留整个权衡面（而非只留 winner）作为下一轮变异的候选池，
     # 防止搜索坍缩到单点、丢失 quality/cost 的多样性。
     pareto_frontier: list[str] = field(default_factory=list)
+    # P4 前沿产品化：三档运营代表（tier -> variant_id）。
+    # 空 dict = 未计算或无成功变体（保守：不推荐任何档位）。
+    tier_selection: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -197,6 +205,7 @@ class GEPAExperiment:
             "created_at": self.created_at,
             "completed_at": self.completed_at,
             "pareto_frontier": list(self.pareto_frontier),
+            "tier_selection": dict(self.tier_selection),
         }
 
     @classmethod
@@ -212,6 +221,7 @@ class GEPAExperiment:
             created_at=str(data.get("created_at", "")),
             completed_at=data.get("completed_at"),
             pareto_frontier=list(data.get("pareto_frontier") or []),
+            tier_selection=dict(data.get("tier_selection") or {}),
         )
 
 
@@ -282,6 +292,101 @@ def select_pareto_frontier(results: list[VariantResult]) -> list[str]:
         if not dominated:
             frontier.append(cand.variant_id)
     return frontier
+
+
+# ── P4 前沿产品化：三档运营代表 ──────────────────────────────────────
+#
+# 动机（HarnessPro, arXiv 2610.26770）：前沿只是"权衡面"，不是"产品"。
+# 部署时需要的是**可选档位**——同一份实验产出 lite/medium/heavy 三份运行
+# 配置，由调用方按场景取用，而不是永远只发一个标量冠军。
+
+TIER_LITE = "lite"
+TIER_MEDIUM = "medium"
+TIER_HEAVY = "heavy"
+TIERS: tuple[str, ...] = (TIER_LITE, TIER_MEDIUM, TIER_HEAVY)
+
+
+def select_tier_representatives(results: list[VariantResult]) -> dict[str, str]:
+    """把帕累托前沿产品化为三档可选运行配置（tier → variant_id）。
+
+    选择规则（确定性，便于审计复现）：
+
+    - ``lite``：前沿上 ``tokens_used`` 最低者（并列取 quality 更高者）
+    - ``heavy``：前沿上 ``_effective_quality`` 最高者（并列取 tokens 更少者）
+    - ``medium``：归一化 (quality, cost) 空间里离理想点 (1, 0) 最近的拐点；
+      若前沿有 ≥3 个点，优先排除 lite/heavy，保证三档互不相同。
+
+    只从 **successful** 变体中选。档位是真正要下发的运行配置，不能把
+    "便宜但失败"的变体当成 lite 发出去——这与既有的保守晋升策略一致。
+    注意 ``select_pareto_frontier`` 本身会保留失败变体（那是给下一轮变异
+    保留多样性池的用途），两种消费方式不要混用。
+
+    无成功变体时返回空 dict（保守：不推荐任何档位）。
+    """
+    eligible = [r for r in results if r.success]
+    if not eligible:
+        return {}
+
+    by_id = {r.variant_id: r for r in eligible}
+    frontier = [by_id[vid] for vid in select_pareto_frontier(eligible) if vid in by_id]
+    if not frontier:
+        return {}
+    if len(frontier) == 1:
+        only = frontier[0].variant_id
+        return {tier: only for tier in TIERS}
+
+    lite = min(
+        frontier,
+        key=lambda r: (r.tokens_used, -_effective_quality(r), r.variant_id),
+    )
+    heavy = max(
+        frontier,
+        key=lambda r: (_effective_quality(r), -r.tokens_used, r.variant_id),
+    )
+
+    qualities = [_effective_quality(r) for r in frontier]
+    costs = [r.tokens_used for r in frontier]
+    q_min, q_max = min(qualities), max(qualities)
+    c_min, c_max = min(costs), max(costs)
+    q_span = q_max - q_min
+    c_span = c_max - c_min
+
+    def _distance_to_ideal(r: VariantResult) -> float:
+        # 归一化：质量 1 = 最好，成本 0 = 最便宜。理想点 (1, 0) 通常不可达，
+        # 因此"离理想点最近"就等价于前沿上的拐点（knee）。
+        q_norm = 0.5 if q_span == 0 else (_effective_quality(r) - q_min) / q_span
+        c_norm = 0.5 if c_span == 0 else (r.tokens_used - c_min) / c_span
+        return (1.0 - q_norm) ** 2 + c_norm**2
+
+    distinct = [
+        r for r in frontier
+        if r.variant_id not in {lite.variant_id, heavy.variant_id}
+    ]
+    medium = min(distinct or frontier, key=lambda r: (_distance_to_ideal(r), r.variant_id))
+
+    return {
+        TIER_LITE: lite.variant_id,
+        TIER_MEDIUM: medium.variant_id,
+        TIER_HEAVY: heavy.variant_id,
+    }
+
+
+def resolve_tier_variant(
+    experiment: GEPAExperiment, tier: str
+) -> Variant | None:
+    """按档位取回可下发的 ``Variant``（含 agent_file）。
+
+    返回 None 的情形：档位名非法、实验未算出该档位（无成功变体）、
+    或 variant_id 在 variants 列表中缺失（历史记录漂移）。
+    """
+    if tier not in TIERS:
+        return None
+    variant_id = experiment.tier_selection.get(tier)
+    if not variant_id:
+        return None
+    return next(
+        (v for v in experiment.variants if v.variant_id == variant_id), None
+    )
 
 
 # ── Variant generation (LLM-driven) ──────────────────────────────────
@@ -565,6 +670,8 @@ def run_gepa_cycle(
 
     # P2 帕累托候选池：记录 quality-vs-cost 权衡面（下一轮变异的起点池）
     experiment.pareto_frontier = select_pareto_frontier(experiment.results)
+    # P4 前沿产品化：同上，但只从成功变体中选出可下发的三档代表。
+    experiment.tier_selection = select_tier_representatives(experiment.results)
 
     # Pick winner by score (only successful variants are eligible)
     successful = [r for r in experiment.results if r.success]
@@ -698,6 +805,8 @@ def run_gepa_split_run(
 
     # P2 帕累托候选池（基于全部重复运行结果的均值面）
     experiment.pareto_frontier = select_pareto_frontier(experiment.results)
+    # P4 前沿产品化：三档代表（只从成功变体中选）
+    experiment.tier_selection = select_tier_representatives(experiment.results)
 
     experiment.completed_at = datetime.now(timezone.utc).isoformat()
     return experiment

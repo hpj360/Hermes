@@ -426,6 +426,13 @@ def cmd_loop_gepa(args: argparse.Namespace) -> int:
             print(f"  Winner: {winner}")
         else:
             print("  Winner: (none — no variant succeeded)")
+        tiers = result.get("tier_selection") or {}
+        if tiers:
+            print("  Tiers: " + "  ".join(
+                f"{t}={tiers[t]}" for t in ("lite", "medium", "heavy") if t in tiers
+            ))
+        else:
+            print("  Tiers: (none — 无成功变体可推荐)")
         print(f"  Reason: {result.get('promotion_reason', '?')}")
         print(f"  Variants evaluated: {result.get('variants_evaluated', 0)}")
         return 0
@@ -451,6 +458,7 @@ def cmd_loop_gepa(args: argparse.Namespace) -> int:
                 "completed_at": e.completed_at,
                 "variants_count": len(e.variants),
                 "results_count": len(e.results),
+                "tier_selection": dict(e.tier_selection),
             }
             for e in loop_experiments
         ])
@@ -469,6 +477,12 @@ def cmd_loop_gepa(args: argparse.Namespace) -> int:
     for e in loop_experiments:
         winner = e.winner_id or "(none)"
         print(f"  {e.experiment_id[:8]}  winner={winner}  created={e.created_at}")
+        if e.tier_selection:
+            print("    tiers: " + "  ".join(
+                f"{t}={e.tier_selection[t]}"
+                for t in ("lite", "medium", "heavy")
+                if t in e.tier_selection
+            ))
         print(f"    {e.promotion_reason}")
     return 0
 

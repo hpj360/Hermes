@@ -250,4 +250,6 @@ def _maybe_run_gepa(loop: LoopState, round_data: LoopRound) -> dict[str, Any]:
         "promotion_reason": experiment.promotion_reason,
         "variants_evaluated": len(experiment.results),
         "failure_patterns_stored": patterns_stored,
+        # P4 前沿产品化：三档可选运营代表（下行消费用，空 dict = 无成功变体）
+        "tier_selection": dict(experiment.tier_selection),
     }

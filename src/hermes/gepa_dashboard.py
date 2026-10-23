@@ -19,7 +19,7 @@ Hermes 的对应物：每个 GEPA cycle 已经通过 ``save_experiment`` 持久�
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from hermes.gepa import GEPAExperiment, score_variant
@@ -45,6 +45,8 @@ class ExperimentRow:
     # 各 variant 的 (variant_id, score) 降序；score 用 score_variant 统一口径。
     scores: list[tuple[str, float]]
     promotion_reason: str
+    # P4 前沿产品化：三档运营代表（tier -> variant_id），空 dict = 未计算。
+    tier_selection: dict[str, str] = field(default_factory=dict)
 
     @property
     def promoted(self) -> bool:
@@ -78,6 +80,7 @@ def build_rows(experiments: list[GEPAExperiment]) -> list[ExperimentRow]:
                 n_success=sum(1 for r in exp.results if r.success),
                 scores=scored,
                 promotion_reason=exp.promotion_reason,
+                tier_selection=dict(exp.tier_selection),
             )
         )
     return rows
@@ -149,6 +152,7 @@ def dashboard_payload(rows: list[ExperimentRow]) -> dict[str, Any]:
                 "n_success": r.n_success,
                 "success_rate": round(r.success_rate, 3),
                 "best_score": r.best_score,
+                "tier_selection": dict(r.tier_selection),
             }
             for r in rows
         ],

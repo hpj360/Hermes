@@ -12,11 +12,17 @@ from pathlib import Path
 
 from hermes.gepa import (
     GEPAExperiment,
+    TIER_HEAVY,
+    TIER_LITE,
+    TIER_MEDIUM,
+    TIERS,
     Variant,
     VariantResult,
     auto_generate_variants,
+    resolve_tier_variant,
     run_gepa_cycle,
     select_pareto_frontier,
+    select_tier_representatives,
 )
 from hermes.gepa_mutation import (
     FROZEN_BEGIN,
@@ -301,3 +307,128 @@ def test_experiment_pareto_frontier_roundtrip():
     # 旧格式（无 pareto_frontier 字段）向后兼容
     legacy = GEPAExperiment.from_dict({"experiment_id": "e2", "benchmark_task": "t"})
     assert legacy.pareto_frontier == []
+
+
+# ── P4: 前沿产品化（三档运营点） ─────────────────────────────────────
+
+
+def test_tier_selection_three_operating_points():
+    """前沿三档：lite=最便宜，heavy=质量最高，medium=拐点，且三档互不相同。"""
+    results = [
+        VariantResult(variant_id="cheap", success=True, quality=0.60, tokens_used=1000),
+        VariantResult(variant_id="balance", success=True, quality=0.80, tokens_used=4000),
+        VariantResult(variant_id="strong", success=True, quality=0.95, tokens_used=12000),
+    ]
+    tiers = select_tier_representatives(results)
+    assert tiers[TIER_LITE] == "cheap"
+    assert tiers[TIER_MEDIUM] == "balance"
+    assert tiers[TIER_HEAVY] == "strong"
+    assert len(set(tiers.values())) == 3
+    assert set(tiers) == set(TIERS)
+
+
+def test_tier_selection_medium_is_knee_not_quality_median():
+    """medium 取"离理想点最近"的拐点，而不是质量中位数——靠 cheap 一侧。"""
+    results = [
+        VariantResult(variant_id="cheap", success=True, quality=0.50, tokens_used=1000),
+        VariantResult(variant_id="knee", success=True, quality=0.85, tokens_used=3000),
+        VariantResult(variant_id="strong", success=True, quality=0.95, tokens_used=12000),
+    ]
+    tiers = select_tier_representatives(results)
+    assert tiers[TIER_MEDIUM] == "knee"
+    assert tiers[TIER_LITE] == "cheap"
+    assert tiers[TIER_HEAVY] == "strong"
+
+
+def test_tier_selection_excludes_dominated_variants():
+    """被双目标支配的变体不能占据任何档位。"""
+    results = [
+        VariantResult(variant_id="cheap", success=True, quality=0.60, tokens_used=1000),
+        VariantResult(variant_id="strong", success=True, quality=0.95, tokens_used=12000),
+        # 质量更低且更贵 → 被 strong 支配
+        VariantResult(variant_id="dominated", success=True, quality=0.70, tokens_used=15000),
+    ]
+    tiers = select_tier_representatives(results)
+    assert "dominated" not in tiers.values()
+
+
+def test_tier_selection_ignores_failed_variants():
+    """失败但极便宜的变体不能当 lite 下发（保守策略）。"""
+    results = [
+        VariantResult(variant_id="broken_cheap", success=False, tokens_used=10),
+        VariantResult(variant_id="ok", success=True, quality=0.90, tokens_used=5000),
+    ]
+    tiers = select_tier_representatives(results)
+    assert set(tiers.values()) == {"ok"}
+
+
+def test_tier_selection_empty_and_single():
+    """无成功变体 → 空 dict；仅一个成功变体 → 三档都指向它。"""
+    assert select_tier_representatives([]) == {}
+    assert select_tier_representatives([
+        VariantResult(variant_id="broken", success=False, tokens_used=1),
+    ]) == {}
+
+    single = [VariantResult(variant_id="only", success=True, quality=0.7, tokens_used=100)]
+    assert select_tier_representatives(single) == {tier: "only" for tier in TIERS}
+
+
+def test_experiment_tier_selection_roundtrip_and_backward_compat():
+    """tier_selection 字段 to_dict/from_dict 往返保留；旧 JSON 缺字段 → {}。"""
+    exp = GEPAExperiment(
+        experiment_id="e1",
+        benchmark_task="task",
+        tier_selection={TIER_LITE: "a", TIER_HEAVY: "c"},
+    )
+    restored = GEPAExperiment.from_dict(exp.to_dict())
+    assert restored.tier_selection == {TIER_LITE: "a", TIER_HEAVY: "c"}
+
+    legacy = GEPAExperiment.from_dict({"experiment_id": "e2", "benchmark_task": "t"})
+    assert legacy.tier_selection == {}
+
+
+def test_run_gepa_cycle_populates_tier_selection():
+    """run_gepa_cycle 产出三档代表（前沿产品化落到实验记录里）。"""
+    variants = [
+        Variant(variant_id="cheap", agent_file="/cheap.md"),
+        Variant(variant_id="strong", agent_file="/strong.md"),
+    ]
+
+    def evaluate(variant, task, ctx):
+        if variant.variant_id == "cheap":
+            return VariantResult(
+                variant_id="cheap", success=True, quality=0.60, tokens_used=1000
+            )
+        return VariantResult(
+            variant_id="strong", success=True, quality=0.95, tokens_used=9000
+        )
+
+    experiment = run_gepa_cycle("task", variants, evaluate)
+    assert experiment.tier_selection[TIER_LITE] == "cheap"
+    assert experiment.tier_selection[TIER_HEAVY] == "strong"
+    # 两点的前沿上 medium 必落在其中一点（无第三个可选点）
+    assert experiment.tier_selection[TIER_MEDIUM] in {"cheap", "strong"}
+    # winner 仍然只有一个，与三档并行存在（不冲突）
+    assert experiment.winner_id == "strong"
+
+
+def test_resolve_tier_variant():
+    """按档位取回可下发的 Variant；非法档位/未计算/ID 漂移 → None。"""
+    exp = GEPAExperiment(
+        experiment_id="e1",
+        benchmark_task="task",
+        variants=[Variant(variant_id="a", agent_file="/a.md")],
+        tier_selection={TIER_LITE: "a"},
+    )
+    resolved = resolve_tier_variant(exp, TIER_LITE)
+    assert resolved is not None and resolved.agent_file == "/a.md"
+    assert resolve_tier_variant(exp, TIER_HEAVY) is None
+    assert resolve_tier_variant(exp, "nope") is None
+
+    drifted = GEPAExperiment(
+        experiment_id="e2",
+        benchmark_task="task",
+        variants=[],
+        tier_selection={TIER_LITE: "missing"},
+    )
+    assert resolve_tier_variant(drifted, TIER_LITE) is None
