@@ -81,7 +81,8 @@ def test_discover_skills_count_matches_manifest() -> None:
     #   media-use, media-generation, remotion-video-toolkit, video-cut) → 50.
     # +1 content-extraction shared distillation engine → 51.
     # -1 skill-vetter removed (empty shell, no actionable methodology) → 50.
-    assert len(discover_skills()) == 50
+    # +3 data-driven content skills (xhs-hot-notes, douyin-hotlist, banned-words-check) → 53.
+    assert len(discover_skills()) == 53
 
 
 # ---------------------------------------------------------------------------
@@ -330,13 +331,14 @@ def test_get_skill_description_unquoted_value(monkeypatch, tmp_path) -> None:
 
 
 def test_discover_skills_includes_description(monkeypatch, tmp_path) -> None:
-    skill_dir = tmp_path / "disc-skill"
-    skill_dir.mkdir()
+    root = tmp_path / "skills-root"
+    skill_dir = root / "disc-skill"
+    skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
         "---\nname: disc-skill\ndescription: \"Discovered desc.\"\n---\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(skills_mod, "skills_dir", lambda: tmp_path)
+    monkeypatch.setattr(skills_mod, "skills_dir", lambda: root)
     skills = discover_skills()
     assert len(skills) == 1
     assert skills[0].name == "disc-skill"
@@ -346,10 +348,11 @@ def test_discover_skills_includes_description(monkeypatch, tmp_path) -> None:
 def test_discover_skills_description_empty_when_no_frontmatter(
     monkeypatch, tmp_path
 ) -> None:
-    skill_dir = tmp_path / "no-fm"
-    skill_dir.mkdir()
+    root = tmp_path / "skills-root"
+    skill_dir = root / "no-fm"
+    skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("# No frontmatter\n", encoding="utf-8")
-    monkeypatch.setattr(skills_mod, "skills_dir", lambda: tmp_path)
+    monkeypatch.setattr(skills_mod, "skills_dir", lambda: root)
     skills = discover_skills()
     assert len(skills) == 1
     assert skills[0].description == ""

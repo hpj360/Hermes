@@ -1,0 +1,6 @@
+version: "1.0"
+provides:
+  - xhs-hot-notes
+  - topic-research
+  - data-driven-topics
+test_command: "python -m pytest tests/content_team/test_trend_sources.py tests/content_team/test_trends_api.py"

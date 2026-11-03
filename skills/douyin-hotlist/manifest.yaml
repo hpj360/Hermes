@@ -1,0 +1,6 @@
+version: "1.0"
+provides:
+  - douyin-hotlist
+  - trend-tracking
+  - short-video-topics
+test_command: "python -m pytest tests/content_team/test_trend_sources.py tests/content_team/test_trends_api.py"

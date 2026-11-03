@@ -28,5 +28,20 @@
     "source": "file://skills/video-cut",
     "version": "1.0.0",
     "provides": "video-editing,rough-cut,transcription,speed-ramping"
+  },
+  "xhs-hot-notes": {
+    "source": "file://skills/xhs-hot-notes",
+    "version": "1.0.0",
+    "provides": "xhs-hot-notes,topic-research,data-driven-topics"
+  },
+  "douyin-hotlist": {
+    "source": "file://skills/douyin-hotlist",
+    "version": "1.0.0",
+    "provides": "douyin-hotlist,trend-tracking,short-video-topics"
+  },
+  "banned-words-check": {
+    "source": "file://skills/banned-words-check",
+    "version": "1.0.0",
+    "provides": "banned-words-check,compliance-precheck,platform-word-packs"
   }
 }

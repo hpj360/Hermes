@@ -1,0 +1,6 @@
+version: "1.0"
+provides:
+  - banned-words-check
+  - compliance-precheck
+  - platform-word-packs
+test_command: "python -m pytest tests/content_team/test_trend_sources.py tests/content_team/test_compliance.py tests/content_team/test_sop.py"
