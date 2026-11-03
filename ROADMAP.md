@@ -31,24 +31,29 @@
 | P0 | U1a 调度修复 / U1b FastAPI 网关 / U2 鉴权 / U3 Windows 常驻 / U4-U6 前端 / U7 待办 / U8 捕获 / U9 飞书通知 / U10 技能中心 | ✅ |
 | P0.5 | 捕获落 notes（markdown+frontmatter）+ 摘要 job + 驾驶舱简报本地化 | ✅ |
 | P1-C3 | 飞书 bot 入箱（webhook + lark-cli 长连接双通道） | ✅ |
+| P1 补账（2026-09-19） | C2 GitHub 双向同步（SyncLedger 冲突策略）/ C4 全局日 token 预算（采集+前置熔断+用量端点）/ C6 Obsidian vault 索引+知识卡 / O2 OpenCode Go WAF 网关 | ✅（此前 ROADMAP 未勾选，已回补） |
+| 内容运营管线（2026-11-03） | 数据驱动选题：/api/trends（红狐 Hub 适配+fixture 回退）、原创查重、SOP、knowledge_search、LLM 草稿、场景化 skill 装配、发布日历前端 | ✅ |
+| C1（半自动段） | 指标人工回填 `/api/analytics/manual`（source="manual"）+ 周期复盘 `/api/analytics/retrospective` + 复盘蒸馏 | ✅（自动周报未做，见待办） |
 
 ### 地基修复（本轮）
 
 - [x] **O1 单树运行时**：venv editable 重指向 `D:\Hermes\hermes`（原指向 `D:\Hermes-release` 运行时副本），消除手工双树同步的脆弱性（曾被 release 侧 git reset 清空过一次）。
 - [x] **O5 测试隔离**：新增全局 autouse fixture，将 `HERMES_STATE_DIR/CACHE_DIR/PROFILE_PATH` 指向 per-test tmp 并重置调度/记忆/审计单例；全量跑批不再污染真实 `.state`（此前 audit/episodes/facts/tasks 被改写、顺序敏感）。
+- [x] **O6 serve 默认统一网关**（2026-11-03 补账）：`serve` 默认走 FastAPI gateway，stdlib 服务器降级为 `--stdlib` 逃生门；watchdog 增加 SPA 产品面探针。
 
 ### 待办（P1 剩余）
 
-- [ ] **C1 自动周报 + 数据回采** —— 业务闭环关键项，采用"半自动人工导出优先"（平台无官方接口）
-- [ ] C2 GitHub 双向同步（依赖 GitHub token）
-- [ ] C4 全局日 token 预算（用量采集已就位，前置熔断待接）
-- [ ] C5 Gated 发布流（飞书确认卡）—— C1 下游
-- [ ] C6 Obsidian vault 索引 + 创作台知识卡
+- [ ] **C1（自动段）：自动周报** —— 复盘数据已可查（retrospective 端点），缺一个 cron 触发的周报 job（聚合 retrospective → 飞书卡片/驾驶舱简报）
+- [ ] **C5 Gated 发布流（飞书确认卡）** —— C1 自动段下游：发布检查单结论 → 飞书卡片 → 人工确认 → 状态回填
+- [ ] **安全档位落地**：`.env` 配置 `HERMES_API_TOKEN`/`HERMES_SECRET_KEY`/`HERMES_DATA_DIR`（当前为 dev 无 token 模式，靠 loopback 兜底）
 
 > **主线判断**：过去阶段以"横向扩能力"（加模块/skill/测试）为主，边际收益递减；
 > 建议下一阶段转向"**纵向打穿一条真实业务闭环**"——去掉所有 mock，走通一次
 > 真实 LLM → 真实发布 → 真实数据回流 → 真实复盘。判断标准只有一个：真的能用。
-> 优先级：C1 → C5 → C6；C2/C4 按需。
+> 优先级：C1 自动周报 → C5 →（记忆 M4 实测，需业务触发）；C2/C4/C6 已完成。
+> **口径基准（2026-11-03 评审实测）**：pytest 2332 passed / 18 skipped；ruff 全绿；
+> skills 53；`/wb/*` 83 条路由 + `/api/*` 44 端点。数字只在此处维护，其他文档不重复计数。
+> 依据舆情评审见 `docs/review/2026-11-03-capability-review.md`（如存档）。
 
 ---
 

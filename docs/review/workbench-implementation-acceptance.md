@@ -50,12 +50,12 @@ health scheduler: {workers:{active:0,size:2,running:True}, cron:True, queue_dept
 
 | 门禁 | 状态 | 依据 |
 |---|---|---|
-| ① 一屏闭环（驾驶舱完成日常） | ✅ 前端壳 + 驾驶舱 + 捕获 + 任务 + 记忆 | U4-U8 页面构建通过 |
+| ① 一屏闭环（驾驶舱完成日常） | ✅ 前端壳 + 驾驶舱 + 捕获 + 任务 + 记忆（KB 入口与 SSE 消费为 P1.5 接线项） | U4-U8 页面构建通过 |
 | ② 调度主线可用（job 必被执行） | ✅ 修复 serve 缺口 | U1a 冒烟 QUEUED→SUCCEEDED |
-| ③ 捕获闭环（<3 秒 + 落 markdown） | 🟡 捕获条已就绪；落 notes markdown 待接入 | U8（前端）+ U7（后端） |
+| ③ 捕获闭环（<3 秒 + 落 markdown） | ✅ P0.5 NotesStore+CaptureService 落 markdown+frontmatter（第 1 节/第 5 节交付项；本表原 🟡 标注为历史快照，2026-11-03 复核修正） | U8（前端）+ U7（后端）+ P0.5 |
 | ④ 通知降噪（每日≤1 简报+失败聚合） | ✅ 静默优先 + 死信 | U9 |
-| ⑤ 安全（401/脱敏/拒非 loopback） | ✅ | U2 |
-| ⑥ 韧性（自启/自愈/备份/轮转） | 🟡 bat+watchdog+backup 脚本就绪；计划任务注册/轮转配置待执行 | U3 |
+| ⑤ 安全（401/脱敏/拒非 loopback） | ✅（运行时 dev 档位待 `.env` 配置 `HERMES_API_TOKEN`/`HERMES_SECRET_KEY`，见 ROADMAP 待办） | U2 |
+| ⑥ 韧性（自启/自愈/备份/轮转） | 🟡 bat+watchdog+backup+register-scheduled-tasks 脚本就绪；计划任务注册/日志轮转配置待在本机执行一次 | U3 |
 
 ## 4. 变更文件清单
 
