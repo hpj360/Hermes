@@ -34,6 +34,8 @@
 | P1 补账（2026-09-19） | C2 GitHub 双向同步（SyncLedger 冲突策略）/ C4 全局日 token 预算（采集+前置熔断+用量端点）/ C6 Obsidian vault 索引+知识卡 / O2 OpenCode Go WAF 网关 | ✅（此前 ROADMAP 未勾选，已回补） |
 | 内容运营管线（2026-11-03） | 数据驱动选题：/api/trends（红狐 Hub 适配+fixture 回退）、原创查重、SOP、knowledge_search、LLM 草稿、场景化 skill 装配、发布日历前端 | ✅ |
 | C1（半自动段） | 指标人工回填 `/api/analytics/manual`（source="manual"）+ 周期复盘 `/api/analytics/retrospective` + 复盘蒸馏 | ✅（自动周报未做，见待办） |
+| C1（自动段） | 自动周报 `weekly_report`：cron 触发（默认周一 20:00）聚合 retrospective → 飞书投递（静默优先/死信/模拟数据提醒回填） | ✅（2026-11-04；真实飞书通道待配 FEISHU_* 后实测） |
+| C5 Gated 发布流 | `publish/gated.py`：门禁创建 `/api/publish/gate` → 飞书确认卡 → `/feishu/events` 卡片回调裁决（幂等 store）→ 批准即经统一调度中心提交 publish job | ✅ 代码链路（2026-11-04，fake 飞书契约测试）；真实飞书交互待配置后端到端实测 |
 
 ### 地基修复（本轮）
 
@@ -43,9 +45,8 @@
 
 ### 待办（P1 剩余）
 
-- [ ] **C1（自动段）：自动周报** —— 复盘数据已可查（retrospective 端点），缺一个 cron 触发的周报 job（聚合 retrospective → 飞书卡片/驾驶舱简报）
-- [ ] **C5 Gated 发布流（飞书确认卡）** —— C1 自动段下游：发布检查单结论 → 飞书卡片 → 人工确认 → 状态回填
-- [ ] **安全档位落地**：`.env` 配置 `HERMES_API_TOKEN`/`HERMES_SECRET_KEY`/`HERMES_DATA_DIR`（当前为 dev 无 token 模式，靠 loopback 兜底）
+- [ ] **真实通道端到端**：配置 `.env`（`HERMES_API_TOKEN`/`HERMES_SECRET_KEY`/`HERMES_DATA_DIR`/`FEISHU_APP_ID/SECRET/VERIFICATION_TOKEN/REPORT_CHAT_ID`）后，实测一次「C1 周报发送 + C5 卡片确认→派发→状态回填」
+- [ ] **接线补齐**：驾驶舱/驾驶舱顶栏消费 `/wb/stream/*` SSE；知识库入口页走 `/wb/kb/search`（上游 `GET /kb/search` 契约已在 kb 仓落地）
 
 > **主线判断**：过去阶段以"横向扩能力"（加模块/skill/测试）为主，边际收益递减；
 > 建议下一阶段转向"**纵向打穿一条真实业务闭环**"——去掉所有 mock，走通一次

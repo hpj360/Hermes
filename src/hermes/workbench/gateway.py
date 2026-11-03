@@ -362,6 +362,44 @@ def create_app(state_dir: Path | None = None) -> FastAPI:
         from hermes.workbench.feishu_inbox import FeishuInboxService
 
         event_obj = payload.get("event") or payload
+
+        # C5 Gated 发布：卡片按钮回调先于消息入箱处理。批准 → 统一调度中心
+        # 提交 publish job（状态回填富 PublishTask），拒绝/重复 → 幂等裁决。
+        from hermes.content_team.publish.gated import parse_gate_event
+
+        gate_intent = parse_gate_event(event_obj)
+        if gate_intent is not None:
+            from hermes.content_team.publish.gated import (
+                GatedPublishStore,
+                gated_store_dir,
+                submit_publish_job,
+            )
+
+            store = GatedPublishStore(gated_store_dir())
+            try:
+                gate, changed = store.resolve(
+                    gate_intent["gate_id"],
+                    gate_intent["decision"],
+                    gate_intent["operator"] or "feishu-card",
+                )
+            except KeyError:
+                return JSONResponse({"error": "gate not found"}, status_code=404)
+            job_id = None
+            if changed and gate.status == "approved":
+                job_id = submit_publish_job(gate.content_id, gate.platform)
+            return JSONResponse(
+                {
+                    "skipped": False,
+                    "gate": {
+                        "gate_id": gate.gate_id,
+                        "status": gate.status,
+                        "changed": changed,
+                        "job_id": job_id,
+                    },
+                },
+                status_code=200,
+            )
+
         svc = FeishuInboxService(CaptureService(_make_todo_store(), _make_notes_dir()))
         try:
             result = svc.ingest(event_obj)

@@ -18,6 +18,7 @@ from hermes.content_team.originality import (
     OriginalityRef,
     check_originality,
 )
+from hermes.content_team.models.content import Content
 from hermes.content_team.models.platform import Platform, PlatformAccount
 from hermes.content_team.models.publish import PublishStatus, PublishTask
 from hermes.content_team.observability import log_event
@@ -488,4 +489,75 @@ async def originality_check(
             "字面查重（双字组 Jaccard）。语义查/图片 pHash 不在覆盖范围，"
             "发布前须配合人工原创性三查（见 banned-words-check skill）。"
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# C5 Gated 发布流：创建发布确认门禁（飞书卡片人工确认）
+# ---------------------------------------------------------------------------
+
+
+class PublishGateRequest(BaseModel):
+    """创建发布确认门禁请求体：合规检查单 + 目标内容。"""
+
+    content_id: UUID
+    platform: Platform
+    title: str = Field(..., min_length=1)
+    checklist: dict[str, object] = {}
+
+
+class PublishGateResponse(BaseModel):
+    """发布确认门禁响应体：卡片 elements 由前端/飞书通道渲染。"""
+
+    gate_id: str
+    platform: str
+    status: str
+    card_elements: list[dict[str, object]]
+    sent: bool
+    send_reason: str = ""
+
+
+@router.post("/publish/gate", response_model=PublishGateResponse)
+async def create_publish_gate(
+    payload: PublishGateRequest,
+    db: AsyncSession = Depends(get_db),
+) -> PublishGateResponse:
+    """创建 Gated 发布门禁：落库 + 构造飞书确认卡（配置齐则直接发出）。
+
+    人工在卡片上点击「确认发布/暂缓」后，回调经网关 /feishu/events 解析，
+    批准侧经统一调度中心提交 publish job（状态回填到 PublishTask）。
+    """
+    content = await db.get(Content, payload.content_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail="content not found")
+    from hermes.content_team.publish.gated import (
+        GatedPublishStore,
+        build_gate_card,
+        gated_store_dir,
+        try_send_gate_card,
+    )
+
+    store = GatedPublishStore(gated_store_dir())
+    gate = store.create_gate(
+        str(payload.content_id), payload.platform.value, dict(payload.checklist)
+    )
+    elements = build_gate_card(
+        gate.gate_id, payload.title, dict(payload.checklist)
+    )
+    sent, reason = try_send_gate_card(elements, "Hermes 发布确认")
+    log_event(
+        "publish_gate_created",
+        "创建发布确认门禁",
+        gate_id=gate.gate_id,
+        content_id=str(payload.content_id),
+        platform=payload.platform.value,
+        sent=sent,
+    )
+    return PublishGateResponse(
+        gate_id=gate.gate_id,
+        platform=gate.platform,
+        status=gate.status,
+        card_elements=elements,
+        sent=sent,
+        send_reason=reason,
     )
