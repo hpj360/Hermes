@@ -707,8 +707,10 @@ hermes workbench trigger disable <trigger_id>
 # Workbench - 跨项目资产同步 (Phase 3 新增)
 hermes workbench sync --source proj-a --target proj-b --assets skills,memory,profile
 
-# Workbench - HTTP 服务
+# Workbench - HTTP 服务（默认 = 统一网关：React SPA + /api + /wb）
 hermes workbench serve --host 127.0.0.1 --port 8080
+# legacy stdlib（仅工程 JSON dashboard，根路径路由；无 SPA / /api）
+hermes workbench serve --stdlib --host 127.0.0.1 --port 8080
 
 # Workbench - GitHub 同步
 hermes workbench github-sync --repo owner/name --label workbench
@@ -717,8 +719,11 @@ hermes workbench github-sync --repo owner/name --label workbench
 ### 7.4 HTTP API 用法
 
 ```bash
-# 启动服务
+# 启动服务（默认网关）
 hermes workbench serve --port 8080 &
+
+# 注意：默认网关下 workbench JSON 路由前缀为 /wb（如 /wb/skills）；
+# 下面这些根路径路由仅在 `hermes workbench serve --stdlib` 时可用。
 
 # 健康检查（含调度器状态：worker active/idle + queue_depth + recovery 状态）
 curl http://127.0.0.1:8080/health
@@ -816,6 +821,7 @@ from hermes.workbench.agent_loop import AgentLoop, LoopStep
 from hermes.workbench.memory import MemoryService
 from hermes.workbench.cli import Task, TaskStore, TaskRegistry, TaskScheduler
 from hermes.workbench.server import run_server
+from hermes.workbench.gateway import create_app, run_gateway
 from hermes.workbench.github_sync import GitHubSyncService
 
 runner = SkillRunner()

@@ -121,8 +121,10 @@ Hermes 是一个独立的 Agent 基础设施管理 CLI + Workbench 服务，定�
 
 ### 2.1 Workbench 服务平面（v0.6 后新增）
 
-CLI 之外，`hermes workbench serve` 起一个 stdlib HTTP 服务（`src/hermes/workbench/`），
-作为常驻执行平面，与 CLI 共享同一套配置/记忆/LLM 客户端：
+CLI 之外，`hermes workbench serve` 起统一网关（FastAPI，`src/hermes/workbench/gateway.py`）：
+单一进程同时出 React SPA（`apps/web/dist`）、`/api/*`（content_team）与 `/wb/*`（38+ workbench 路由），
+作为常驻执行平面，与 CLI 共享同一套配置/记忆/LLM 客户端。`--stdlib` 可回退到 legacy stdlib 服务器
+（仅工程 JSON dashboard，无 SPA）。
 
 ```
 workbench/server.py（38+ 路由）

@@ -3,8 +3,9 @@ REM ============================================================================
 REM start-workbench.bat - Windows service launcher for the Hermes personal
 REM workbench (U3).
 REM
-REM Starts the workbench dashboard API (which also runs the scheduler center:
-REM crash recovery + worker pool + cron scheduler), redirects logs to
+REM Starts the unified workbench gateway via `hermes workbench serve` (FastAPI:
+REM React SPA + /api/* + /wb/*, and the scheduler center: crash recovery +
+REM worker pool + cron scheduler), redirects logs to
 REM %HERMES_DATA_DIR%\logs\workbench.log (or .\logs if unset) and performs a
 REM one-time health poll. Register with Task Scheduler for auto-start at logon:
 REM
@@ -38,7 +39,7 @@ if not exist "%VENV_PY%" (
 )
 
 set "HERMES_DATA_DIR=%HERMES_DATA_DIR%"
-echo [start-workbench] starting hermes workbench serve...
+echo [start-workbench] starting hermes workbench gateway (serve)...
 "%HERMES_BIN%" -m hermes.main workbench serve --host 127.0.0.1 --port %PORT% >> "%LOGS_DIR%\workbench.log" 2>&1
 
 REM If the server exits, log it so watchdog / logs can diagnose.

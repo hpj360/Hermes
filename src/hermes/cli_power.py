@@ -263,9 +263,9 @@ WORKDIR /app
 COPY requirements.txt requirements-dev.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 安装 hermes 包（editable 或 sdist 均可，这里用 sdist 保持镜像自包含）
+# 安装 hermes 包（含 content_team extra：网关需要 fastapi/uvicorn 才能出 SPA + /api）
 COPY . .
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[content_team]"
 
 # 状态目录（持久化卷挂载点）
 ENV HERMES_STATE_DIR=/app/.state \\
@@ -305,7 +305,7 @@ docker compose up --build
 ## Render
 
 1. 创建 Web Service，连接本仓库。
-2. Build Command: `pip install -r requirements.txt && pip install .`
+2. Build Command: `pip install -r requirements.txt && pip install ".[content_team]"`
 3. Start Command: `hermes workbench serve --host 0.0.0.0 --port $PORT`
 4. 在 Environment 中配置 `.env` 里的密钥变量。
 

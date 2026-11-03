@@ -1119,26 +1119,82 @@ def test_cmd_task_cancel_missing_returns_1(
 # ---------------------------------------------------------------------------
 
 
-def test_cmd_serve_invokes_run_server(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # server module now exists (P3); the command must call run_server with
-    # the parsed host/port and return 0. We patch run_server so it does not
-    # actually block on serve_forever().
+def test_cmd_serve_defaults_to_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The product surface is the FastAPI gateway (React SPA + /api + /wb); the
+    # command must run it by default and must NOT touch the legacy stdlib server.
+    import hermes.workbench.gateway as gateway_mod
     import hermes.workbench.server as server_mod
 
     captured: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        gateway_mod, "run_gateway", lambda host, port: captured.append((host, port))
+    )
+
+    def _fail_stdlib(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("stdlib server must not run by default")
+
+    monkeypatch.setattr(server_mod, "run_server", _fail_stdlib)
+    rc = cmd_workbench_serve(_ns(host="127.0.0.1", port=8123))
+    assert rc == 0
+    assert captured == [("127.0.0.1", 8123)]
+
+
+def test_cmd_serve_stdlib_flag_uses_run_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # --stdlib keeps the legacy server reachable as an escape hatch.
+    import hermes.workbench.server as server_mod
+
+    captured: list[tuple[str, int]] = []
+    captured_insecure: list[bool] = []
 
     def _fake_run_server(host: str, port: int, insecure: bool = False) -> None:
         captured.append((host, port))
         captured_insecure.append(insecure)
 
-    captured_insecure: list[bool] = []
     monkeypatch.setattr(server_mod, "run_server", _fake_run_server)
-    rc = cmd_workbench_serve(_ns(host="127.0.0.1", port=8123))
+    rc = cmd_workbench_serve(_ns(host="127.0.0.1", port=8123, stdlib=True))
     assert rc == 0
     assert captured == [("127.0.0.1", 8123)]
     assert captured_insecure == [False]
+
+
+def test_cmd_serve_gateway_refuses_nonloopback_without_token(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import hermes.workbench.gateway as gateway_mod
+
+    class _NoTokenSettings:
+        hermes_api_token = None
+        openclaw_gateway_token = None
+
+    monkeypatch.setattr("hermes.config.get_settings", lambda: _NoTokenSettings())
+    called: list[tuple[str, int]] = []
+    monkeypatch.setattr(gateway_mod, "run_gateway", lambda *a, **k: called.append(a))
+    rc = cmd_workbench_serve(_ns(host="0.0.0.0", port=8000))
+    assert rc == 1
+    assert called == []
+    assert "refusing to bind non-loopback" in capsys.readouterr().err
+
+
+def test_cmd_serve_gateway_allows_nonloopback_with_insecure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hermes.workbench.gateway as gateway_mod
+
+    class _NoTokenSettings:
+        hermes_api_token = None
+        openclaw_gateway_token = None
+
+    monkeypatch.setattr("hermes.config.get_settings", lambda: _NoTokenSettings())
+    called: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        gateway_mod, "run_gateway", lambda host, port: called.append((host, port))
+    )
+    rc = cmd_workbench_serve(_ns(host="0.0.0.0", port=8000, insecure=True))
+    assert rc == 0
+    assert called == [("0.0.0.0", 8000)]
 
 
 # ---------------------------------------------------------------------------
@@ -1623,7 +1679,8 @@ def test_add_workbench_subparser_registers_all() -> None:
     parser.parse_args(["workbench", "task", "run", "t1"])
     parser.parse_args(["workbench", "task", "show", "t1"])
     parser.parse_args(["workbench", "task", "cancel", "t1"])
-    parser.parse_args(["workbench", "serve"])
+    assert parser.parse_args(["workbench", "serve"]).stdlib is False
+    assert parser.parse_args(["workbench", "serve", "--stdlib"]).stdlib is True
     # Phase 3 subcommands
     parser.parse_args(["workbench", "job", "submit", "--plan", "[]"])
     parser.parse_args(["workbench", "job", "list"])

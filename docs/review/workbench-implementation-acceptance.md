@@ -89,11 +89,14 @@ cd D:\Hermes\hermes
 .venv\Scripts\python -m pytest tests/            # 1854 passed
 .venv\Scripts\ruff check src/ tests/             # 0 error
 
-# 网关（单服务面，推荐日常入口）
+# 网关（单服务面，日常入口）—— `serve` 现已默认走网关
+.venv\Scripts\hermes workbench serve --host 127.0.0.1 --port 8000
+
+# 等价显式写法（uvicorn factory）
 .venv\Scripts\python -m uvicorn hermes.workbench.gateway:create_app --factory --host 127.0.0.1 --port 8000
 
-# 或 CLI 兼容入口（stdlib server，含调度）
-.venv\Scripts\hermes workbench serve --port 8000
+# 兼容入口：legacy stdlib server（仅工程 JSON dashboard，无 SPA / /api）
+.venv\Scripts\hermes workbench serve --stdlib --port 8000
 
 # Windows 常驻（U3）
 D:\Hermes\hermes\scripts\start-workbench.bat

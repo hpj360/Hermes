@@ -311,13 +311,65 @@ def cmd_workbench_task_cancel(args: argparse.Namespace) -> int:
 
 
 def cmd_workbench_serve(args: argparse.Namespace) -> int:
+    """Run the workbench service.
+
+    Defaults to the unified FastAPI gateway (React SPA + ``/api/*`` + ``/wb/*``)
+    — the single product service surface. ``--stdlib`` keeps the legacy stdlib
+    server (engineering JSON dashboard only) as an escape hatch for environments
+    without fastapi/uvicorn.
+    """
+    host = args.host
+    port = args.port
+    insecure = getattr(args, "insecure", False)
+
+    if not getattr(args, "stdlib", False):
+        try:
+            from hermes.workbench.gateway import run_gateway
+        except ImportError as exc:
+            print(
+                f"gateway unavailable ({exc}); falling back to the legacy stdlib "
+                "server (engineering dashboard only). Install the web surface: "
+                'pip install -e ".[content_team]"',
+                file=sys.stderr,
+            )
+        else:
+            bind_error = _gateway_bind_error(host, insecure)
+            if bind_error is not None:
+                print(bind_error, file=sys.stderr)
+                return 1
+            run_gateway(host, port)
+            return 0
+
     try:
         from hermes.workbench.server import run_server
     except ImportError as exc:
         print(f"server not available: {exc}", file=sys.stderr)
         return 1
-    run_server(args.host, args.port, insecure=getattr(args, "insecure", False))
+    run_server(host, port, insecure=insecure)
     return 0
+
+
+def _gateway_bind_error(host: str, insecure: bool) -> str | None:
+    """Mirror the stdlib server's non-loopback guard for the gateway.
+
+    The gateway enforces the same Bearer token on ``/wb/*`` and ``/api/*``, so
+    binding a non-loopback address without a token must be refused unless
+    ``--insecure`` is passed.
+    """
+    from hermes.config import get_settings
+    from hermes.workbench.server import _is_loopback
+
+    settings = get_settings()
+    has_token = bool(
+        getattr(settings, "hermes_api_token", None)
+        or getattr(settings, "openclaw_gateway_token", None)
+    )
+    if not has_token and not _is_loopback(host) and not insecure:
+        return (
+            "HERMES_API_TOKEN is not set: refusing to bind non-loopback "
+            f"address {host!r}. Set a token, bind loopback, or pass --insecure."
+        )
+    return None
 
 
 def cmd_workbench_github_sync(args: argparse.Namespace) -> int:
@@ -874,9 +926,17 @@ def _register_task(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> 
 
 
 def _register_serve(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    p = sub.add_parser("serve", help="Run the dashboard API server (P3)")
+    p = sub.add_parser(
+        "serve", help="Run the workbench service (gateway: React SPA + API; P3)"
+    )
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
+    p.add_argument(
+        "--stdlib",
+        action="store_true",
+        help="Use the legacy stdlib server (engineering JSON dashboard only; no "
+        "React SPA / content_team API). Default is the unified FastAPI gateway.",
+    )
     p.add_argument(
         "--insecure",
         action="store_true",
