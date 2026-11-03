@@ -19,6 +19,11 @@ export default function PublishPage() {
   const [confirmUrl, setConfirmUrl] = useState<Record<string, string>>({});
   const [compliance, setCompliance] = useState<ComplianceReport | null>(null);
   const [forceCompliance, setForceCompliance] = useState(false);
+  const [backfillOpen, setBackfillOpen] = useState<Record<string, boolean>>({});
+  const [backfill, setBackfill] = useState<
+    Record<string, { views: number; likes: number; comments: number; shares: number; snapshot_date: string }>
+  >({});
+  const [backfillOk, setBackfillOk] = useState<Record<string, boolean>>({});
 
   async function load() {
     try {
@@ -87,6 +92,69 @@ export default function PublishPage() {
     } catch (e) {
       setError((e as Error).message);
     }
+  }
+
+  async function backfillMetrics(task: { id: string; content_id: string; platform: string }) {
+    const form = backfill[task.id];
+    if (!form) return;
+    try {
+      await post("/analytics/manual", {
+        content_id: task.content_id,
+        platform: task.platform,
+        views: form.views || 0,
+        likes: form.likes || 0,
+        comments: form.comments || 0,
+        shares: form.shares || 0,
+        snapshot_date: form.snapshot_date,
+      });
+      setBackfillOk((prev) => ({ ...prev, [task.id]: true }));
+      setError("");
+    } catch (e) {
+      setBackfillOk((prev) => ({ ...prev, [task.id]: false }));
+      setError((e as Error).message);
+    }
+  }
+
+  function updateBackfill(
+    taskId: string,
+    patch: Partial<{
+      views: number;
+      likes: number;
+      comments: number;
+      shares: number;
+      snapshot_date: string;
+    }>,
+  ) {
+    setBackfill((prev) => {
+      const cur =
+        prev[taskId] ??
+        {
+          views: 0,
+          likes: 0,
+          comments: 0,
+          shares: 0,
+          snapshot_date: new Date().toISOString().slice(0, 10),
+        };
+      return { ...prev, [taskId]: { ...cur, ...patch } };
+    });
+  }
+
+  function toggleBackfill(t: { id: string }) {
+    setBackfillOpen((prev) => ({ ...prev, [t.id]: !prev[t.id] }));
+    setBackfill((prev) =>
+      prev[t.id]
+        ? prev
+        : {
+            ...prev,
+            [t.id]: {
+              views: 0,
+              likes: 0,
+              comments: 0,
+              shares: 0,
+              snapshot_date: new Date().toISOString().slice(0, 10),
+            },
+          },
+    );
   }
 
   function toggleAccount(id: string) {
@@ -218,6 +286,65 @@ export default function PublishPage() {
                 >
                   确认发布
                 </button>
+              </div>
+            )}
+
+            <button
+              onClick={() => toggleBackfill(t)}
+              className="mt-2 text-xs text-gray-500 hover:text-gray-700 hover:underline"
+            >
+              {backfillOpen[t.id] ? "收起回填" : "📊 人工回填数据（无自动回采的平台）"}
+            </button>
+            {backfillOpen[t.id] && backfill[t.id] && (
+              <div className="mt-2 bg-gray-50 rounded p-3 text-sm">
+                <div className="flex flex-wrap gap-2 items-center">
+                  {(
+                    [
+                      ["views", "浏览"],
+                      ["likes", "点赞"],
+                      ["comments", "评论"],
+                      ["shares", "分享"],
+                    ] as const
+                  ).map(([k, label]) => (
+                    <label key={k} className="inline-flex items-center gap-1">
+                      {label}
+                      <input
+                        type="number"
+                        min={0}
+                        className="w-20 border rounded px-1.5 py-0.5 text-xs"
+                        value={backfill[t.id]?.[k] ?? 0}
+                        onChange={(e) =>
+                          updateBackfill(t.id, { [k]: Number(e.target.value) })
+                        }
+                      />
+                    </label>
+                  ))}
+                  <input
+                    type="date"
+                    className="border rounded px-1.5 py-0.5 text-xs"
+                    value={backfill[t.id]?.snapshot_date ?? ""}
+                    onChange={(e) =>
+                      updateBackfill(t.id, { snapshot_date: e.target.value })
+                    }
+                  />
+                  <button
+                    onClick={() => void backfillMetrics(t)}
+                    className="bg-blue-600 text-white rounded px-3 py-1 text-xs hover:bg-blue-700"
+                  >
+                    回填
+                  </button>
+                  {backfillOk[t.id] !== undefined && (
+                    <span
+                      className={`text-xs ${
+                        backfillOk[t.id] ? "text-green-600" : "text-red-600"
+                      }`}
+                    >
+                      {backfillOk[t.id]
+                        ? "已录入（source=manual）"
+                        : "录入失败"}
+                    </span>
+                  )}
+                </div>
               </div>
             )}
           </li>

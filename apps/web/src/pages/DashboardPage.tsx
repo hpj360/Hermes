@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { get, post } from "../api";
+import type { RetrospectiveResponse } from "../types";
 
 interface Health {
   status: string;
@@ -59,6 +60,127 @@ function StatusDot({ ok }: { ok: boolean }) {
       className={`inline-block w-2.5 h-2.5 rounded-full ${ok ? "bg-green-500" : "bg-red-500"}`}
       title={ok ? "healthy" : "unhealthy"}
     />
+  );
+}
+
+const SOURCE_LABELS: Record<string, string> = {
+  adapter: "真实回采",
+  manual: "人工回填",
+  simulation: "模拟",
+};
+
+function RetrospectiveCard() {
+  const [retro, setRetro] = useState<RetrospectiveResponse | null>(null);
+  const [days, setDays] = useState(7);
+
+  useEffect(() => {
+    let alive = true;
+    get<RetrospectiveResponse>(`/analytics/retrospective?days=${days}`)
+      .then((d) => alive && setRetro(d))
+      .catch(() => alive && setRetro(null));
+    return () => {
+      alive = false;
+    };
+  }, [days]);
+
+  const delta = (cur: number, prev: number) => {
+    if (prev === 0) return cur > 0 ? `+${cur}` : "—";
+    const pct = Math.round(((cur - prev) / prev) * 100);
+    return `${pct >= 0 ? "+" : ""}${pct}%`;
+  };
+  const deltaCls = (cur: number, prev: number) =>
+    cur >= prev ? "text-green-600" : "text-red-600";
+
+  const interactions = (s: RetrospectiveResponse["period"]) =>
+    s.total_likes + s.total_comments + s.total_shares;
+
+  return (
+    <div className="bg-white border rounded-lg p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-semibold">内容复盘</h2>
+        <div className="flex gap-1">
+          {[7, 14, 30].map((d) => (
+            <button
+              key={d}
+              onClick={() => setDays(d)}
+              className={`px-2 py-0.5 rounded text-xs ${
+                days === d ? "bg-slate-900 text-white" : "bg-gray-100 text-gray-600"
+              }`}
+            >
+              {d}天
+            </button>
+          ))}
+        </div>
+      </div>
+      {!retro ? (
+        <p className="text-sm text-gray-400">复盘数据不可达</p>
+      ) : (
+        <div className="space-y-3">
+          <div className="grid grid-cols-3 gap-3 text-center">
+            {(
+              [
+                ["浏览", retro.period.total_views, retro.previous_period.total_views],
+                ["点赞", retro.period.total_likes, retro.previous_period.total_likes],
+                [
+                  "总互动",
+                  interactions(retro.period),
+                  interactions(retro.previous_period),
+                ],
+              ] as [string, number, number][]
+            ).map(([label, cur, prev]) => (
+              <div key={label} className="bg-gray-50 rounded p-3">
+                <div className="text-2xl font-bold">{cur}</div>
+                <div className="text-xs text-gray-500">
+                  {label}（{retro.days}天）
+                </div>
+                <div className={`text-xs font-medium ${deltaCls(cur, prev)}`}>
+                  vs 上期 {delta(cur, prev)}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap gap-1 text-xs">
+            {Object.entries(retro.source_counts).map(([src, cnt]) => (
+              <span
+                key={src}
+                className={`rounded px-1.5 py-0.5 ${
+                  src === "adapter"
+                    ? "bg-green-100 text-green-700"
+                    : src === "manual"
+                      ? "bg-blue-100 text-blue-700"
+                      : "bg-gray-100 text-gray-600"
+                }`}
+              >
+                {SOURCE_LABELS[src] ?? src} ×{cnt}
+              </span>
+            ))}
+            {Object.keys(retro.source_counts).length === 0 && (
+              <span className="text-gray-400">本期无数据回填</span>
+            )}
+          </div>
+
+          {retro.top_contents.length > 0 && (
+            <div>
+              <h3 className="text-xs text-gray-500 mb-1">互动 Top 5</h3>
+              <ul className="space-y-1">
+                {retro.top_contents.map((t) => (
+                  <li
+                    key={t.content_id}
+                    className="flex items-center justify-between text-sm"
+                  >
+                    <span className="truncate pr-2">{t.title}</span>
+                    <span className="text-xs text-gray-500 whitespace-nowrap">
+                      互动{t.interactions} · 浏览{t.views}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -207,6 +329,8 @@ export default function DashboardPage() {
               </ul>
             )}
           </div>
+
+          <RetrospectiveCard />
         </div>
 
         {/* 右 40%：待我处理（待办 + 需关注 jobs） */}

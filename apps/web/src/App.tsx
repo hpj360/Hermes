@@ -6,6 +6,7 @@ import MemoryPage from "./pages/MemoryPage";
 import ContentPage from "./pages/ContentPage";
 import PublishPage from "./pages/PublishPage";
 import TopicsPage from "./pages/TopicsPage";
+import CalendarPage from "./pages/CalendarPage";
 import SkillsPage from "./pages/SkillsPage";
 import { TOKEN_KEY } from "./api";
 
@@ -15,6 +16,7 @@ const NAV = [
   { href: "/jobs", label: "任务运行" },
   { href: "/memory", label: "记忆" },
   { href: "/topics", label: "内容" },
+  { href: "/calendar", label: "发布日历" },
   { href: "/skills", label: "技能" },
 ];
 
@@ -68,6 +70,7 @@ export default function App() {
           <Route path="/jobs" component={JobsPage} />
           <Route path="/memory" component={MemoryPage} />
           <Route path="/topics" component={TopicsPage} />
+          <Route path="/calendar" component={CalendarPage} />
           <Route path="/content" component={ContentPage} />
           <Route path="/publish" component={PublishPage} />
           <Route path="/skills" component={SkillsPage} />
