@@ -17,6 +17,7 @@ __all__ = [
     "get_trigger_store",
     "register_daily_collection_trigger",
     "register_publish_trigger",
+    "register_weekly_report_trigger",
     "list_triggers",
     "enable_trigger",
     "disable_trigger",
@@ -131,6 +132,40 @@ def register_publish_trigger(cron_expr: str, content_id: Any, platform: str) -> 
         type="publish",
         content_id=str(content_id),
         platform=platform,
+    )
+    return trigger.trigger_id
+
+
+def register_weekly_report_trigger(cron_expr: str = "0 20 * * 1") -> str:
+    """注册"C1 自动周报" Cron 触发器（默认每周一 20:00）。
+
+    job 经 ContentTeamTaskScheduler 分发到 weekly_report（聚合复盘 + 飞书
+    投递，静默优先）。
+    """
+    store = get_trigger_store()
+    trigger = Trigger(
+        job_template={
+            "type": "weekly_report",
+            "target_project": "content-team",
+            "payload": {"days": 7},
+            "task": {
+                "task_id": "content_team_weekly_report",
+                "mode": "oneshot",
+                "max_rounds": 1,
+                "max_runs": 1,
+                "goal": {"type": "weekly_report", "payload": {"days": 7}},
+            },
+        },
+        trigger_type="cron",
+        config={"cron": cron_expr},
+    )
+    store.save(trigger)
+    log_event(
+        "trigger_registered",
+        "注册 C1 自动周报触发器",
+        trigger_id=trigger.trigger_id,
+        cron=cron_expr,
+        type="weekly_report",
     )
     return trigger.trigger_id
 

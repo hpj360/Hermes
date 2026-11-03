@@ -104,6 +104,19 @@ async def _run_collect(payload: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, "collected": collected}
 
 
+async def _run_weekly_report(payload: dict[str, Any]) -> dict[str, Any]:
+    """C1 自动周报：聚合复盘 → 周报投递（静默优先/死信兜底）。"""
+    from hermes.content_team.weekly_report import run_weekly_report_for_payload
+
+    raw_days = payload.get("days", 7)
+    try:
+        days = int(raw_days)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        days = 7
+    days = 7 if days <= 0 else min(days, 30)
+    return run_weekly_report_for_payload(days)
+
+
 def execute_content_team_task(task: Any) -> dict[str, Any]:
     """按 task.goal 的 type 分发执行 content_team 业务，返回结果字典。
 
@@ -122,6 +135,8 @@ def execute_content_team_task(task: Any) -> dict[str, Any]:
         coro = _run_publish(payload)
     elif task_type == "collect":
         coro = _run_collect(payload)
+    elif task_type == "weekly_report":
+        coro = _run_weekly_report(payload)
     else:
         return {"ok": False, "error": f"unknown content_team task type: {task_type!r}"}
 

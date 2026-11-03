@@ -184,6 +184,9 @@ class Settings(BaseSettings):
     feishu_verification_token: str | None = Field(
         default=None, alias="FEISHU_VERIFICATION_TOKEN"
     )
+    feishu_report_chat_id: str | None = Field(
+        default=None, alias="FEISHU_REPORT_CHAT_ID"
+    )
 
     # -------------------------------------------------------------------------
     # Tools / search / media
