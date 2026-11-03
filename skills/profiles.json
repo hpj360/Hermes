@@ -1,0 +1,75 @@
+{
+  "version": "1.0",
+  "note": "场景化 skill 隔离配置。每个场景声明其可用的 skill 子集：内容运营场景不加载工程 skill，工程场景不加载运营 skill，减少不合场景的使用。skill 可同时归属多个场景（显式声明的重叠），但覆盖校验要求每个已安装 skill 至少归属一个场景。未在此声明的场景名视为无效（discover 会拒绝）。",
+  "scenarios": {
+    "content-creation": {
+      "description": "内容运营：选题研究、创作、媒体生成、发布与复盘（酒类/调酒账号）",
+      "skills": [
+        "xhs-hot-notes",
+        "douyin-hotlist",
+        "banned-words-check",
+        "douyin-reader",
+        "wechat-reader",
+        "youtube-watcher",
+        "media-generation",
+        "media-use",
+        "seedance2-video-gen",
+        "hyperframes",
+        "remotion-video-toolkit",
+        "video-cut",
+        "summarize",
+        "research",
+        "brave-search",
+        "tavily-search",
+        "aipm-news-digest",
+        "notion",
+        "obsidian",
+        "grounded-citations",
+        "agent-browser",
+        "content-extraction"
+      ]
+    },
+    "engineering": {
+      "description": "软件工程：代码协作、架构、质量、前端与技能维护",
+      "skills": [
+        "github",
+        "code-review",
+        "codebase-design",
+        "diagnosing-bugs",
+        "resolving-merge-conflicts",
+        "improve-codebase-architecture",
+        "loop-engineering",
+        "skill-creator",
+        "skill-manager",
+        "self-improving-agent",
+        "component-library-selector",
+        "frontend-design",
+        "liquid-glass-builder",
+        "prototype",
+        "prototype-validator",
+        "storybook-chromatic",
+        "ui-design-system",
+        "ui-review-checklist",
+        "style-dictionary-sync",
+        "to-spec",
+        "to-tickets",
+        "triage",
+        "design-spec-skill-creator",
+        "domain-modeling",
+        "figma-reader",
+        "product-manager"
+      ]
+    },
+    "workspace": {
+      "description": "通用工作台：信息查询、工具与项目协作",
+      "skills": [
+        "find-skills",
+        "wayfinder",
+        "weather",
+        "stock-analysis",
+        "trello",
+        "notion"
+      ]
+    }
+  }
+}

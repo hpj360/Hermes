@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -35,9 +36,22 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 
 def cmd_skills_list(args: argparse.Namespace) -> int:
-    skills = discover_skills()
+    scenario = getattr(args, "scenario", None)
+    if scenario is not None:
+        try:
+            skills = discover_skills(scenario=scenario)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return 1
+        print(f"Installed skills in scenario '{scenario}' ({len(skills)}):")
+    else:
+        skills = discover_skills()
+        if not skills:
+            print(f"No skills found in {skills_dir()}")
+            return 0
+        print(f"Installed skills ({len(skills)}):")
     if not skills:
-        print(f"No skills found in {skills_dir()}")
+        print("  （该场景无匹配 skill）")
         return 0
     if getattr(args, "untested", False):
         untested = [s for s in skills if not (s.manifest and s.manifest.tested)]
@@ -45,7 +59,6 @@ def cmd_skills_list(args: argparse.Namespace) -> int:
         for s in untested:
             print(f"  - {s.name}")
         return 0
-    print(f"Installed skills ({len(skills)}):")
     for s in skills:
         meta_desc = ""
         if s.meta and isinstance(s.meta, dict):
@@ -157,6 +170,28 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if not settings.openclaw_gateway_token:
         warnings.append("OPENCLAW_GATEWAY_TOKEN is unset (recommended for production)")
 
+    # 内容运营集成状态（联调就绪度，缺配置仅为提示不判错）
+    honghu_base = os.getenv("HERMES_HONGHU_BASE_URL", "").strip()
+    honghu_key = os.getenv("HERMES_HONGHU_API_KEY", "").strip()
+    if honghu_base and honghu_key:
+        honghu_status = f"configured ({honghu_base})"
+    else:
+        honghu_status = "not configured → /api/trends falls back to fixture"
+        warnings.append(
+            "HERMES_HONGHU_BASE_URL / HERMES_HONGHU_API_KEY unset; "
+            "trend data is fixture samples (dev/demo only)"
+        )
+
+    from hermes.content_team.agent_context import (
+        resolve_skill_scenario,
+    )
+
+    try:
+        active_scenario = resolve_skill_scenario() or "none (all skills)"
+    except ValueError as exc:
+        active_scenario = f"invalid → {exc}"
+        issues.append(f"HERMES_SKILL_SCENARIO: {exc}")
+
     skills_count = len(discover_skills())
     docs_count = len(list_knowledge_docs())
 
@@ -167,6 +202,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"Skills installed: {skills_count}")
     print(f"Knowledge docs:  {docs_count}")
     print(f"Providers ready: {', '.join(providers) or '(none)'}")
+    print(f"Skill scenario:  {active_scenario}")
+    print(f"Trend source:    {honghu_status}")
     print()
 
     if warnings:
@@ -369,6 +406,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--untested",
         action="store_true",
         help="Only list skills without a test_command in manifest.yaml",
+    )
+    p_list.add_argument(
+        "--scenario",
+        default=None,
+        help="Filter by scenario declared in skills/profiles.json "
+        "(e.g. content-creation / engineering / workspace)",
     )
     p_list.set_defaults(func=cmd_skills_list)
 

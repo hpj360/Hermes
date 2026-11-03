@@ -11,7 +11,9 @@ from hermes.content_team.api.content import (
 )
 from hermes.content_team.api.members import router as members_router
 from hermes.content_team.api.publish import router as publish_router
+from hermes.content_team.api.runtime import router as runtime_router
 from hermes.content_team.api.topics import router as topics_router
+from hermes.content_team.api.trends import router as trends_router
 
 api_router = APIRouter(dependencies=[Depends(require_api_token)])
 api_router.include_router(topics_router, prefix="/api/topics", tags=["topics"])
@@ -26,4 +28,10 @@ api_router.include_router(publish_router, prefix="/api", tags=["publish"])
 # 数据分析与指标采集：/api/analytics
 api_router.include_router(
     analytics_router, prefix="/api/analytics", tags=["analytics"]
+)
+# 趋势数据源：/api/trends（爆款笔记/热榜/导入选题）
+api_router.include_router(trends_router, prefix="/api/trends", tags=["trends"])
+# 运行时装配：/api/runtime（场景化 skill 目录）
+api_router.include_router(
+    runtime_router, prefix="/api/runtime", tags=["runtime"]
 )

@@ -1,7 +1,7 @@
 """选题 API：CRUD + 评分 + 领取。"""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import cast
 from uuid import UUID
 
@@ -29,6 +29,7 @@ class TopicCreate(BaseModel):
     priority: int = Field(default=3, ge=1, le=5)
     target_platforms: list[str] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)
+    planned_date: date | None = None
     status: TopicStatus = TopicStatus.PENDING
 
 
@@ -41,6 +42,7 @@ class TopicUpdate(BaseModel):
     status: TopicStatus | None = None
     target_platforms: list[str] | None = None
     keywords: list[str] | None = None
+    planned_date: date | None = None
     assigned_to: UUID | None = None
 
 
@@ -56,6 +58,7 @@ class TopicResponse(BaseModel):
     status: TopicStatus
     target_platforms: list[str]
     keywords: list[str]
+    planned_date: date | None = None
     assigned_to: UUID | None = None
     created_at: datetime
     updated_at: datetime
@@ -146,6 +149,80 @@ async def import_topic_library(
     return TopicImportResult(
         imported=len(topics), topics=cast("list[TopicResponse]", topics)
     )
+
+
+# ---------------------------------------------------------------------------
+# 内容日历（缺口2）
+# ---------------------------------------------------------------------------
+
+
+class CalendarEntry(BaseModel):
+    """某排期日下的选题条目（精简视图）。"""
+
+    id: UUID
+    title: str
+    status: TopicStatus
+    priority: int
+    target_platforms: list[str]
+
+
+class CalendarDay(BaseModel):
+    """日历单日聚合。"""
+
+    planned_date: date
+    count: int
+    topics: list[CalendarEntry]
+
+
+@router.get("/calendar", response_model=list[CalendarDay])
+async def topic_calendar(
+    start: date | None = None,
+    days: int = 30,
+    db: AsyncSession = Depends(get_db),
+) -> list[CalendarDay]:
+    """内容日历：按 planned_date 分组返回窗口内的排期选题。
+
+    - ``start``：窗口起点（默认今日 UTC）
+    - ``days``：窗口长度（1-90）
+    """
+    if days < 1 or days > 90:
+        raise HTTPException(status_code=400, detail="days 须在 1-90 之间")
+    window_start = start or datetime.now(timezone.utc).date()
+    end = window_start + timedelta(days=days)
+
+    stmt = (
+        select(Topic)
+        .where(
+            Topic.planned_date.is_not(None),
+            Topic.planned_date >= window_start,
+            Topic.planned_date < end,
+        )
+        .order_by(Topic.planned_date.asc(), Topic.priority.asc())
+    )
+    result = await db.execute(stmt)
+    topics = list(result.scalars().all())
+
+    grouped: dict[date, list[CalendarEntry]] = {}
+    for t in topics:
+        key = t.planned_date
+        assert key is not None  # 查询条件已过滤
+        grouped.setdefault(key, []).append(
+            CalendarEntry(
+                id=t.id,
+                title=t.title,
+                status=t.status,
+                priority=t.priority,
+                target_platforms=t.target_platforms,
+            )
+        )
+    return [
+        CalendarDay(
+            planned_date=key,
+            count=len(entries),
+            topics=entries,
+        )
+        for key, entries in sorted(grouped.items())
+    ]
 
 
 @router.get("", response_model=list[TopicResponse])

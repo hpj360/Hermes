@@ -319,3 +319,131 @@ async def test_create_content_auto_creates_version_one(client):
     assert versions[0]["title"] == "初始标题"
     assert versions[0]["body"] == "初始正文"
     assert versions[0]["content_id"] == cid
+
+
+# ---------------------------------------------------------------------------
+# 创作 SOP 化（IT-2）
+# ---------------------------------------------------------------------------
+
+
+async def _create_topic(client, title="金汤力入门", keywords=None):
+    """创建选题并返回其 ID。"""
+    resp = await client.post(
+        "/api/topics",
+        json={
+            "title": title,
+            "keywords": keywords or ["金汤力", "居家调酒"],
+            "target_platforms": ["XIAOHONGSHU"],
+        },
+    )
+    assert resp.status_code == 201
+    return resp.json()["id"]
+
+
+async def test_generate_draft_endpoint(client):
+    """POST /api/topics/{id}/draft 返回候选标题/正文/标签。"""
+    tid = await _create_topic(client)
+    resp = await client.post(f"/api/topics/{tid}/draft?platform=XIAOHONGSHU")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["title"]
+    assert len(data["title_candidates"]) >= 1
+    assert len(data["title_candidates"]) <= 6
+    # 小红书标题限制 20 字
+    for c in data["title_candidates"]:
+        assert len(c) <= 20
+    assert data["body"]
+    assert len(data["hashtags"]) >= 2
+    assert data["platform"] == "XIAOHONGSHU"
+
+
+async def test_generate_draft_topic_not_found(client):
+    """不存在的选题返回 404。"""
+    resp = await client.post(
+        "/api/topics/00000000-0000-0000-0000-000000000000/draft"
+    )
+    assert resp.status_code == 404
+
+
+async def test_generate_draft_invalid_platform(client):
+    """不支持的平台返回 400。"""
+    tid = await _create_topic(client)
+    resp = await client.post(f"/api/topics/{tid}/draft?platform=UNKNOWN")
+    assert resp.status_code == 400
+
+
+async def test_validate_content_passes(client):
+    """POST /api/content/validate 对合规内容返回 passed。"""
+    resp = await client.post(
+        "/api/content/validate",
+        json={
+            "title": "金汤力入门",
+            "body": "今天分享一款居家调酒\n\n金酒 50ml、汤力水 150ml\n\n关注我 #金汤力 #居家调酒 #调酒入门",
+            "platform": "XIAOHONGSHU",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["passed"] is True
+    assert data["compliance_passed"] is True
+    assert data["blocking"] == []
+
+
+async def test_validate_content_blocks_on_compliance(client):
+    """合规红线内容校验不通过。"""
+    resp = await client.post(
+        "/api/content/validate",
+        json={
+            "title": "未成年人饮酒指南",
+            "body": "正文\n\n#标签1 #标签2 #标签3",
+            "platform": "XIAOHONGSHU",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["passed"] is False
+    assert data["compliance_passed"] is False
+    assert any("合规红线" in b for b in data["blocking"])
+
+
+async def test_validate_content_blocks_on_title_limit(client):
+    """标题超限返回 blocking。"""
+    resp = await client.post(
+        "/api/content/validate",
+        json={
+            "title": "x" * 25,
+            "body": "正文\n\n#标签1 #标签2 #标签3",
+            "platform": "XIAOHONGSHU",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["passed"] is False
+    assert any("标题超过" in e for e in data["platform_errors"])
+
+
+async def test_validate_content_with_topic_coverage(client):
+    """携带 topic_id 时返回关键词覆盖。"""
+    tid = await _create_topic(client, keywords=["金汤力", "居家调酒"])
+    resp = await client.post(
+        "/api/content/validate",
+        json={
+            "title": "金汤力入门",
+            "body": "居家调酒分享\n\n#金汤力 #居家调酒 #调酒入门",
+            "platform": "XIAOHONGSHU",
+            "topic_id": tid,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["keyword_coverage"]["金汤力"] is True
+    assert data["keyword_coverage"]["居家调酒"] is True
+
+
+async def test_validate_content_invalid_platform(client):
+    """不支持的平台返回 400。"""
+    resp = await client.post(
+        "/api/content/validate",
+        json={"title": "标题", "body": "正文", "platform": "UNKNOWN"},
+    )
+    assert resp.status_code == 400

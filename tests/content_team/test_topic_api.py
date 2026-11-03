@@ -302,6 +302,77 @@ async def test_create_topic_with_keywords(client):
     assert data["keywords"] == ["金酒", "居家调酒"]
 
 
+# ---------------------------------------------------------------------------
+# 内容日历（缺口2）
+# ---------------------------------------------------------------------------
+
+
+async def test_schedule_topic_via_update(client):
+    """PUT /api/topics/{id} 可设置/清除 planned_date。"""
+    create = await client.post(
+        "/api/topics", json={"title": "排期选题", "target_platforms": []}
+    )
+    tid = create.json()["id"]
+    assert create.json()["planned_date"] is None
+
+    resp = await client.put(
+        f"/api/topics/{tid}", json={"planned_date": "2026-10-01"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["planned_date"] == "2026-10-01"
+
+    cleared = await client.put(
+        f"/api/topics/{tid}", json={"planned_date": None}
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["planned_date"] is None
+
+
+async def test_topic_calendar_groups_by_date(client):
+    """GET /api/topics/calendar 按排期日分组。"""
+    for title, day in (
+        ("选题A", "2026-10-05"),
+        ("选题B", "2026-10-05"),
+        ("选题C", "2026-10-20"),
+    ):
+        await client.post(
+            "/api/topics",
+            json={"title": title, "planned_date": day, "target_platforms": []},
+        )
+    # 未排期选题不进日历
+    await client.post(
+        "/api/topics", json={"title": "无排期", "target_platforms": []}
+    )
+
+    resp = await client.get("/api/topics/calendar?start=2026-10-01&days=30")
+    assert resp.status_code == 200
+    data = resp.json()
+    dates = [d["planned_date"] for d in data]
+    assert dates == ["2026-10-05", "2026-10-20"]
+
+    day1 = data[0]
+    assert day1["count"] == 2
+    assert [t["title"] for t in day1["topics"]] == ["选题A", "选题B"]
+
+
+async def test_topic_calendar_excludes_out_of_window(client):
+    """窗口外排期不返回。"""
+    await client.post(
+        "/api/topics",
+        json={"title": "远处选题", "planned_date": "2027-12-31", "target_platforms": []},
+    )
+    resp = await client.get("/api/topics/calendar?start=2026-10-01&days=30")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+async def test_topic_calendar_days_validation(client):
+    resp = await client.get("/api/topics/calendar?days=0")
+    assert resp.status_code == 400
+    resp = await client.get("/api/topics/calendar?days=999")
+    assert resp.status_code == 400
+
+
 async def test_member_create_and_list(client):
     """成员 API：创建后可在列表中查到。"""
     resp = await client.post(

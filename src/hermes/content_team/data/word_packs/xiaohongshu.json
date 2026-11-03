@@ -1,0 +1,28 @@
+{
+  "platform": "xiaohongshu",
+  "version": "starter-2026-09",
+  "note": "起步词库：基于广告法与平台公开社区规则的常见敏感词整理，非官方全量词库。接入官方违禁词服务后应整体替换/升级。",
+  "rules": [
+    {
+      "rule_id": "xhs_offsite_deal",
+      "name": "站外交易引导",
+      "severity": "WARN",
+      "keywords": ["价格私聊", "私聊下单", "线下交易", "闲鱼同款", "直接转账"],
+      "message": "小红书限制站外交易引导，建议改为站内合规表述"
+    },
+    {
+      "rule_id": "xhs_effect_promise",
+      "name": "功效承诺",
+      "severity": "WARN",
+      "keywords": ["解酒", "醒酒", "护肝", "加速代谢", "不上头", "喝了不长胖"],
+      "message": "酒类功效表述需谨慎，建议改为个人主观感受"
+    },
+    {
+      "rule_id": "xhs_fake_engagement",
+      "name": "虚构互动",
+      "severity": "BLOCK",
+      "keywords": ["互赞互藏", "互关必回", "刷赞", "刷收藏"],
+      "message": "平台明确禁止互动作弊相关内容"
+    }
+  ]
+}

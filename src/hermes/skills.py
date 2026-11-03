@@ -326,8 +326,12 @@ def _parse_frontmatter_lines(lines: list[str]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def discover_skills() -> list[SkillInfo]:
-    """Scan the skills directory and return metadata for each skill found."""
+def discover_skills(scenario: str | None = None) -> list[SkillInfo]:
+    """Scan the skills directory and return metadata for each skill found.
+
+    ``scenario`` 非空时按 ``skills/profiles.json`` 声明的场景过滤（场景隔离），
+    仅返回该场景声明的 skill；未声明场景名抛 ``ValueError``。
+    """
     root = skills_dir()
     if not root.exists():
         return []
@@ -344,7 +348,7 @@ def discover_skills() -> list[SkillInfo]:
                 meta = json.loads(meta_json.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 meta = None
-        # 从 SKILL.md frontmatter 提取 description
+        # 从 SKILL.md frontmatter 读取 description
         description = ""
         if skill_md.exists():
             fm = parse_skill_frontmatter(skill_md)
@@ -362,7 +366,61 @@ def discover_skills() -> list[SkillInfo]:
                 manifest=load_skill_manifest(entry.name),
             )
         )
+
+    if scenario is not None:
+        allowed = skills_for_scenario(scenario)
+        result = [s for s in result if s.name in allowed]
     return result
+
+
+# ---------------------------------------------------------------------------
+# 场景化隔离（profiles.json）
+# ---------------------------------------------------------------------------
+
+
+def load_skill_profiles() -> dict[str, dict[str, Any]]:
+    """加载 ``skills/profiles.json`` 场景声明。
+
+    返回 ``{scenario_name: {"description": str, "skills": [str]}}``；
+    文件缺失或格式不符时返回空字典（无场景过滤能力，行为同 v0.8 前）。
+    """
+    path = skills_dir() / "profiles.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    scenarios = data.get("scenarios")
+    if not isinstance(scenarios, dict):
+        return {}
+    return {
+        name: {
+            "description": str(item.get("description", "")),
+            "skills": list(item.get("skills", [])),
+        }
+        for name, item in scenarios.items()
+        if isinstance(item, dict)
+    }
+
+
+def scenario_names() -> list[str]:
+    """返回已声明的场景名列表（保持声明顺序）。"""
+    return list(load_skill_profiles().keys())
+
+
+def skills_for_scenario(scenario: str) -> set[str]:
+    """返回指定场景允许的 skill 名集合。
+
+    :raises ValueError: 场景未在 profiles.json 中声明时
+    """
+    profiles = load_skill_profiles()
+    if scenario not in profiles:
+        known = "、".join(profiles) if profiles else "（无声明）"
+        raise ValueError(
+            f"未声明的场景: {scenario}，可用场景: {known}"
+        )
+    return set(profiles[scenario]["skills"])
 
 
 def get_skill_description(name: str) -> str:
@@ -445,3 +503,68 @@ def list_knowledge_docs() -> list[Path]:
         (p for p in root.glob("*.md") if p.is_file()),
         key=lambda p: p.name,
     )
+
+
+# ---------------------------------------------------------------------------
+# 知识条目 L0/L1/L2 分层发现（吸收 OpenViking 分层上下文思想）
+# ---------------------------------------------------------------------------
+
+
+def discover_knowledge(domain: str | None = None) -> list[dict[str, Any]]:
+    """递归扫描 ``knowledge/**/*.md`` 并解析 L0/L1 元数据条目。
+
+    约定（吸收自 OpenViking 分层加载语义，BRAIN'S md 权威源不变）：
+    - frontmatter ``summary`` = L0（一句话摘要，目录级判断相关性）
+    - frontmatter ``overview`` = L1（核心要点与适用场景）
+    - 正文全文 = L2（按需加载）
+    - ``domain``：首个子目录名（如 ``content-ops``）；根级文件归 ``general``
+
+    :param domain: 按域过滤（不区分大小写）；None 返回全部
+    """
+    root = knowledge_dir()
+    if not root.exists():
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for path in sorted(root.rglob("*.md")):
+        rel = path.relative_to(root)
+        domain_of = rel.parts[0].strip() if len(rel.parts) > 1 else "general"
+        if domain is not None and domain_of.lower() != domain.lower():
+            continue
+        text = path.read_text(encoding="utf-8")
+        fm = parse_skill_frontmatter(path)
+        body = _strip_frontmatter_block(text).lstrip("\n")
+        entries.append(
+            {
+                "name": rel.with_suffix("").as_posix(),
+                "path": str(path),
+                "domain": domain_of,
+                "title": str(fm.get("title") or path.stem),
+                "summary": str(fm.get("summary") or "").strip(),
+                "overview": _strip_block_indent(fm.get("overview")),
+                "type": str(fm.get("type") or "reference"),
+                "content": body,
+            }
+        )
+    return entries
+
+
+def _strip_block_indent(value: Any) -> str:
+    """去掉块标量每行公共缩进（skills 级 frontmatter 解析不剥缩进）。"""
+    text = str(value or "")
+    return "\n".join(line.strip() for line in text.splitlines()).strip()
+
+
+def _strip_frontmatter_block(text: str) -> str:
+    """去掉 ``---...---`` frontmatter 块，返回正文。"""
+    if not text.startswith("---"):
+        return text
+    lines = text.splitlines(keepends=True)
+    end = None
+    for idx, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            end = idx
+            break
+    if end is None:
+        return text
+    return "".join(lines[end + 1 :])

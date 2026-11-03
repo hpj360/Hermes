@@ -14,6 +14,10 @@ from hermes.content_team.compliance import (
     check_compliance,
 )
 from hermes.content_team.db import get_db
+from hermes.content_team.originality import (
+    OriginalityRef,
+    check_originality,
+)
 from hermes.content_team.models.platform import Platform, PlatformAccount
 from hermes.content_team.models.publish import PublishStatus, PublishTask
 from hermes.content_team.observability import log_event
@@ -111,6 +115,7 @@ class ComplianceCheckRequest(BaseModel):
 
     title: str = Field(..., min_length=1)
     body: str = ""
+    platform: str | None = None
 
 
 class ComplianceHitResponse(BaseModel):
@@ -356,8 +361,9 @@ async def compliance_check(
     """发布前合规预检：对标题与正文做红线扫描，返回报告。
 
     不写入数据库，纯只读扫描，用于内容创作/发布前自查。
+    ``platform`` 非空时叠加对应平台词包（xiaohongshu/douyin/wechat_official）。
     """
-    report = check_compliance(payload.title, payload.body)
+    report = check_compliance(payload.title, payload.body, payload.platform)
     return ComplianceReportResponse(
         passed=report.passed,
         blocking=[
@@ -383,4 +389,103 @@ async def compliance_check(
             for h in report.warnings
         ],
         summary=report.summary(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 机器原创性检查（字面层）
+# ---------------------------------------------------------------------------
+
+
+class OriginalityRequest(BaseModel):
+    """原创性检查请求体。"""
+
+    title: str = Field(..., min_length=1)
+    body: str = ""
+    min_similarity: float = Field(default=0.2, gt=0, le=1)
+    exclude_content_id: UUID | None = None
+
+
+class OriginalityHitResponse(BaseModel):
+    """原创性命中项。"""
+
+    ref_type: str
+    ref_id: str
+    ref_title: str
+    similarity: float
+    longest_common_run: str
+
+
+class OriginalityReportResponse(BaseModel):
+    """原创性报告。"""
+
+    checked: int
+    max_similarity: float
+    results: list[OriginalityHitResponse]
+    note: str
+
+
+@router.post("/originality/check", response_model=OriginalityReportResponse)
+async def originality_check(
+    payload: OriginalityRequest,
+    db: AsyncSession = Depends(get_db),
+) -> OriginalityReportResponse:
+    """机器原创性预检（字面层）：与库内内容/选题做双字组查重。
+
+    参考库 = 最近 200 条内容 + 全部选题（标题+描述）。
+    语义级/图片级查重不在本层，发布前仍需配合人工"原创性三查"。
+    """
+    from hermes.content_team.models.content import Content
+    from hermes.content_team.models.topic import Topic
+
+    references: list[OriginalityRef] = []
+
+    stmt = select(Content).order_by(Content.created_at.desc()).limit(200)
+    if payload.exclude_content_id is not None:
+        stmt = stmt.where(Content.id != payload.exclude_content_id)
+    contents = (await db.execute(stmt)).scalars().all()
+    for c in contents:
+        references.append(
+            OriginalityRef(
+                ref_type="content",
+                ref_id=str(c.id),
+                ref_title=c.title,
+                text=c.body or "",
+            )
+        )
+
+    topics = (await db.execute(select(Topic))).scalars().all()
+    for t in topics:
+        references.append(
+            OriginalityRef(
+                ref_type="topic",
+                ref_id=str(t.id),
+                ref_title=t.title,
+                text=t.description or "",
+            )
+        )
+
+    hits = check_originality(
+        payload.title,
+        payload.body,
+        references,
+        min_similarity=payload.min_similarity,
+    )
+    return OriginalityReportResponse(
+        checked=len(references),
+        max_similarity=max((h.similarity for h in hits), default=0.0),
+        results=[
+            OriginalityHitResponse(
+                ref_type=h.ref_type,
+                ref_id=h.ref_id,
+                ref_title=h.ref_title,
+                similarity=h.similarity,
+                longest_common_run=h.longest_common_run,
+            )
+            for h in hits
+        ],
+        note=(  # noqa: E501
+            "字面查重（双字组 Jaccard）。语义查/图片 pHash 不在覆盖范围，"
+            "发布前须配合人工原创性三查（见 banned-words-check skill）。"
+        ),
     )

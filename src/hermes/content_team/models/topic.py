@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
 
 import sqlalchemy as sa
@@ -45,6 +45,10 @@ class Topic(Base):
     )
     keywords: Mapped[list[str]] = mapped_column(
         sa.JSON, nullable=False, default=list
+    )
+    # 内容日历（缺口2）：选题的计划发布日；未排期为 NULL
+    planned_date: Mapped[Optional[date]] = mapped_column(
+        sa.Date, nullable=True, index=True
     )
     assigned_to: Mapped[Optional[uuid.UUID]] = mapped_column(
         GUID(), nullable=True

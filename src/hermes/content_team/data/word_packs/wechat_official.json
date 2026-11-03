@@ -1,0 +1,21 @@
+{
+  "platform": "wechat_official",
+  "version": "starter-2026-09",
+  "note": "起步词库：基于广告法与平台公开运营规范的常见敏感词整理，非官方全量词库。接入官方违禁词服务后应整体替换/升级。",
+  "rules": [
+    {
+      "rule_id": "wx_induce_share",
+      "name": "诱导分享",
+      "severity": "WARN",
+      "keywords": ["转发朋友圈", "集赞", "分享到群", "不转不是", "转发抽奖"],
+      "message": "微信公众平台禁止诱导分享类表述"
+    },
+    {
+      "rule_id": "wx_clickbait",
+      "name": "标题党",
+      "severity": "WARN",
+      "keywords": ["震惊", "速看", "删前必看", "惊天秘密", "不看后悔"],
+      "message": "标题党表述可能影响账号信用分"
+    }
+  ]
+}

@@ -15,8 +15,14 @@ async def upgrade_schema(connection: AsyncConnection) -> None:
     columns = await connection.run_sync(
         lambda sync_connection: sa.inspect(sync_connection).get_columns("topics")
     )
-    if any(column["name"] == "keywords" for column in columns):
-        return
-    await connection.execute(
-        sa.text("ALTER TABLE topics ADD COLUMN keywords JSON NOT NULL DEFAULT '[]'")
-    )
+    column_names = {column["name"] for column in columns}
+
+    if "keywords" not in column_names:
+        await connection.execute(
+            sa.text("ALTER TABLE topics ADD COLUMN keywords JSON NOT NULL DEFAULT '[]'")
+        )
+
+    if "planned_date" not in column_names:
+        await connection.execute(
+            sa.text("ALTER TABLE topics ADD COLUMN planned_date DATE")
+        )

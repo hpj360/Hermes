@@ -1,0 +1,28 @@
+{
+  "platform": "douyin",
+  "version": "starter-2026-09",
+  "note": "起步词库：基于广告法与平台公开社区规则的常见敏感词整理，非官方全量词库。接入官方违禁词服务后应整体替换/升级。",
+  "rules": [
+    {
+      "rule_id": "dy_price_absolute",
+      "name": "价格绝对化",
+      "severity": "BLOCK",
+      "keywords": ["全网最低", "史上最低", "全网底价", "破价", "全网第一低"],
+      "message": "价格绝对化用语违反广告法并触发平台审核"
+    },
+    {
+      "rule_id": "dy_induce_purchase",
+      "name": "诱导消费话术",
+      "severity": "WARN",
+      "keywords": ["错过再等一年", "手慢无", "最后一天", "不买后悔"],
+      "message": "诱导性话术可能触发平台限流，建议弱化"
+    },
+    {
+      "rule_id": "dy_alcohol_action",
+      "name": "饮酒动作展示",
+      "severity": "WARN",
+      "keywords": ["吹瓶", "闷一杯", "走一个", "走一个啊"],
+      "message": "避免展示劝酒/豪饮动作，建议替换为小口品尝等表述"
+    }
+  ]
+}

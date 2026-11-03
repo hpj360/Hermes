@@ -16,7 +16,13 @@ from hermes.content_team.models.content import (
     ContentStatus,
     ContentVersion,
 )
+from hermes.content_team.models.platform import Platform
 from hermes.content_team.models.topic import Topic
+from hermes.content_team.llm_draft import generate_llm_draft
+from hermes.content_team.sop import (
+    build_draft,
+    check_content,
+)
 
 router = APIRouter()
 topics_content_router = APIRouter()
@@ -77,6 +83,41 @@ class ContentVersionResponse(BaseModel):
     body: str
     created_at: datetime
     created_by: UUID | None = None
+
+
+class DraftResponse(BaseModel):
+    """选题生成的草稿响应体（不入库，供编辑）。"""
+
+    title: str
+    title_candidates: list[str]
+    title_candidates_detailed: list[dict[str, str]] = []
+    body: str
+    hashtags: list[str]
+    platform: str
+    title_limit: int
+    body_limit: int
+    source: str = "template"
+
+
+class ContentValidateRequest(BaseModel):
+    """内容校验请求体：直接传标题/正文/平台，无需入库。"""
+
+    title: str = Field(..., min_length=1)
+    body: str = ""
+    platform: str = "XIAOHONGSHU"
+    topic_id: UUID | None = None
+
+
+class ContentValidateResponse(BaseModel):
+    """内容校验响应体。"""
+
+    passed: bool
+    blocking: list[str]
+    platform_errors: list[str]
+    sop_warnings: list[str]
+    compliance_passed: bool
+    compliance_summary: str
+    keyword_coverage: dict[str, bool]
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +298,48 @@ async def humanize_content(
 
 
 # ---------------------------------------------------------------------------
+# 创作 SOP 化 · Checker：发布前全量校验
+# ---------------------------------------------------------------------------
+
+
+@router.post("/validate", response_model=ContentValidateResponse)
+async def validate_content(
+    payload: ContentValidateRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ContentValidateResponse:
+    """发布前内容全量校验（IT-2 创作 SOP 化 · Checker）。
+
+    校验维度：平台限制（标题/正文长度）、合规红线、SOP 结构、关键词覆盖。
+    不入库，纯只读校验。
+    """
+    content = Content(title=payload.title, body=payload.body)
+
+    try:
+        plat = Platform(payload.platform)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail=f"不支持的平台: {payload.platform}"
+        )
+
+    topic = None
+    if payload.topic_id is not None:
+        topic = await db.get(Topic, payload.topic_id)
+        if topic is None:
+            raise HTTPException(status_code=404, detail="Topic not found")
+
+    result = check_content(content, plat, topic)
+    return ContentValidateResponse(
+        passed=result.passed,
+        blocking=result.blocking,
+        platform_errors=result.platform_errors,
+        sop_warnings=result.sop_warnings,
+        compliance_passed=result.compliance.passed,
+        compliance_summary=result.compliance.summary(),
+        keyword_coverage=result.keyword_coverage,
+    )
+
+
+# ---------------------------------------------------------------------------
 # 基于选题创建内容
 # ---------------------------------------------------------------------------
 
@@ -284,3 +367,45 @@ async def create_content_from_topic(
     await db.commit()
     await db.refresh(content)
     return content
+
+
+@topics_content_router.post(
+    "/{topic_id}/draft", response_model=DraftResponse
+)
+async def generate_draft(
+    topic_id: UUID,
+    platform: str = "XIAOHONGSHU",
+    use_llm: bool = False,
+    db: AsyncSession = Depends(get_db),
+) -> DraftResponse:
+    """基于选题生成内容草稿（IT-2 创作 SOP 化 · Builder）。
+
+    按选题的标题方向/内容方向/关键词，结合平台长度限制，生成候选标题、
+    正文结构与标签。草稿不入库，前端编辑后调用 ``POST /api/content`` 入库。
+
+    ``use_llm=True`` 时走真实 LLM 创作（:func:`generate_llm_draft`），
+    失败自动回退模板；默认 ``False`` 保持确定性模板行为。
+    """
+    topic = await db.get(Topic, topic_id)
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    try:
+        plat = Platform(platform)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail=f"不支持的平台: {platform}"
+        )
+
+    draft = generate_llm_draft(topic, plat) if use_llm else build_draft(topic, plat)
+    return DraftResponse(
+        title=draft.title,
+        title_candidates=draft.title_candidates,
+        title_candidates_detailed=draft.title_candidates_detailed,
+        source=draft.source,
+        body=draft.body,
+        hashtags=draft.hashtags,
+        platform=draft.platform,
+        title_limit=draft.title_limit,
+        body_limit=draft.body_limit,
+    )

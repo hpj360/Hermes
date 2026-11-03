@@ -7,13 +7,21 @@
 
 规则来源：广告法（绝对化用语、医疗功效）、未成年人保护、酒类广告规范
 （不得诱导无节制饮酒/酒后驾驶）、平台导流规则。
+
+平台词包（Phase 2）：``data/word_packs/{platform}.json`` 提供平台扩展词库，
+通过 ``check_compliance(..., platform=...)`` 叠加到基础规则之上。
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 
 SEVERITY_BLOCK = "BLOCK"
 SEVERITY_WARN = "WARN"
+
+_WORD_PACK_DIR = Path(__file__).parent / "data" / "word_packs"
 
 
 @dataclass(frozen=True)
@@ -140,9 +148,11 @@ RULES: tuple[ComplianceRule, ...] = (
 )
 
 
-def _scan(text: str, source: str) -> list[ComplianceHit]:
+def _scan(
+    text: str, source: str, rules: tuple[ComplianceRule, ...] = RULES
+) -> list[ComplianceHit]:
     hits: list[ComplianceHit] = []
-    for rule in RULES:
+    for rule in rules:
         for kw in rule.keywords:
             start = 0
             while True:
@@ -163,10 +173,52 @@ def _scan(text: str, source: str) -> list[ComplianceHit]:
     return hits
 
 
-def check_compliance(title: str, body: str) -> ComplianceReport:
-    """对标题与正文执行合规检查，返回报告。"""
-    title_hits = _scan(title, "title")
-    body_hits = _scan(body, "body")
+@lru_cache(maxsize=16)
+def load_platform_rules(platform: str) -> tuple[ComplianceRule, ...]:
+    """加载平台扩展词包规则；词包文件缺失或为空时返回空元组。
+
+    ``platform`` 不区分大小写（如 ``xiaohongshu`` / ``XIAOHONGSHU``）。
+    """
+    path = _WORD_PACK_DIR / f"{platform.lower()}.json"
+    if not path.exists():
+        return ()
+    with path.open(encoding="utf-8") as f:
+        payload = json.load(f)
+    rules: list[ComplianceRule] = []
+    for item in payload.get("rules", []):
+        severity = item.get("severity", SEVERITY_WARN)
+        if severity not in (SEVERITY_BLOCK, SEVERITY_WARN):
+            raise ValueError(f"词包规则 severity 非法: {severity}")
+        keywords = tuple(item.get("keywords", []))
+        if not keywords:
+            continue
+        rules.append(
+            ComplianceRule(
+                rule_id=item["rule_id"],
+                name=item["name"],
+                severity=severity,
+                keywords=keywords,
+                message=item.get("message", ""),
+            )
+        )
+    return tuple(rules)
+
+
+def check_compliance(
+    title: str, body: str, platform: str | None = None
+) -> ComplianceReport:
+    """对标题与正文执行合规检查，返回报告。
+
+    ``platform``（如 ``XIAOHONGSHU`` / ``DOUYIN`` / ``WECHAT_OFFICIAL``）
+    非空时叠加对应平台词包规则；词包缺失时仅用基础规则。
+    """
+    rules: tuple[ComplianceRule, ...] = RULES
+    if platform:
+        pack = load_platform_rules(platform)
+        if pack:
+            rules = RULES + pack
+    title_hits = _scan(title, "title", rules)
+    body_hits = _scan(body, "body", rules)
     all_hits = title_hits + body_hits
     return ComplianceReport(
         title=title,
