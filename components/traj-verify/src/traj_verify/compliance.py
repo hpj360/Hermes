@@ -28,8 +28,9 @@ in sync with ``hermes.eval.compliance``'s engine half.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any
 
 __all__ = [
     "Action",

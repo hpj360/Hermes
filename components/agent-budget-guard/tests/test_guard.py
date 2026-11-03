@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from agent_budget_guard import (
     AGENT_FAILURE_THRESHOLD,
+    TIER_BUDGETS,
     BudgetGuard,
     DifficultyTier,
     RoleFailureTracker,
-    TIER_BUDGETS,
     TokenLimitBreaker,
     resolve_tier,
     tier_budget,

@@ -13,12 +13,12 @@ from traj_verify.compliance import (
 
 
 def _contract(**kw) -> AuditContract:
-    defaults = dict(
-        protected_paths=["evals/", "tests/"],
-        verdict_files=["result.json", "reward.txt"],
-        expected_literals=["42"],
-        network_allowed=False,
-    )
+    defaults: dict = {
+        "protected_paths": ["evals/", "tests/"],
+        "verdict_files": ["result.json", "reward.txt"],
+        "expected_literals": ["42"],
+        "network_allowed": False,
+    }
     defaults.update(kw)
     return AuditContract(**defaults)
 

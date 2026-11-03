@@ -39,11 +39,11 @@ from typing import Any
 
 __all__ = [
     "AGENT_FAILURE_THRESHOLD",
+    "TIER_BUDGETS",
     "BudgetGuard",
     "BudgetVerdict",
     "DifficultyTier",
     "RoleFailureTracker",
-    "TIER_BUDGETS",
     "TokenLimitBreaker",
     "TokenVerdict",
     "resolve_tier",
@@ -264,7 +264,7 @@ class BudgetGuard:
     history: list[int] = field(default_factory=list)
 
     @classmethod
-    def for_tier(cls, tier: DifficultyTier, used: int = 0) -> "BudgetGuard":
+    def for_tier(cls, tier: DifficultyTier, used: int = 0) -> BudgetGuard:
         """Build a guard with the loop-wide budget for *tier* (Layer 0 → 3)."""
         return cls(used=used, limit=tier_budget(tier))
 

@@ -2,11 +2,11 @@
 
 from .guard import (
     AGENT_FAILURE_THRESHOLD,
+    TIER_BUDGETS,
     BudgetGuard,
     BudgetVerdict,
     DifficultyTier,
     RoleFailureTracker,
-    TIER_BUDGETS,
     TokenLimitBreaker,
     TokenVerdict,
     resolve_tier,
@@ -15,11 +15,11 @@ from .guard import (
 
 __all__ = [
     "AGENT_FAILURE_THRESHOLD",
+    "TIER_BUDGETS",
     "BudgetGuard",
     "BudgetVerdict",
     "DifficultyTier",
     "RoleFailureTracker",
-    "TIER_BUDGETS",
     "TokenLimitBreaker",
     "TokenVerdict",
     "resolve_tier",
