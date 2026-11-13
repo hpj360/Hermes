@@ -16,6 +16,7 @@
 | GEPA 自进化 | gepa.py + gepa_mutation.py + gepa_stats.py + loop_gepa.py | ✅ 可用（需 LLM） | 自动 variant + split-run t 检验 + 失败轨迹蒸馏入记忆；红队 variant 演练（P3-1）；反思式变异 + 帕累托候选池 + 冻结区（P5，《Agent优化之GEPA》方法论落地）；**前沿产品化**：帕累托前沿落成 lite/medium/heavy 三档可下发代表（P4，HarnessPro 方法论，只从成功变体中选） |
 | 评估体系（Rubric） | rubric.py（版本化 Rubric + 加权评分 + 证据） | ✅ 生产可用 | P1-A：fan-in 每轮产出 rubric_score（可解释、带版本）；结构化失败协议解析单一事实源 |
 | 实验可观测 | gepa_dashboard.py + `loop dashboard` CLI | ✅ 生产可用 | P1-B：跨实验分数大盘（成功率/Winner/最佳分）+ 按 benchmark 分数趋势；只读零副作用 |
+| 项目知识治理 | knowledge_ledger.py + aggregate_results 接线 | ✅ 可用（P5） | 失败按知识层归因（工程事实/项目语义/历史经验/约束未执行；无证据落 unattributed 不硬套模板）→ 附加到每轮 summary 指导修法；知识陈述版本化 + 撤回级联（依赖者进 needs_review，`trusted()` 只放行 active）——借鉴腾讯 TDB Agent Memory 本体/RSI 实践 |
 | 上下文工程 | context.py + llm.py KV-cache 追踪 | ✅ 生产可用 | 稳定前缀契约 + env_summary 缓存 + AGENTS.md 层级加载 + sort_keys 确定性序列化 |
 | 记忆系统 | workbench/memory.py | ✅ 生产可用 | L1/L2/L3 + FTS5 + 向量 embedding + 5 路 RRF + 外部后端协议（ADR-0021） |
 | LLM 客户端 | workbench/llm.py | ✅ 生产可用 | 7+ provider、stream/retry/token 计数、工具遮蔽（保 KV-cache 前缀稳定） |

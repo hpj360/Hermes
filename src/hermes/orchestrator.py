@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from hermes.config import get_settings
+from hermes.knowledge_ledger import format_attribution_section
 from hermes.path_policy import matches_denylist
 from hermes.presets import apply_prompt_sections, merged_presets, resolve_preset
 # Structured failure protocol 解析已下沉到 hermes.rubric（单一事实源）：
@@ -1096,6 +1097,12 @@ class Orchestrator:
             recovery_section = format_recovery_section(diagnostics)
             if recovery_section:
                 summary = f"{summary}\n{recovery_section}"
+            # 知识层归因：回答「这次失败暴露的是哪一层项目知识缺失」。
+            # 与上面的工具自愈互补——那边是「这次调用怎么失败的」，
+            # 这边决定下一轮该补工程事实、项目语义、经验适用范围还是一项检查。
+            attribution_section = format_attribution_section(failure_items)
+            if attribution_section:
+                summary = f"{summary}\n{attribution_section}"
 
         # P1-A 评估资产化：对本轮 checker 报告按版本化 Rubric 加权评分。
         # 有 checker 报告才评分（无 checker 的 round 维持 None，不伪造分数）。
