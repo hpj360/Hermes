@@ -443,6 +443,53 @@ class SteeringCommand:
 STEERING_POLL_INTERVAL = 2.0
 
 
+@dataclass(frozen=True)
+class WatchdogConfig:
+    """轮内 Watchdog 配置（P1）。
+
+    只做最可靠的一种判定：**连续相同动作**。同一个 (工具名, 参数) 指纹
+    连续出现 ``repeat_threshold`` 次，几乎只可能是原地打转——这条判定
+    只依赖消息增量，不需要网关中间态提供额外的进度字段。
+
+    不默认做 token 速率熔断：``check_session`` 中间态是否填充
+    ``tokens_used`` 尚未验证，贸然依据 0 值判定会误杀。
+    """
+
+    repeat_threshold: int = 3
+
+
+@dataclass
+class _WatchdogState:
+    """单个 session 的重复动作计数。"""
+
+    last_action: str | None = None
+    repeats: int = 0
+
+
+def _last_action_fingerprint(messages: list[dict[str, Any]]) -> str | None:
+    """取最近一次工具调用的指纹（工具名 + 参数摘要）。
+
+    只看 ``tool_calls``，没有工具调用时返回 None（纯文本推理不算重复动作，
+    否则会把「反复思考」误判成打转）。
+    """
+    for msg in reversed(messages):
+        calls = msg.get("tool_calls") or []
+        for tc in reversed(calls):
+            if not isinstance(tc, dict):
+                continue
+            func = tc.get("function") or {}
+            name = str(func.get("name", ""))
+            args = func.get("arguments")
+            if isinstance(args, (dict, list)):
+                args = json.dumps(args, sort_keys=True, ensure_ascii=False)
+            digest = hashlib.sha256(
+                f"{name}\x00{args or ''}".encode("utf-8")
+            ).hexdigest()[:8]
+            return f"{name or 'unknown'}#{digest}"
+    return None
+
+
+
 class SteeringController:
     """fan_out 之后、fan_in 等待期间的中途指挥通道。
 
@@ -630,80 +677,166 @@ class Orchestrator:
         tasks: list[AgentTask],
         timeout: float = 300.0,
         steering: SteeringController | None = None,
+        watchdog: WatchdogConfig | None = None,
     ) -> list[AgentTask]:
         """Wait for all spawned tasks to complete and collect results.
 
         Updates each task's result, status, and tokens_used.
         P0: 完成后审计 MCP 工具调用，检测角色越权。
         ADR-0017: 完成后补记 dispatch/result 轨迹事件。
-        P2 轮内 steering：steering 非空时改用分片轮询等待，poll 间隙
-        消费 SteeringController 指令（message 中途纠偏 / stop 提前止损
-        保留部分结果）。默认 None 走原阻塞等待路径，行为不变。
-        """
-        for task in tasks:
-            if task.status == "failed" or task.session_id is None:
-                continue
 
-            if steering is None:
+        等待策略两选一：
+        - ``steering is None and watchdog is None``：原阻塞路径
+          （``wait_for_completion``），行为与历史完全一致。
+        - 否则：批量轮询路径（``_fan_in_polling``），**一趟探测所有
+          pending task**，并在同一轮间隙消费 steering 与 watchdog。
+
+        批量轮询取代了此前「逐个 task 串行等待」的实现。串行版本有一个
+        真实缺陷：并行任务（如多个 checker）中，针对第 N 个的 stop 指令
+        必须等前序 task 各自跑完才会被 pop，与「中途止损」的语义冲突。
+        """
+        pending = [t for t in tasks if t.status != "failed" and t.session_id is not None]
+
+        if steering is None and watchdog is None:
+            for task in pending:
+                assert task.session_id is not None
                 result = self.client.wait_for_completion(
                     task.session_id, timeout=timeout
                 )
                 self._collect_task_result(task, result)
-            else:
-                self._fan_in_with_steering(task, timeout, steering)
+            return tasks
 
+        self._fan_in_polling(pending, timeout, steering, watchdog)
         return tasks
 
-    def _fan_in_with_steering(
+    def _fan_in_polling(
         self,
-        task: AgentTask,
+        tasks: list[AgentTask],
         timeout: float,
-        steering: SteeringController,
-    ) -> None:
-        """分片轮询等待单个 task，poll 间隙消费 steering 指令。
+        steering: SteeringController | None,
+        watchdog: WatchdogConfig | None,
+    ) -> list[AgentTask]:
+        """一趟轮询所有 pending task，逐轮消费 steering 与 watchdog。
 
-        与 wait_for_completion 的差异：单次探测失败（网关瞬断）不立即
-        放弃，而是继续轮询到 deadline——中途指令的送达窗口因此更长。
+        与旧逐 task 实现的差异：
+        - 所有 session 共享同一 deadline（并行派发本就同时开始）；
+        - 完成即收集，不再按 tasks 列表顺序阻塞——完成顺序不再等于列表顺序；
+        - 单次探测失败（网关瞬断）不放弃，继续轮询到 deadline。
+
+        Watchdog 每轮会额外调用一次 ``get_session_messages`` 取动作指纹，
+        请求量约为纯 steering 路径的两倍；仅在显式启用 watchdog 时发生。
         """
         import time
 
-        assert task.session_id is not None  # fan_in 已过滤 None
+        pending = list(tasks)
         deadline = time.monotonic() + timeout
-        stop_reason = ""
-        result: dict[str, Any] | None = None
-        while True:
-            result = self.client.check_session(task.session_id)
-            if (
-                result is not None
-                and result.get("status") in ("completed", "failed", "error")
-            ):
-                break
-            cmd = steering.pop(
-                task.session_id, SteeringController.role_key(task.role)
-            )
-            if cmd is not None:
-                if cmd.action == "stop":
+        states: dict[str, _WatchdogState] = {}
+
+        while pending:
+            still: list[AgentTask] = []
+            for task in pending:
+                session_id = task.session_id
+                assert session_id is not None
+
+                result = self.client.check_session(session_id)
+                if (
+                    result is not None
+                    and result.get("status") in ("completed", "failed", "error")
+                ):
+                    self._collect_task_result(task, result)
+                    continue
+
+                # 人下达的 steering 优先于自动 watchdog。
+                cmd = (
+                    steering.pop(
+                        session_id, SteeringController.role_key(task.role)
+                    )
+                    if steering is not None
+                    else None
+                )
+                if cmd is not None and cmd.action == "stop":
                     stop_reason = cmd.reason or "no reason given"
                     logger.info(
                         "Steering stop: role=%s session=%s reason=%s",
-                        task.role, task.session_id, stop_reason,
+                        task.role, session_id, stop_reason,
                     )
-                    break
-                if self.client.send_message(task.session_id, cmd.text):
-                    logger.info(
-                        "Steering message delivered: role=%s session=%s",
-                        task.role, task.session_id,
-                    )
-                else:
-                    logger.warning(
-                        "Steering message delivery failed: role=%s session=%s",
-                        task.role, task.session_id,
-                    )
+                    self._collect_task_result(task, None, stop_reason=stop_reason)
+                    continue
+                if cmd is not None:
+                    if self.client.send_message(session_id, cmd.text):
+                        logger.info(
+                            "Steering message delivered: role=%s session=%s",
+                            task.role, session_id,
+                        )
+                    else:
+                        logger.warning(
+                            "Steering message delivery failed: role=%s session=%s",
+                            task.role, session_id,
+                        )
+
+                if watchdog is not None:
+                    reason = self._watchdog_stop_reason(task, watchdog, states)
+                    if reason:
+                        logger.warning(
+                            "Watchdog stop: role=%s session=%s reason=%s",
+                            task.role, session_id, reason,
+                        )
+                        self._collect_task_result(task, None, stop_reason=reason)
+                        continue
+
+                still.append(task)
+
+            pending = still
+            if not pending:
+                break
             if time.monotonic() >= deadline:
-                result = None
+                for task in pending:
+                    self._collect_task_result(task, None)
                 break
             time.sleep(STEERING_POLL_INTERVAL)
-        self._collect_task_result(task, result, stop_reason=stop_reason)
+
+        return tasks
+
+    def _watchdog_stop_reason(
+        self,
+        task: AgentTask,
+        config: WatchdogConfig,
+        states: dict[str, _WatchdogState],
+    ) -> str | None:
+        """重复动作判定：连续相同动作达到阈值则返回止损理由。
+
+        取消息失败时按「无信号」处理（Watchdog 是尽力而为，不能因网关
+        抖动把正常任务判死）。
+        """
+        if config.repeat_threshold <= 0:
+            return None
+        session_id = task.session_id
+        if session_id is None:
+            return None
+        try:
+            messages = self.client.get_session_messages(session_id)
+        except Exception:  # noqa: BLE001 — 观测失败不阻断等待
+            logger.debug("Watchdog message probe failed: session=%s", session_id)
+            return None
+
+        fingerprint = _last_action_fingerprint(messages)
+        state = states.setdefault(session_id, _WatchdogState())
+        if fingerprint is None:
+            state.last_action = None
+            state.repeats = 0
+            return None
+        if fingerprint == state.last_action:
+            state.repeats += 1
+        else:
+            state.last_action = fingerprint
+            state.repeats = 1
+
+        if state.repeats >= config.repeat_threshold:
+            return (
+                f"watchdog: 连续 {state.repeats} 次相同动作 "
+                f"{fingerprint}（疑似原地打转）"
+            )
+        return None
 
     def _collect_task_result(
         self,
@@ -1192,6 +1325,7 @@ class Orchestrator:
         parallel_checks: bool = True,
         denylist: list[str] | None = None,
         steering: SteeringController | None = None,
+        watchdog: WatchdogConfig | None = None,
     ) -> RoundResult:
         """Execute one builder-checker round.
 
@@ -1220,7 +1354,7 @@ class Orchestrator:
 
         tasks = [builder]
         self.fan_out(tasks)
-        self.fan_in(tasks, timeout=600.0, steering=steering)
+        self.fan_in(tasks, timeout=600.0, steering=steering, watchdog=watchdog)
 
         # steering 止损（"stopped"）与失败同样跳过 checker——用户已主动
         # 放弃本轮，继续 spawn checker 只会烧预算。
@@ -1271,7 +1405,7 @@ class Orchestrator:
             ]
 
         self.fan_out(checker_tasks)
-        self.fan_in(checker_tasks, timeout=300.0, steering=steering)
+        self.fan_in(checker_tasks, timeout=300.0, steering=steering, watchdog=watchdog)
 
         all_tasks = [builder] + checker_tasks
         return self.aggregate_results(all_tasks, round_num)
@@ -1282,6 +1416,7 @@ class Orchestrator:
         round_num: int,
         subject: str,
         perspectives: list[dict[str, str]],
+        watchdog: WatchdogConfig | None = None,
     ) -> RoundResult:
         """借鉴 ai-berkshire：N 个 perspective agent 并行分析，synthesizer 汇总。
 
@@ -1318,7 +1453,7 @@ class Orchestrator:
             ))
 
         self.fan_out(perspective_tasks)
-        self.fan_in(perspective_tasks, timeout=300.0)
+        self.fan_in(perspective_tasks, timeout=300.0, watchdog=watchdog)
 
         # Phase 2: synthesizer 串行汇总（fan-out 单任务）
         # 把所有 perspective 结果拼接为 context
@@ -1346,7 +1481,7 @@ class Orchestrator:
         )
 
         self.fan_out([synthesizer])
-        self.fan_in([synthesizer], timeout=300.0)
+        self.fan_in([synthesizer], timeout=300.0, watchdog=watchdog)
 
         all_tasks = perspective_tasks + [synthesizer]
         return self.aggregate_results(all_tasks, round_num)

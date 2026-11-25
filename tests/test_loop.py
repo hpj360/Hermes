@@ -1857,7 +1857,7 @@ def test_run_parallel_perspectives_fan_out_parallel_tasks():
             t.session_id = "fake-session"
         return tasks
 
-    def mock_fan_in(tasks, timeout=300.0):
+    def mock_fan_in(tasks, timeout=300.0, steering=None, watchdog=None):
         for t in tasks:
             t.result = f"result from {t.role}"
             t.tokens_used = 100
@@ -2929,7 +2929,8 @@ def test_run_builder_checker_round2_receives_parallel_checker_reports(monkeypatc
             return True
 
         def run_builder_checker_round(self, *, loop_dir, round_num, builder_task,
-                                       checker_context, parallel_checks, denylist):
+                                       checker_context, parallel_checks, denylist,
+                                       watchdog=None):
             captured["builder_task"] = builder_task
             captured["checker_context"] = checker_context
             return RoundResult(round_num=round_num, tasks=[], all_passed=True, summary="ok")
@@ -2986,7 +2987,8 @@ def test_runner_wires_denylist_from_loop_patterns(monkeypatch):
             return True
 
         def run_builder_checker_round(self, *, loop_dir, round_num, builder_task,
-                                       checker_context, parallel_checks, denylist):
+                                       checker_context, parallel_checks, denylist,
+                                       watchdog=None):
             captured["denylist"] = denylist
             return RoundResult(
                 round_num=round_num,

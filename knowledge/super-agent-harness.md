@@ -51,19 +51,19 @@ Super-agent 的三条硬要求：**Always Active**（7×24 待命）、**主动�
 | Router | `Orchestrator` + loop runner | 已有，但 Router 还兼审计与评分，比「纯路由」重 |
 | Worker | `AgentTask` + 隔离 session + 独立 workspace | 等价 |
 | Worker 不直接对人 / 之间不直连 | fan_in 统一收集，aggregate 统一产出 | 等价 |
-| 全双工 | `SteeringController` + `_fan_in_with_steering` | **雏形，且存在串行缺陷（见下）** |
-| Watchdog | 七条停止规则 + 预算 + per-agent token 熔断 | 仅**轮边界**检查，无运行中检测 |
+| 全双工 | `SteeringController` + `_fan_in_polling` | 可用：并行下 stop 即时生效；仍限「fan_in 等待期」 |
+| Watchdog | `WatchdogConfig`（重复动作）+ 七条停止规则 + token 熔断 | 轮边界 + 轮内重复动作检测；静默/token 速率未做 |
 | 事件驱动 Fast/Slow | 无 | 单入口 CLI，暂不需要 |
 | 渠道绑定回投 | 无 | 同上 |
 | 存算分离 | `loops_dir` 状态落盘 + resume | 有 checkpoint，非计算/状态解耦级 |
 
 ---
 
-## 三、提升 1：并行 fan_in 的 steering 串行阻塞（P0，真实缺陷）
+## 三、提升 1：并行 fan_in 的 steering 串行阻塞（P0，真实缺陷）✅ 已实现
 
-### 现状
+### 现状（修复前）
 
-[orchestrator.py:643](../src/hermes/orchestrator.py#L643) 的 `fan_in` 是**逐个 task 串行等待**：
+旧 `fan_in` 是**逐个 task 串行等待**：
 
 ```python
 for task in tasks:
@@ -90,7 +90,7 @@ while pending:
     sleep(poll_interval)
 ```
 
-- 改动集中在 `_fan_in_with_steering` → 新的批量轮询实现，约 40–60 行
+- 改动集中在 `fan_in` 的分支与新增的 `_fan_in_polling`（批量轮询实现）
 - 结果收集仍复用 `_collect_task_result`，`tasks` 列表顺序不变（只是收集时机变早）
 - 风险：中低。语义变化是「完成顺序 ≠ 列表顺序」，需确认调用方无顺序依赖
 
@@ -99,6 +99,13 @@ while pending:
 - 3 个 fake session，对第 3 个 stop，能在**一个 poll 周期内**生效（当前需等前两个）
 - 单个 task 超时不拖累其他 task 的 deadline
 - 现有 steering 用例（单 task 路径）全部保持通过
+
+### 实现内容
+
+- `fan_in` 分支：`steering is None and watchdog is None` 走原阻塞路径（行为不变），否则走 `_fan_in_polling`
+- `_fan_in_polling` 一趟探测全部 pending：完成即收集，不再按列表顺序阻塞；所有 session 共享同一 deadline
+- 人下达的 steering 优先于自动 watchdog；单次探测失败继续轮询
+- 回归用例用**收集顺序**而非最终状态作判据（旧实现里被阻塞的任务最终也会 stop，只看终态区分不出两种实现）
 
 ---
 
@@ -125,7 +132,7 @@ while pending:
 
 ---
 
-## 五、提升 3：轮内 Watchdog（P1）
+## 五、提升 3：轮内 Watchdog（P1，重复动作部分 ✅ 已实现）
 
 ### 可用信号（已确认）
 
@@ -149,9 +156,18 @@ while pending:
 ### 成本
 
 - 检测器本体：约 80 行 + 3 个阈值（重复次数、静默周期、token 速率）
-- 接入点：`_fan_in_with_steering` 的 poll 间隙（与提升 1 改在同一处，**建议合并做**）
+- 接入点：`_fan_in_polling` 的 poll 间隙（与提升 1 改在同一处，**已合并实现**）
 - 测试：fake session 序列驱动（重复动作 / 静默 / 正常），约 6–8 个用例
 - 风险：低-中。误杀是主要风险 → 阈值需保守，且 stop 理由要写进结果供人复核
+
+### 实现内容（仅第 1 条）
+
+- `WatchdogConfig(repeat_threshold=3)`；`fan_in(..., watchdog=...)`
+- `_last_action_fingerprint` 取最近一次 `tool_calls` 的 `(工具名, 参数摘要)` 指纹；纯文本消息不算动作（否则会把反复思考误判为打转）
+- 连续相同指纹达阈值 → 复用 `steering.stop` 路径（`status="stopped"`，保留部分结果），理由写明次数与指纹
+- 生产接线：`runner.py` 的 builder-checker 与 perspectives 两条链路默认传 `WatchdogConfig()`
+- 探测异常按「无信号」处理，不阻断等待
+- **未做**：静默检测与 token 速率熔断（后者依赖网关中间态 `tokens_used`，未验证）
 
 ---
 
@@ -169,13 +185,13 @@ while pending:
 
 ## 七、落地成本总表
 
-| 提升 | 改动面 | 风险 | 测试增量 | 依赖前提 |
-|---|---|---|---|---|
-| 1. 并行 fan_in steering | `_fan_in_with_steering` 重写为批量轮询，约 40–60 行 | 中低 | ~8 用例 | 无 |
-| 2. A. 轮间 steering | `run_loop_continuous` 1 处循环 | 低 | ~3 用例 | 无 |
-| 2. B. SteeringPump 线程 | 新线程 + 并发写入加锁 | 中 | ~6 用例 | 确认 client 线程安全 |
-| 3. 重复动作检测 | 指纹计算 + poll 间隙判定，约 40 行 | 低 | ~4 用例 | 无 |
-| 3. token 速率熔断 | 下沉 `_check_token_limit` | 中 | ~4 用例 | **需实测网关中间态 tokens** |
+| 提升 | 改动面 | 风险 | 测试增量 | 依赖前提 | 状态 |
+|---|---|---|---|---|---|
+| 1. 并行 fan_in steering | `fan_in` 拆分 + `_fan_in_polling` 批量轮询 | 中低 | 3 用例 | 无 | ✅ 已实现 |
+| 2. A. 轮间 steering | `run_loop_continuous` 1 处循环 | 低 | ~3 用例 | 无 | 待做 |
+| 2. B. SteeringPump 线程 | 新线程 + 并发写入加锁 | 中 | ~6 用例 | 确认 client 线程安全 | 待做 |
+| 3. 重复动作检测 | 指纹计算 + poll 间隙判定 | 低 | 6 用例 | 无 | ✅ 已实现 |
+| 3. token 速率熔断 | 下沉 `_check_token_limit` | 中 | ~4 用例 | **需实测网关中间态 tokens** | 待做 |
 
-**建议顺序：1 → 3（重复动作）→ 2A → 3（token）→ 2B。**
-理由：1 与 3（重复动作）改同一处、共享轮询循环，合并做边际成本最低；token 熔断与 SteeringPump 都有外部前提，应后置。
+**已落地：1 + 3（重复动作）**，共 12 个新用例，全量 2386 passed / ruff / mypy 通过。
+**剩余顺序：2A → 3（token）→ 2B。** 理由：token 熔断与 SteeringPump 都有外部前提，应后置。

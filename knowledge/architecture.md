@@ -25,7 +25,8 @@
 | 可观测性 | /metrics + audit.jsonl + otlp.py | ✅ 可用 | Prometheus 指标（含 KV-cache 命中率）+ OTLP exporter 骨架 |
 | 红队对抗 | gepa_redteam.py + path_policy.py | ✅ 可用 | 5 种攻击模板 variant + denylist 强度回归；live 演练需接真实 builder |
 | Cron 记忆延续 | workbench/cron_memory.py + CronScheduler | ✅ 可用（P4-1） | continuity 触发器派发注入 notepad + 上次摘要进 goal.description；monitor 观测去重谓词（无变化跳过昂贵 LLM 步骤）；借鉴 NousResearch v0.21 |
-| 轮内 steering | orchestrator.py SteeringController + fan_in | ✅ 可用（P4-2） | fan_out 后可对运行中子 Agent 中途纠偏（message）/ 提前止损（stop 保留部分结果，"stopped" 状态）；部分结果同样过 L3 审计；builder 止损即跳过 checker |
+| 轮内 steering | orchestrator.py SteeringController + `_fan_in_polling` | ✅ 可用（P4-2，P0 修复） | fan_out 后可对运行中子 Agent 中途纠偏（message）/ 提前止损（stop 保留部分结果，"stopped" 状态）；部分结果同样过 L3 审计；builder 止损即跳过 checker。**P0 修复**：等待从「逐 task 串行」改为「一趟轮询全部 pending」，并行 checker 的 stop 不再排在前序任务之后才生效 |
+| 轮内 Watchdog | orchestrator.py `WatchdogConfig` + `_watchdog_stop_reason` | ✅ 可用（P1） | 连续 N 次相同 `(工具, 参数)` 指纹判定原地打转，自动走 steering.stop（保留部分结果）；人的 steering 优先；探测异常按无信号处理，不误杀。不做 token 速率熔断——网关中间态 tokens 字段未验证 |
 | MCP 治理面板 | /mcp/panel 路由 + /metrics 扩展 | ✅ 可用（P4-3） | 30 天窗口按 server 的 calls/failures/success_rate + 分舱配置表；数据源 audit.jsonl 单一事实源；Prometheus 指标 hermes_mcp_{calls,failures}_total |
 | 配置/密钥治理 | config.py 指针式继承 + Vault backend | ⚙️ 骨架 | P2-4 完成，Vault 生产化待验证 |
 | 一键发布 | — | ⛔ 阻塞 | P3-3 需发布平台凭证（Render/Fly/Railway） |

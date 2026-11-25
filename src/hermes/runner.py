@@ -28,7 +28,7 @@ from hermes.loop import (
     loops_dir,
     record_round,
 )
-from hermes.orchestrator import Orchestrator, RoundResult
+from hermes.orchestrator import Orchestrator, RoundResult, WatchdogConfig
 from hermes.trajectory import TrajectoryLogger, archive_trajectory
 
 logger = logging.getLogger("hermes.runner")
@@ -338,6 +338,8 @@ def _run_builder_checker(
         )
 
     # Execute the round via orchestrator
+    # 轮内 Watchdog：builder/checker 卡在重复动作时自动止损（保留部分结果），
+    # 避免一直烧到 timeout 才失败。
     result: RoundResult = orchestrator.run_builder_checker_round(
         loop_dir=loop_dir,
         round_num=round_num,
@@ -345,6 +347,7 @@ def _run_builder_checker(
         checker_context=previous_report,
         parallel_checks=parallel_checks,
         denylist=denylist,
+        watchdog=WatchdogConfig(),
     )
 
     # Build LoopRound from result
@@ -445,6 +448,7 @@ def _run_multi_perspective(
         round_num=round_num,
         subject=subject,
         perspectives=perspectives,
+        watchdog=WatchdogConfig(),
     )
 
     # 构建 LoopRound
